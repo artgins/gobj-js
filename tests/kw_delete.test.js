@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { kw_delete } from "yunetas";
+import { kw_delete } from "../src/index.js";
 
 // Mock functions to simulate dependencies
 function kw_find_path(gobj, kw, path, create) {
