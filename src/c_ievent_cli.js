@@ -229,6 +229,22 @@ function mt_stop(gobj)
     gobj_stop(priv.gobj_timer);
 
     if(priv.websocket) {
+        /*
+         *  Detach the WebSocket event handlers BEFORE closing. This is
+         *  a DELIBERATE stop: the caller may destroy this gobj right
+         *  after (e.g. a wrapper that stops+destroys its transport on
+         *  logout). The browser fires .onclose ASYNCHRONOUSLY after
+         *  close(), and that handler does gobj_send_event(gobj,
+         *  EV_ON_CLOSE) — which would land on a destroyed gobj
+         *  ("gobj dst DESTROYED"). On a deliberate stop we never want a
+         *  late EV_ON_CLOSE, so silence the callbacks. (The reconnect
+         *  path keeps its handlers: it calls close_websocket() directly,
+         *  not mt_stop.)
+         */
+        priv.websocket.onopen = null;
+        priv.websocket.onmessage = null;
+        priv.websocket.onerror = null;
+        priv.websocket.onclose = null;
         close_websocket(gobj);
     }
 
