@@ -32,6 +32,7 @@ import {
     gobj_create_pure_child,
     gobj_name,
     gobj_current_state,
+    gobj_is_destroying,
     gobj_yuno_name,
     gobj_yuno_role,
     gobj_find_subscriptions,
@@ -230,21 +231,15 @@ function mt_stop(gobj)
 
     if(priv.websocket) {
         /*
-         *  Detach the WebSocket event handlers BEFORE closing. This is
-         *  a DELIBERATE stop: the caller may destroy this gobj right
-         *  after (e.g. a wrapper that stops+destroys its transport on
-         *  logout). The browser fires .onclose ASYNCHRONOUSLY after
-         *  close(), and that handler does gobj_send_event(gobj,
-         *  EV_ON_CLOSE) — which would land on a destroyed gobj
-         *  ("gobj dst DESTROYED"). On a deliberate stop we never want a
-         *  late EV_ON_CLOSE, so silence the callbacks. (The reconnect
-         *  path keeps its handlers: it calls close_websocket() directly,
-         *  not mt_stop.)
+         *  Keep the .onclose handler wired: a deliberate stop that does
+         *  NOT destroy the gobj (e.g. a frontend that stops
+         *  __remote_service__ on logout and drives its UI teardown from
+         *  the published EV_ON_CLOSE) still needs the async onclose to
+         *  reach the FSM. This mirrors the C kernel, where mt_stop stops
+         *  the bottom transport and ac_on_close publishes EV_ON_CLOSE.
+         *  The stop+destroy-in-the-same-turn case is handled in the
+         *  onclose handler itself (gobj_is_destroying guard).
          */
-        priv.websocket.onopen = null;
-        priv.websocket.onmessage = null;
-        priv.websocket.onerror = null;
-        priv.websocket.onclose = null;
         close_websocket(gobj);
     }
 
@@ -562,6 +557,17 @@ function setup_websocket(gobj)
     // };
 
     websocket.onclose = (e) => {
+        /*
+         *  A stop+destroy in the same turn (e.g. a wrapper tearing its
+         *  transport down on logout) leaves this async onclose to fire
+         *  AFTER the gobj is gone. gobj_is_destroying() covers both the
+         *  destroying and destroyed flags; bail out so we don't send
+         *  EV_ON_CLOSE to a dead gobj ("gobj dst DESTROYED"). A stop that
+         *  keeps the gobj alive still gets its EV_ON_CLOSE.
+         */
+        if(gobj_is_destroying(gobj)) {
+            return;
+        }
         if(!gobj_read_bool_attr(gobj_yuno(), "browser_beforeunload")) {
             gobj_send_event(
                 gobj,
