@@ -32,7 +32,6 @@ import {
     gobj_create_pure_child,
     gobj_name,
     gobj_current_state,
-    gobj_is_destroying,
     gobj_yuno_name,
     gobj_yuno_role,
     gobj_find_subscriptions,
@@ -436,12 +435,6 @@ function mt_inject_event(gobj, event, kw, src)
  ***************************************************************/
 function mt_subscription_added(gobj, subs)
 {
-    if(gobj_is_destroying(gobj)) {
-        /*  Subscriptions are torn down while this gobj is destroyed;
-         *  nothing to forward to a transport that is already gone, and
-         *  gobj_current_state() below would log "gobj NULL or DESTROYED". */
-        return 0;
-    }
     let priv = gobj.priv;
 
     if(gobj_current_state(gobj) !== "ST_SESSION") {
@@ -461,12 +454,6 @@ function mt_subscription_added(gobj, subs)
  ***************************************************************/
 function mt_subscription_deleted(gobj, subs)
 {
-    if(gobj_is_destroying(gobj)) {
-        /*  Destroy tears down every subscription to this gobj; there is
-         *  no transport left to send a remote unsubscribe, and
-         *  gobj_current_state() below would log "gobj NULL or DESTROYED". */
-        return 0;
-    }
     let priv = gobj.priv;
     // in C: return 0;
     // TODO hay algo mal, las subscripciones locales se interpretan como remotas

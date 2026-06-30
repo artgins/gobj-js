@@ -3189,9 +3189,17 @@ function gobj_change_state(gobj, state_name)
  ***************************************************************************/
 function gobj_current_state(gobj)
 {
-    if(gobj_is_destroying(gobj)) {
-        log_error("gobj NULL or DESTROYED");
-        return null;
+    /*
+     *  Aligned with the C kernel's gobj_current_state(): only NULL-guard
+     *  and return the state name. A gobj being destroyed still has a
+     *  valid current_state, and reporting it is harmless — callers test
+     *  it against a state string. (Do NOT log on obflag_destroying here:
+     *  destroy tears down subscriptions, which calls mt_subscription_*
+     *  whose first line reads this; a log there is a false positive.)
+     */
+    if(!is_gobj(gobj)) {
+        log_error("hgobj NULL");
+        return "";
     }
 
     return gobj.current_state.state_name;
