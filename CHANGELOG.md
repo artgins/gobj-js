@@ -4,6 +4,15 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.7.1
+
+- **`emit_log_callback` re-entrancy guard.** A log sink that itself logs
+  (directly, or through any framework helper that logs on a bad argument) no
+  longer recurses `log_* → sink → log_*` until the JS stack limit: while the
+  sink runs, nested log lines skip the sink (the browser console still gets
+  them). Previously only the shipped gobj-ui sink defended itself with its own
+  flag; now the framework guarantees it for every sink.
+
 ## 7.7.0
 
 Developer-tooling hooks for the gobj-ui dev monitor (all additive, backwards

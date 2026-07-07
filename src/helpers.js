@@ -59,15 +59,22 @@ function set_log_callback(fn)
     __log_callback__ = (typeof fn === "function") ? fn : null;
 }
 
+let __in_log_callback__ = false;
+
 function emit_log_callback(level, msg, hora)
 {
-    if(__log_callback__) {
+    if(__log_callback__ && !__in_log_callback__) {
+        /*  Re-entrancy guard: a sink that itself logs (directly or through any
+         *  framework helper) must not loop back into itself. */
+        __in_log_callback__ = true;
         try {
             /*  Pass msg as-is: text levels already send a string; "json" sends
              *  the raw object so the sink can pretty-print it. */
             __log_callback__(level, msg, hora);
         } catch(e) {
             /*  A broken sink must never break the framework's own logging. */
+        } finally {
+            __in_log_callback__ = false;
         }
     }
 }
