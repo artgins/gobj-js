@@ -63,7 +63,9 @@ function emit_log_callback(level, msg, hora)
 {
     if(__log_callback__) {
         try {
-            __log_callback__(level, String(msg), hora);
+            /*  Pass msg as-is: text levels already send a string; "json" sends
+             *  the raw object so the sink can pretty-print it. */
+            __log_callback__(level, msg, hora);
         } catch(e) {
             /*  A broken sink must never break the framework's own logging. */
         }
@@ -191,6 +193,10 @@ function trace_json(jn, msg)
         window.console.warn("=====> " + msg);
     }
     window.console.dir(jn);
+    /*  Also mirror it to the log sink (e.g. the dev monitor) so the payload
+     *  shows next to the trace that dumped it — console.dir stays in the
+     *  browser console only. */
+    emit_log_callback("json", jn, current_timestamp());
 }
 
 /************************************************************
