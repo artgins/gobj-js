@@ -347,6 +347,23 @@ function tab()
     return ' '.repeat(Math.max(0, __inside__ * 2 - 1));
 }
 
+/*  Machine (automata) trace format, mirroring the C kernel:
+ *      0 = verbose  ("🔄 mach(gclass^name), st: STATE, ev: EVENT, ac: …, from(…)"
+ *                    + a "<- mach(…) ret: N" return line)
+ *      1 = compact  ("🔄 EVENT dst STATE from src", no return line) — the
+ *                    simple one-line-per-transition view. */
+let __trace_machine_format__ = 0;
+
+function gobj_set_trace_machine_format(format)
+{
+    __trace_machine_format__ = (Number(format) === 1) ? 1 : 0;
+}
+
+function gobj_trace_machine_format()
+{
+    return __trace_machine_format__;
+}
+
 /************************************************************
  *
  ************************************************************/
@@ -3422,21 +3439,33 @@ function gobj_send_event(dst, event, kw, src)
      *      Exec the event
      *----------------------------------*/
     if(tracea) {
-        let action_name = "";
-        if(event_action.action) {
-            action_name = get_function_name(event_action.action);
+        if(__trace_machine_format__ === 1) {
+            /*  Compact one-liner, like the C kernel's trace_machine_format==1. */
+            trace_machine(sprintf("🔄 %s %s%s %s from %s%s",
+                event?event:"",
+                (!dst.running)?"!!":"",
+                gobj_short_name(dst),
+                state.state_name,
+                (src && !src.running)?"!!":"",
+                gobj_short_name(src)
+            ));
+        } else {
+            let action_name = "";
+            if(event_action.action) {
+                action_name = get_function_name(event_action.action);
+            }
+            trace_machine(sprintf("🔄 mach(%s%s^%s), st: %s, ev: %s%s%s, ac: %s, from(%s%s^%s)",
+                (!dst.running)?"!!":"",
+                gobj_gclass_name(dst), gobj_name(dst),
+                state.state_name,
+                "", //On_Black RBlue,
+                event?event:"",
+                "", //Color_Off,
+                action_name,
+                (src && !src.running)?"!!":"",
+                gobj_gclass_name(src), gobj_name(src)
+            ));
         }
-        trace_machine(sprintf("🔄 mach(%s%s^%s), st: %s, ev: %s%s%s, ac: %s, from(%s%s^%s)",
-            (!dst.running)?"!!":"",
-            gobj_gclass_name(dst), gobj_name(dst),
-            state.state_name,
-            "", //On_Black RBlue,
-            event?event:"",
-            "", //Color_Off,
-            action_name,
-            (src && !src.running)?"!!":"",
-            gobj_gclass_name(src), gobj_name(src)
-        ));
         if(kw) {
             if(tracea > 1) { //if(__trace_gobj_ev_kw__(dst)) {
                 if(json_object_size(kw)) {
@@ -3469,7 +3498,7 @@ function gobj_send_event(dst, event, kw, src)
     } finally {
     }
 
-    if(tracea && !(dst.obflag & obflag_t.obflag_destroyed)) {
+    if(tracea && __trace_machine_format__ !== 1 && !(dst.obflag & obflag_t.obflag_destroyed)) {
         trace_machine(sprintf("<- mach(%s%s^%s), st: %s, ev: %s, ret: %d",
             (!dst.running)?"!!":"",
             gobj_gclass_name(dst), gobj_name(dst),
@@ -4557,6 +4586,8 @@ export {
     gobj_name,
     gobj_gclass_name,
     gobj_short_name,
+    gobj_set_trace_machine_format,
+    gobj_trace_machine_format,
     gobj_full_name,
     gobj_parent,
     gobj_is_volatil,
