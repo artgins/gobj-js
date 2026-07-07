@@ -432,8 +432,10 @@ function mt_subscription_added(gobj, subs)
 {
     let priv = gobj.priv;
 
-    if(gobj_current_state(gobj) !== "ST_SESSION") {
-        // on_open will send all subscriptions
+    if(gobj_current_state(gobj) !== "ST_SESSION" || !priv.websocket) {
+        /*  on_open will send all subscriptions. The !websocket case is the
+         *  teardown window: mt_stop already closed the socket but the async
+         *  onclose hasn't moved the FSM out of ST_SESSION yet. */
         return 0;
     }
 
@@ -453,8 +455,12 @@ function mt_subscription_deleted(gobj, subs)
     // in C: return 0;
     // TODO hay algo mal, las subscripciones locales se interpretan como remotas
 
-    if(gobj_current_state(gobj) !== "ST_SESSION") {
-        // Nothing to do. On open this subscription will be not sent.
+    if(gobj_current_state(gobj) !== "ST_SESSION" || !priv.websocket) {
+        /*  Nothing to do: on open this subscription will not be re-sent.
+         *  The !websocket case is the teardown window (stop+destroy in the
+         *  same turn): the socket is gone but the async onclose hasn't moved
+         *  the FSM out of ST_SESSION — the remote side drops the session's
+         *  subscriptions on close anyway. */
         return 0;
     }
 
@@ -673,6 +679,13 @@ function send_iev(gobj, iev)
         }
     }
 
+    if(!priv.websocket || priv.websocket.readyState !== WebSocket.OPEN) {
+        /*  Socket gone or not open (teardown window, race with a drop):
+         *  the message cannot be delivered. A warning, not one TypeError
+         *  bomb per message. */
+        log_warning(`${gobj_short_name(gobj)}: send_iev(): websocket not open, message lost`);
+        return -1;
+    }
     try {
         priv.websocket.send(msg);
     } catch (e) {

@@ -4,6 +4,20 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.7.2
+
+- **fix(c_ievent_cli): no `TypeError` storm when a connected iev is
+  stopped+destroyed in the same turn.** `mt_stop` closes the websocket
+  (nulling `priv.websocket`) but the FSM leaves `ST_SESSION` only on the
+  ASYNC `onclose` — in that window every subscription removed by
+  `gobj_destroy` sent an `__unsubscribing__` frame through the dead socket:
+  one `send_iev(): TypeError: can't access property "send"` ERROR per
+  subscription (seen as a 14-line burst on gui_treedb's connection reopen).
+  `mt_subscription_added`/`mt_subscription_deleted` now also require a live
+  socket (the remote side drops a session's subscriptions on close anyway),
+  and `send_iev` itself guards a missing/not-OPEN socket with a single
+  warning ("message lost") instead of a TypeError.
+
 ## 7.7.1
 
 - **`emit_log_callback` re-entrancy guard.** A log sink that itself logs
