@@ -51,7 +51,10 @@ let f_debug = _console.debug;
 /*  Optional sink that mirrors every framework log line (error / warning /
  *  info / debug / msg) somewhere else — e.g. a GUI dev monitor that shows the
  *  browser console inside the app. It runs IN ADDITION to the console; null
- *  (default) leaves behaviour unchanged. Called as (level, msg, hora). */
+ *  (default) leaves behaviour unchanged. Called as (level, msg, hora).
+ *  CONTRACT: `msg` is a string for every text level, EXCEPT level "json"
+ *  (trace_json payloads), where it is the raw object so the sink can
+ *  pretty-print it — a sink must handle both. */
 let __log_callback__ = null;
 
 function set_log_callback(fn)
