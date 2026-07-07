@@ -48,6 +48,28 @@ let f_warning = _console.warn;
 let f_info = _console.info;
 let f_debug = _console.debug;
 
+/*  Optional sink that mirrors every framework log line (error / warning /
+ *  info / debug / msg) somewhere else — e.g. a GUI dev monitor that shows the
+ *  browser console inside the app. It runs IN ADDITION to the console; null
+ *  (default) leaves behaviour unchanged. Called as (level, msg, hora). */
+let __log_callback__ = null;
+
+function set_log_callback(fn)
+{
+    __log_callback__ = (typeof fn === "function") ? fn : null;
+}
+
+function emit_log_callback(level, msg, hora)
+{
+    if(__log_callback__) {
+        try {
+            __log_callback__(level, String(msg), hora);
+        } catch(e) {
+            /*  A broken sink must never break the framework's own logging. */
+        }
+    }
+}
+
 function set_remote_log_functions(remote_log_fn)
 {
     if(remote_log_fn) {
@@ -111,6 +133,7 @@ function log_error(format)
             f_error(`${hora} ERROR: ${String(msg)}`);
         }
     }
+    emit_log_callback("error", msg, hora);
 }
 
 function log_warning(format)
@@ -126,6 +149,7 @@ function log_warning(format)
             f_warning(`${hora} WARNING: ${String(msg)}`);
         }
     }
+    emit_log_callback("warning", msg, hora);
 }
 
 function log_info(format)
@@ -136,6 +160,7 @@ function log_info(format)
     if(f_info) {
         f_info("%c" + hora + " INFO: " + String(msg), "color:cyan");
     }
+    emit_log_callback("info", msg, hora);
 }
 
 function log_debug(format)
@@ -146,6 +171,7 @@ function log_debug(format)
     if(f_debug) {
         f_debug("%c" + hora + " DEBUG: " + String(msg), "color:silver");
     }
+    emit_log_callback("debug", msg, hora);
 }
 
 function trace_msg(format)
@@ -156,6 +182,7 @@ function trace_msg(format)
     if(f_debug) {
         f_debug("%c" + hora + " MSG: " + String(msg), "color:cyan");
     }
+    emit_log_callback("msg", msg, hora);
 }
 
 function trace_json(jn, msg)
@@ -3440,6 +3467,7 @@ export {
     create_json_record,
 
     set_remote_log_functions,
+    set_log_callback,
     log_error,
     log_warning,
     log_info,
