@@ -4,6 +4,24 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## Unreleased
+
+- **feat(lib_treedb): `field_desc` now carries the fkey mapping.**
+  `treedb_get_field_desc()` copies `col.fkey` ({topic_name: hook_name}) into
+  the returned descriptor (`fkey: null` when absent, incl. the string-spec
+  branch of `template_get_field_desc()`, which cannot express a mapping).
+  Lets form widgets encode/decode canonical refs ("topic^id^hook") from the
+  descriptor alone, without dragging the raw schema col around (first
+  consumer: gobj-ui `C_YUI_FORM` fkey fields).
+
+- **fix(lib_treedb): `create_template_record()` no longer fills fields
+  with `0`.** It called `kw_get_dict_value(col, "default")` with a wrong
+  signature (col as gobj, "default" as kw) — every field without an explicit
+  default got the error-path `0`, plus a "kw must be list or dict" +
+  "GObj bad instanceof" log storm per field. Now the default is read from
+  the column descriptor only when the template value is an object
+  (a string spec carries no default).
+
 ## 7.7.2
 
 - **fix(c_ievent_cli): no `TypeError` storm when a connected iev is

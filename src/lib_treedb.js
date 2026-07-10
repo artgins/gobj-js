@@ -332,6 +332,7 @@ function treedb_decoder_hook(col, hook)
  *          is_writable     // field writable (no readonly)
  *          default_value
  *          placeholder
+ *          fkey            // fkey mapping {topic_name: hook_name}, null if none
  *      ]
  *
  *  The template is recursive, in values you can set dictionaries, or arrays,
@@ -407,6 +408,7 @@ function treedb_get_field_desc(col)
         default_value: col.default,
         placeholder: col.placeholder,
         fillspace: col.fillspace || 4,
+        fkey: col.fkey || null, // fkey mapping {topic_name: hook_name} (fkey cols)
     };
 
     if(!col.flag) {
@@ -465,6 +467,7 @@ function template_get_field_desc(key, value)
         is_hidden: false,
         default_value: undefined,
         placeholder: undefined,
+        fkey: null,     // a string spec cannot express the fkey mapping
     };
 
     /*---------------------------*
@@ -536,7 +539,13 @@ function create_template_record(template, kw)
     }
 
     Object.entries(template).forEach(([field, col]) => {
-        let value = kw_get_dict_value(null, kw, field, kw_get_dict_value(col, "default"));
+        /*  col is either a dot-token spec (string) or a column
+         *  descriptor (object); only the object form carries a default */
+        let default_value;
+        if(is_object(col)) {
+            default_value = col.default;
+        }
+        let value = kw_get_dict_value(null, kw, field, default_value);
         new_record[field] = value;
     });
 
