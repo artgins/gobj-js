@@ -4,7 +4,7 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
-## Unreleased
+## 7.7.3
 
 - **feat(lib_treedb): `field_desc` now carries the fkey mapping.**
   `treedb_get_field_desc()` copies `col.fkey` ({topic_name: hook_name}) into
