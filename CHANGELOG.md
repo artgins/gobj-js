@@ -14,6 +14,14 @@ ahead of the SDK version between releases.
   descriptor alone, without dragging the raw schema col around (first
   consumer: gobj-ui `C_YUI_FORM` fkey fields).
 
+- **fix(helpers): `kwid_new_dict()` no longer collapses an array to its
+  last element.** Its internal `kw_get_str(kv, "id", ...)` still used the
+  pre-gobj signature, so every element's id resolved to the string
+  `"false"` — the whole array collapsed onto one key (a treedb desc
+  passed as a C_YUI_FORM template rendered only its last column), with a
+  per-element "GObj bad instanceof" + "kw must be list or dict" log
+  storm.
+
 - **fix(lib_treedb): `create_template_record()` no longer fills fields
   with `0`.** It called `kw_get_dict_value(col, "default")` with a wrong
   signature (col as gobj, "default" as kw) — every field without an explicit

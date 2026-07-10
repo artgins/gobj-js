@@ -1889,7 +1889,7 @@ function kwid_new_dict(gobj, kw, path)
     } else if(is_array(kw)) {
         for(let i=0; i<kw.length; i++) {
             let kv = kw[i];
-            let id = kw_get_str(kv, "id", null, false);
+            let id = kw_get_str(gobj, kv, "id", "", 0);
             if(!empty_string(id)) {
                 new_dict[id] = kv;
             }
