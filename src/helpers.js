@@ -1720,21 +1720,31 @@ function kw_get_local_storage_value(key, default_value, create = false)
 
 /********************************************
  *  Save a local attribute
+ *
+ *  Returns 0 on success, -1 when the value did NOT reach the store.
+ *  It used to return nothing and only console.warn, so every caller up the
+ *  chain (db_save_persistent_attrs -> gobj_save_persistent_attrs -> the app)
+ *  reported success on a store that had rejected the write: a full or blocked
+ *  localStorage (quota, private mode) silently discarded the change while the
+ *  UI showed it as saved.
  ********************************************/
 function kw_set_local_storage_value(key, value)
 {
     if (typeof window === "undefined" || !window.localStorage) {
-        return; // Prevents errors in Node.js
+        return 0; // No store outside the browser: not a failure
     }
     if (!key || value === undefined) {
-        window.console.warn(`Invalid key or value for localStorage: key=${key}, value=${value}`);
-        return;
+        log_error(`kw_set_local_storage_value(): invalid key or value: key=${key}`);
+        return -1;
     }
 
     try {
         window.localStorage.setItem(key, JSON.stringify(value));
+        return 0;
     } catch (e) {
-        window.console.warn(`Error saving localStorage key "${key}":`, e);
+        log_error(`kw_set_local_storage_value(): cannot save "${key}" ` +
+            `(storage full or blocked?): ${e && e.message ? e.message : e}`);
+        return -1;
     }
 }
 

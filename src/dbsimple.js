@@ -61,7 +61,10 @@ function db_load_persistent_attrs(
 }
 
 /************************************************************
- *
+ *  Returns 0 on success, -1 when the attrs did NOT reach the store
+ *  (quota exceeded, private mode, storage disabled). Callers must check
+ *  it: a discarded write with a UI that shows the value as saved is the
+ *  worst of both worlds.
  ************************************************************/
 function db_save_persistent_attrs(
     gobj,
@@ -81,7 +84,7 @@ function db_save_persistent_attrs(
         json_object_update_missing(attrs, jn_file);
     }
 
-    kw_set_local_storage_value(
+    return kw_set_local_storage_value(
         _get_persistent_path(gobj),
         attrs
     );
