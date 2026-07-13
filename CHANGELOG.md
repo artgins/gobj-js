@@ -4,6 +4,29 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## Unreleased
+
+- **feat(c_ievent_cli): a link can advertise its OWN `required_services`.**
+  The identity_card read the list from the **yuno**, so every link of a yuno
+  sent the same one. New per-link attr (`SDF_RD`, default `[]`); empty falls
+  back to the yuno's, so a single-link yuno is unchanged.
+
+  It matters for a MULTI-link yuno: gui_treedb keeps one `C_IEVENT_CLI` per
+  configured backend, and the yuno-wide list can only be the **union** of every
+  backend's selected services — so each backend was told the service names of
+  all the others, and got a card naming services it does not host. C_AUTHZ
+  needs the list to authorize the treedb commands, so it cannot just be
+  dropped: it has to be per link.
+
+- **fix(dbsimple, helpers): a rejected localStorage write is no longer
+  reported as saved.** `kw_set_local_storage_value()` returned nothing and only
+  `console.warn`'d; `db_save_persistent_attrs()` dropped the result. So
+  `gobj_save_persistent_attrs()` and every app above it reported success for a
+  write the store had refused — a full or blocked localStorage (quota, private
+  mode) silently discarded the change while the in-memory attr and the UI
+  showed it as saved, and the next reload lost it. Both return 0 / -1 now, and
+  the failure goes through `log_error`, not `console`.
+
 ## 7.7.3
 
 - **feat(lib_treedb): `field_desc` now carries the fkey mapping.**
