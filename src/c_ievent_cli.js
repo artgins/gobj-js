@@ -101,6 +101,7 @@ SDATA (data_type_t.DTP_STRING,  "url",              sdata_flag_t.SDF_RD,        
 SDATA (data_type_t.DTP_STRING,  "jwt",              sdata_flag_t.SDF_PERSIST,   "",         "JWT"),
 SDATA (data_type_t.DTP_STRING,  "cert_pem",         sdata_flag_t.SDF_PERSIST,   "",         "SSL server certification, PEM str format"),
 SDATA (data_type_t.DTP_JSON,    "extra_info",       sdata_flag_t.SDF_RD,        "{}",       "dict data set by user, added to the identity card msg."),
+SDATA (data_type_t.DTP_LIST,    "required_services",sdata_flag_t.SDF_RD,        "[]",       "Services this LINK requires (identity card). Empty = the yuno's `required_services`, as before. A yuno with several links to DIFFERENT backends must set it per link: the yuno-wide list is the union, so every backend is told the service names of all the others."),
 SDATA (data_type_t.DTP_INTEGER, "timeout_retry",    sdata_flag_t.SDF_RD,        "5000",     "timeout waiting idAck"),
 SDATA (data_type_t.DTP_INTEGER, "timeout_idack",    sdata_flag_t.SDF_RD,        "5000",     "timeout waiting idAck"),
 SDATA (data_type_t.DTP_POINTER, "subscriber",       0,              0,          "subscriber of output-events. If null then subscriber is the parent"),
@@ -741,6 +742,18 @@ function send_identity_card(gobj)
     let yuno_release = gobj_read_str_attr(gobj_yuno(), "yuno_release");
     let yuno_tag = gobj_read_str_attr(gobj_yuno(), "yuno_tag");
 
+    /*
+     *  The services THIS link needs authorized. A single-link yuno leaves it
+     *  empty and the yuno-wide list is used, as it always was. A multi-link
+     *  yuno (one C_IEVENT_CLI per backend) must set it per link: the yuno's
+     *  list is necessarily the union of every backend's, so each backend would
+     *  be handed the service names of all the others.
+     */
+    let required_services = gobj_read_attr(gobj, "required_services");
+    if(!required_services || !required_services.length) {
+        required_services = gobj_read_attr(gobj_yuno(), "required_services");
+    }
+
     let kw = {
         "yuno_role": gobj_yuno_role(),
         "yuno_id": gobj_yuno_id(),
@@ -759,7 +772,7 @@ function send_identity_card(gobj)
         "id": node_uuid(),
         "user_agent": typeof window !== "undefined" ? window.navigator.userAgent : "",
         "language": typeof window !== "undefined" ? window.navigator.language : "",
-        "required_services": gobj_read_attr(gobj_yuno(), "required_services")
+        "required_services": required_services
     };
 
     /*
