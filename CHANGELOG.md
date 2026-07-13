@@ -18,6 +18,17 @@ ahead of the SDK version between releases.
   needs the list to authorize the treedb commands, so it cannot just be
   dropped: it has to be per link.
 
+- **feat(c_ievent_cli): the reconnect BACKS OFF, with jitter.** The retry delay
+  was the constant `timeout_retry` (5s), for ever: a backend that is down — or a
+  URL with a typo, which never comes back — was hit every 5 seconds for the
+  whole life of the tab, by EVERY link pointed at it, all in lockstep. It now
+  doubles from `timeout_retry` up to the new `timeout_retry_max` attr (default
+  60s; set it equal to `timeout_retry` for the old fixed-interval behaviour),
+  with ±20% jitter — which is what breaks the lockstep, so N links that dropped
+  together do not stampede a backend that is just coming back up. The backoff
+  resets when a session is actually reached, and on `mt_start` (a deliberate
+  reconnect must not inherit a previous run's penalty).
+
 - **fix(dbsimple, helpers): a rejected localStorage write is no longer
   reported as saved.** `kw_set_local_storage_value()` returned nothing and only
   `console.warn`'d; `db_save_persistent_attrs()` dropped the result. So

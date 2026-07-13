@@ -102,7 +102,8 @@ SDATA (data_type_t.DTP_STRING,  "jwt",              sdata_flag_t.SDF_PERSIST,   
 SDATA (data_type_t.DTP_STRING,  "cert_pem",         sdata_flag_t.SDF_PERSIST,   "",         "SSL server certification, PEM str format"),
 SDATA (data_type_t.DTP_JSON,    "extra_info",       sdata_flag_t.SDF_RD,        "{}",       "dict data set by user, added to the identity card msg."),
 SDATA (data_type_t.DTP_LIST,    "required_services",sdata_flag_t.SDF_RD,        "[]",       "Services this LINK requires (identity card). Empty = the yuno's `required_services`, as before. A yuno with several links to DIFFERENT backends must set it per link: the yuno-wide list is the union, so every backend is told the service names of all the others."),
-SDATA (data_type_t.DTP_INTEGER, "timeout_retry",    sdata_flag_t.SDF_RD,        "5000",     "timeout waiting idAck"),
+SDATA (data_type_t.DTP_INTEGER, "timeout_retry",    sdata_flag_t.SDF_RD,        "5000",     "First reconnect delay (ms). It BACKS OFF from here, doubling up to timeout_retry_max, and resets when a session is reached"),
+SDATA (data_type_t.DTP_INTEGER, "timeout_retry_max",sdata_flag_t.SDF_RD,        "60000",     "Cap of the reconnect backoff (ms). Set it equal to timeout_retry for the old fixed-interval behaviour"),
 SDATA (data_type_t.DTP_INTEGER, "timeout_idack",    sdata_flag_t.SDF_RD,        "5000",     "timeout waiting idAck"),
 SDATA (data_type_t.DTP_POINTER, "subscriber",       0,              0,          "subscriber of output-events. If null then subscriber is the parent"),
 SDATA_END()
@@ -139,6 +140,7 @@ let PRIVATE_DATA = {
     websocket:          null,
     inside_on_open:     false,  // avoid duplicates, no subscriptions while in on_open,
                                 // they will send in resend_subscriptions
+    retry_ms:           0,      // current backoff (0 = none yet); see next_retry()
 };
 
 let __gclass__ = null;
@@ -214,6 +216,10 @@ function mt_start(gobj)
     let priv = gobj.priv;
 
     gobj_start(priv.gobj_timer);
+
+    /*  Starting is a deliberate act (the operator pressed connect): it must
+     *  not inherit the backoff a previous run had escalated to.  */
+    priv.retry_ms = 0;
 
     priv.websocket = setup_websocket(gobj);
     return 0;
@@ -1026,10 +1032,45 @@ function ac_on_close(gobj, event, kw, src)
     }
 
     if(gobj_is_running(gobj)) {
-        set_timeout(priv.gobj_timer, gobj_read_integer_attr(gobj, "timeout_retry"));
+        set_timeout(priv.gobj_timer, next_retry(gobj));
     }
 
     return 0;
+}
+
+/***************************************************************
+ *  How long to wait before the next reconnect attempt.
+ *
+ *  The delay used to be a constant (`timeout_retry`, 5s), for ever. A
+ *  backend that is down — or a URL with a typo, which never comes back —
+ *  was therefore hit every 5 seconds for the whole life of the tab, by
+ *  EVERY link pointed at it, all in lockstep. It backs off now: from
+ *  `timeout_retry`, doubling, capped at `timeout_retry_max`.
+ *
+ *  The jitter (±20%) is what breaks the lockstep. Without it, N links that
+ *  went down together retry together for ever — a thundering herd against a
+ *  backend that is just coming back up. It is the one place a random number
+ *  earns its keep.
+ *
+ *  Reset to zero when a session is actually reached
+ *  (ac_identity_card_ack), so a link that flaps once does not carry a
+ *  minute-long penalty into its next real drop.
+ ***************************************************************/
+function next_retry(gobj)
+{
+    let priv = gobj.priv;
+
+    let base = gobj_read_integer_attr(gobj, "timeout_retry");
+    let max = gobj_read_integer_attr(gobj, "timeout_retry_max");
+    if(max < base) {
+        max = base;     /*  equal = the old fixed-interval behaviour  */
+    }
+
+    priv.retry_ms = priv.retry_ms ? Math.min(priv.retry_ms * 2, max) : base;
+
+    let jitter = priv.retry_ms * 0.2;
+    let ms = priv.retry_ms - jitter + (Math.random() * 2 * jitter);
+    return Math.max(1, Math.round(ms));
 }
 
 /********************************************
@@ -1102,6 +1143,12 @@ function ac_identity_card_ack(gobj, event, kw, src)
     } else {
         gobj_change_state(gobj, "ST_SESSION");
         priv.inside_on_open = true;
+
+        /*
+         *  A session was reached: the backoff starts over. A link that flaps
+         *  once must not carry a minute-long penalty into its next real drop.
+         */
+        priv.retry_ms = 0;
 
         if(!priv.inform_on_close) {
             priv.inform_on_close = true;
