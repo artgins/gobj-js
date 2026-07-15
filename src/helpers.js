@@ -62,6 +62,21 @@ function set_log_callback(fn)
     __log_callback__ = (typeof fn === "function") ? fn : null;
 }
 
+/*  Master switch for the DIRECT browser-console writes of the log helpers
+ *  (log_error/log_warning/log_info/log_debug, trace_msg, trace_json).
+ *  Default on: the framework logs to the console as it always has. A GUI dev
+ *  monitor can turn it off to route output to its own window only (see
+ *  gobj-ui's yui_dev.js "Output" selector). Orthogonal to everything else:
+ *  the log-sink callback (set_log_callback) still fires — so the monitor keeps
+ *  receiving lines while the console stays clean — and remote log functions
+ *  (set_remote_log_functions) still fire too. */
+let __console_output_enabled__ = true;
+
+function set_console_log_enabled(enabled)
+{
+    __console_output_enabled__ = enabled ? true : false;
+}
+
 let __in_log_callback__ = false;
 
 function emit_log_callback(level, msg, hora)
@@ -139,9 +154,13 @@ function log_error(format)
 
     if(f_error) {
         if(f_error === window.console.error) {
-            f_error("%c" + hora + " ERROR: " + String(msg), "color:red");
+            if(__console_output_enabled__) {
+                f_error("%c" + hora + " ERROR: " + String(msg), "color:red");
+            }
         } else {
-            window.console.error("%c" + hora + " ERROR: " + String(msg), "color:red");
+            if(__console_output_enabled__) {
+                window.console.error("%c" + hora + " ERROR: " + String(msg), "color:red");
+            }
             f_error(`${hora} ERROR: ${String(msg)}`);
         }
     }
@@ -155,9 +174,13 @@ function log_warning(format)
 
     if(f_warning) {
         if(f_warning === window.console.warn) {
-            f_warning("%c" + hora + " WARNING: " + String(msg), "color:yellow");
+            if(__console_output_enabled__) {
+                f_warning("%c" + hora + " WARNING: " + String(msg), "color:yellow");
+            }
         } else {
-            window.console.warn("%c" + hora + " WARNING: " + String(msg), "color:yellow");
+            if(__console_output_enabled__) {
+                window.console.warn("%c" + hora + " WARNING: " + String(msg), "color:yellow");
+            }
             f_warning(`${hora} WARNING: ${String(msg)}`);
         }
     }
@@ -170,7 +193,9 @@ function log_info(format)
     let hora = current_timestamp();
 
     if(f_info) {
-        f_info("%c" + hora + " INFO: " + String(msg), "color:cyan");
+        if(__console_output_enabled__) {
+            f_info("%c" + hora + " INFO: " + String(msg), "color:cyan");
+        }
     }
     emit_log_callback("info", msg, hora);
 }
@@ -181,7 +206,9 @@ function log_debug(format)
     let hora = current_timestamp();
 
     if(f_debug) {
-        f_debug("%c" + hora + " DEBUG: " + String(msg), "color:silver");
+        if(__console_output_enabled__) {
+            f_debug("%c" + hora + " DEBUG: " + String(msg), "color:silver");
+        }
     }
     emit_log_callback("debug", msg, hora);
 }
@@ -192,17 +219,21 @@ function trace_msg(format)
     let hora = current_timestamp();
 
     if(f_debug) {
-        f_debug("%c" + hora + " MSG: " + String(msg), "color:cyan");
+        if(__console_output_enabled__) {
+            f_debug("%c" + hora + " MSG: " + String(msg), "color:cyan");
+        }
     }
     emit_log_callback("msg", msg, hora);
 }
 
 function trace_json(jn, msg)
 {
-    if(msg) {
-        window.console.warn("=====> " + msg);
+    if(__console_output_enabled__) {
+        if(msg) {
+            window.console.warn("=====> " + msg);
+        }
+        window.console.dir(jn);
     }
-    window.console.dir(jn);
     /*  Also mirror it to the log sink (e.g. the dev monitor) so the payload
      *  shows next to the trace that dumped it — console.dir stays in the
      *  browser console only. */
@@ -3494,6 +3525,7 @@ export {
 
     set_remote_log_functions,
     set_log_callback,
+    set_console_log_enabled,
     log_error,
     log_warning,
     log_info,

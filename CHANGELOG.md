@@ -6,6 +6,17 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+- **feat(logging): `set_console_log_enabled(enabled)` gates the direct
+  browser-console writes.** New exported switch (default **on** — unchanged
+  behaviour) that silences the `console.*` output of `log_error` /
+  `log_warning` / `log_info` / `log_debug` / `trace_msg` / `trace_json`
+  without touching anything else: the log-sink callback (`set_log_callback`)
+  still fires, and remote log functions (`set_remote_log_functions`) still
+  fire. It lets a GUI dev monitor route framework output — including the
+  automata/FSM trace, which arrives as `debug` — to its own window only,
+  keeping the browser console clean. Consumed by gobj-ui's dev-window "Output"
+  selector.
+
 - **feat(c_ievent_cli): a link can advertise its OWN `required_services`.**
   The identity_card read the list from the **yuno**, so every link of a yuno
   sent the same one. New per-link attr (`SDF_RD`, default `[]`); empty falls
