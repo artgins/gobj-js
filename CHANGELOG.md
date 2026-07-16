@@ -6,6 +6,12 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+## 7.8.0
+
+Ships with SDK **7.8.0**. No BREAKING changes, but one behaviour a consumer will
+observe: a dropped `C_IEVENT_CLI` link now **backs off** instead of retrying
+every 5s for ever (documented opt-out: set `timeout_retry_max` = `timeout_retry`).
+
 - **feat(i18n): `refresh_language()` processes `data-i18n-placeholder`.** A
   placeholder is an attribute, not a text node, so the `data-i18n` walk could
   not reach it and an input's placeholder kept the mount-time language

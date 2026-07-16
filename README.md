@@ -477,6 +477,16 @@ gobj_list_persistent_attrs(gobj, keys)
 
 Attributes marked `SDF_PERSIST` are automatically saved/loaded.
 
+**Always name what you save**: `gobj_save_persistent_attrs(gobj, "attr_name")`
+(a string, or a list/dict of names). The bare call saves every `SDF_PERSIST`
+attr, which is wasteful and can clobber attrs the caller never touched.
+
+**Check the result.** `db_save_persistent_attrs()` / `gobj_save_persistent_attrs()`
+return **`0` on success, `-1` on failure**, and a failure is logged through
+`log_error`. `localStorage` can *refuse* a write (quota exceeded, private mode,
+storage blocked): treating that as saved leaves the in-memory attr and the UI
+showing a value the store rejected, which the next reload silently loses.
+
 ### Helpers & Utilities
 
 ```javascript
@@ -572,9 +582,53 @@ trace_msg(format, ...args)       // cyan, prefixed "MSG"
 trace_json(json, msg)            // dir-dump a JSON object
 
 // Redirect error/warning output to a single remote handler
-// (info/debug always go to the browser console)
 set_remote_log_functions(remote_log_fn)   // fn(message) — single function
+
+// Receive every log record (any level) in your own sink
+set_log_callback(fn)                      // fn(level, message)
+
+// Gate the DIRECT browser-console writes of all the functions above
+set_console_log_enabled(enabled)          // default: true (unchanged behaviour)
 ```
+
+**Three independent output paths.** `set_console_log_enabled(false)` silences
+only the `console.*` writes: the log-sink callback (`set_log_callback`) and the
+remote log functions (`set_remote_log_functions`) still fire. That is what lets
+a GUI route framework output — **including the automata/FSM trace, which arrives
+as `debug`** — into its own monitor window while keeping the browser console
+clean (gobj-ui's dev-window "Output" selector does exactly this).
+
+### i18n: `refresh_language` and the `data-i18n-*` family
+
+The runtime does not translate anything itself — the **app** owns the
+translator (i18next, typically) and passes it in as `t`. What the runtime
+provides is the mechanism to **re-translate live DOM** when the language
+changes:
+
+```javascript
+refresh_language(element, t)     // element defaults to `document`
+```
+
+It only re-translates a node that **carries its key**, so passing a string
+through `t()` once at build time is not enough — that text is frozen in the
+mount-time language for the life of the view. Tag the DOM instead:
+
+| Attribute | Re-translates |
+|---|---|
+| `data-i18n` | the element's first text node |
+| `data-i18n-title` | the `title` attribute (hover tooltip) |
+| `data-i18n-aria-label` | the `aria-label` (assistive-tech name) |
+| `data-i18n-placeholder` | the `placeholder` of an input/textarea |
+
+The three attribute variants exist because `data-i18n` walks **text nodes**,
+which cannot reach an attribute. Anything a third-party **widget** draws is
+reachable by none of them — re-render it from the language-change handler
+instead.
+
+**A missing key is invisible**: i18next answers an unknown key with the key
+itself, so it renders as lower-case English and never changes language. Do not
+compose data into a key either (`` `${key} · ${t(mode)}` ``) — split it so each
+translatable half carries its own key.
 
 ### String Formatting
 
@@ -599,6 +653,10 @@ register_c_yuno();
 ```
 
 Key attributes: `yuno_name`, `yuno_role`, `yuno_id`, `yuno_version`, `yuno_release`, `yuneta_version`, `required_services`, `tracing`, `start_date`, `node_uuid`, `__username__`
+
+The yuno's `required_services` is the **fallback** for links that declare none
+of their own. A multi-link yuno should set the list on each `C_IEVENT_CLI`
+instead — see [C_IEVENT_CLI](#c_ievent_cli) below.
 
 ### C_TIMER
 
@@ -638,7 +696,23 @@ let remote = gobj_create_service("backend", "C_IEVENT_CLI", {
 }, gobj_yuno());
 ```
 
-Key attributes: `url`, `jwt`, `wanted_yuno_role`, `wanted_yuno_name`, `wanted_yuno_service`, `remote_yuno_role`, `remote_yuno_name`, `remote_yuno_service`
+Key attributes: `url`, `jwt`, `wanted_yuno_role`, `wanted_yuno_name`, `wanted_yuno_service`, `remote_yuno_role`, `remote_yuno_name`, `remote_yuno_service`, `required_services`, `timeout_retry`, `timeout_retry_max`
+
+**`required_services`** (default `[]`) is the list this link advertises in its
+identity_card, which the remote's `C_AUTHZ` uses to authorize commands. It is
+**per link**: empty falls back to the yuno's own `required_services`, so a
+single-link yuno needs nothing. A **multi-link** yuno must set it per link — a
+yuno-wide list can only be the union of every backend's services, so each
+backend would be handed the service names of all the others, and get a card
+naming services it does not host.
+
+**Reconnect backoff.** A dropped link retries after `timeout_retry` (5s), then
+**doubles** up to `timeout_retry_max` (60s), with ±20% jitter. The jitter is
+what breaks lockstep, so N links that dropped together do not stampede a backend
+that is just coming back. The backoff resets when a session is actually reached,
+and on `mt_start` — a deliberate reconnect never inherits a previous run's
+penalty. For the old fixed-interval behaviour set `timeout_retry_max` equal to
+`timeout_retry`.
 
 ---
 
