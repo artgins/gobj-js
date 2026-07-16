@@ -3188,6 +3188,17 @@ function refresh_language(element, t)
             elem.setAttribute('aria-label', t(value));
         }
     });
+
+    /*  Translate the `placeholder` attribute (inputs/textareas) for
+     *  any element carrying `data-i18n-placeholder="<canonical key>"`.
+     *  Same contract as data-i18n-title above — a placeholder is not a
+     *  text node, so the data-i18n walk cannot reach it. */
+    element.querySelectorAll('[data-i18n-placeholder]').forEach(function(elem) {
+        let value = elem.getAttribute('data-i18n-placeholder');
+        if(value) {
+            elem.setAttribute('placeholder', t(value));
+        }
+    });
 }
 
 /************************************************************

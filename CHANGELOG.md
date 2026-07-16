@@ -6,6 +6,11 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+- **feat(i18n): `refresh_language()` processes `data-i18n-placeholder`.** A
+  placeholder is an attribute, not a text node, so the `data-i18n` walk could
+  not reach it and an input's placeholder kept the mount-time language
+  forever (first consumer: gobj-ui's site-map filter). Same contract as
+  `data-i18n-title` / `data-i18n-aria-label`.
 - **feat(logging): `set_console_log_enabled(enabled)` gates the direct
   browser-console writes.** New exported switch (default **on** — unchanged
   behaviour) that silences the `console.*` output of `log_error` /
