@@ -6,6 +6,10 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+## 7.8.7
+
+Ships with SDK **7.8.7**. One behaviour change, shared with the C side.
+
 - **`C_IEVENT_CLI` matches `dst_role` the way the framework matches names.**
   The check was a strict `!==`, so a peer whose role differed only in letter
   case was dropped — while `gobj_find_service()` lowercases before looking a
