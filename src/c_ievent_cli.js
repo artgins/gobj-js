@@ -1251,7 +1251,7 @@ function ac_on_message(gobj, event, kw, src)
     let iev_dst_role = kw_get_str(gobj, event_id, "dst_role", "");
     // Check yuno_name too
 
-    if(iev_dst_role !== gobj_yuno_role()) {
+    if(iev_dst_role.toLowerCase() !== gobj_yuno_role().toLowerCase()) {
         log_error(`"It's not my role, dst_role: ${iev_dst_role}, my_role: ${gobj_yuno_role()}`);
         return 0;
     }

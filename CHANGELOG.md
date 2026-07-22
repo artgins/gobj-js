@@ -6,6 +6,16 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+- **`C_IEVENT_CLI` matches `dst_role` the way the framework matches names.**
+  The check was a strict `!==`, so a peer whose role differed only in letter
+  case was dropped — while `gobj_find_service()` lowercases before looking a
+  service up, and the C side compares roles and yuno names with `strcasecmp()`.
+  Now it compares lowercased, like the rest of the naming.
+
+  (`dst_yuno` is still not checked here — the `// Check yuno_name too` note
+  stays. The C client does check it; adding it to the browser client is a
+  separate decision.)
+
 ## 7.8.0
 
 Ships with SDK **7.8.0**. No BREAKING changes, but one behaviour a consumer will
