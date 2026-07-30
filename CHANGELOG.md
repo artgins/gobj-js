@@ -6,6 +6,39 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+## 7.9.4
+
+Ships with SDK **7.9.4**. One fix, applied identically on the C side
+(`kernel/c/gobj-c/src/gobj.c`) — the JS runtime is a port of that kernel and
+this was a shared defect, not a port slip.
+
+- **`gobj_destroy()` now actually stops the gobj it complains about.**
+  Destroying a live gobj is the caller's bug and the framework has always said
+  so out loud (*"Destroying a RUNNING gobj"* / *"Destroying a PLAYING gobj"*),
+  then tried to repair it by calling `gobj_stop()` / `gobj_pause()`. That
+  repair could never work: the destroying flag was raised **first**, and both
+  entry points refuse a destroying gobj — rightly so, nobody outside may stop
+  something already being dismantled. So the rescue died on its own guard,
+  emitting a second, misleading *"gobj NULL or DESTROYED"*, and `mt_stop` /
+  `mt_pause` never ran: the gobj was taken apart still holding its timers,
+  subscriptions and DOM listeners.
+
+  The pause/stop now happen **before** the flag goes up, so the gobj is
+  quiesced exactly as an orderly stop would leave it. That order also matters
+  for what `mt_stop` itself does: a gclass that stops its children there goes
+  through a path carrying the same guard, so with the flag already up the
+  whole subtree would have stayed running.
+
+  The complaint stays loud — the fix at the call site is still
+  `gobj_stop_tree()` before `gobj_destroy()`. What changed is that the
+  framework no longer pretends to repair it. This exact trap had been
+  diagnosed and fixed at the caller at least three times (gui_treedb's Keys
+  picker and Raw JSON viewer, yunovatios' shell teardown).
+
+  New unit tests (`tests/destroy_stops.test.js`) pin the order: `mt_stop`
+  before `mt_destroy`, pause before stop for a playing gobj, no second error,
+  and silence for a gobj that was never started.
+
 ## 7.8.7
 
 Ships with SDK **7.8.7**. One behaviour change, shared with the C side.

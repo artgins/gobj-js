@@ -1675,6 +1675,36 @@ function gobj_destroy(gobj)
     if(gobj.__refs__ > 0) {
         log_error(`${gobj_short_name(gobj)}: gobj DESTROYING with references: ${gobj.__refs__}`);
     }
+    /*--------------------------------------------------------*
+     *      Pause and Stop
+     *
+     *  BEFORE raising obflag_destroying, and that order is the
+     *  whole point: gobj_pause() and gobj_stop() refuse a gobj
+     *  that is already destroying -- rightly so, nobody OUTSIDE
+     *  may stop something already being dismantled -- so doing
+     *  this after the flag logged "gobj NULL or DESTROYED" and
+     *  quietly skipped mt_pause / mt_stop: the gobj was taken
+     *  apart without ever releasing its timers, subscriptions
+     *  and DOM listeners.  The two errors below are still loud:
+     *  destroying a live gobj remains the CALLER's bug, and the
+     *  fix there is gobj_stop_tree() before gobj_destroy().
+     *  What changed is that the rescue now runs instead of
+     *  pretending to.
+     *
+     *  Quiescing first also means mt_stop() sees exactly what an
+     *  orderly stop sees -- it matters for a gclass that stops
+     *  its children there, since that path carries the same
+     *  destroying guard.
+     *--------------------------------------------------------*/
+    if(gobj.playing) {
+        log_error(`Destroying a PLAYING gobj: ${gobj_full_name(gobj)}`);
+        gobj_pause(gobj);
+    }
+    if(gobj.running) {
+        log_error(`Destroying a RUNNING gobj: ${gobj_full_name(gobj)}`);
+        gobj_stop(gobj);
+    }
+
     gobj.obflag |= obflag_t.obflag_destroying;
 
     let trace_creation = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_creation");
@@ -1702,22 +1732,6 @@ function gobj_destroy(gobj)
      *--------------------------------*/
     if(gobj.gobj_flag & gobj_flag_t.gobj_flag_service) {
         _deregister_service(gobj);
-    }
-
-    /*--------------------------------*
-     *      Pause
-     *--------------------------------*/
-    if(gobj.playing) {
-        log_error(`Destroying a PLAYING gobj: ${gobj_full_name(gobj)}`);
-        gobj_pause(gobj);
-    }
-
-    /*--------------------------------*
-     *      Stop
-     *--------------------------------*/
-    if(gobj.running) {
-        log_error(`Destroying a RUNNING gobj: ${gobj_full_name(gobj)}`);
-        gobj_stop(gobj);
     }
 
     /*--------------------------------*
