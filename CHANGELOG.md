@@ -6,6 +6,12 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+## 7.9.5
+
+A gobj-js-only patch, ahead of the SDK: the JS runtime gets back the trace
+that makes the framework debuggable, and a failure path that crashed outside
+a browser.
+
 ### Added
 
 - **The `machine` trace is back, and it is the C kernel's.** The JS port had
