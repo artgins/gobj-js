@@ -6,6 +6,14 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+### Fixed
+
+- **`tab()` indents by 2 spaces per level, like `gobj.c`.** It was `2n - 1`,
+  one space short at every level, so a JS trace read beside a node's did not
+  line up — and the C version never returns zero either (it writes the first
+  space before its loop). Pinned by a test that nests one event inside
+  another's action and checks the two leading widths.
+
 ## 7.9.5
 
 A gobj-js-only patch, ahead of the SDK: the JS runtime gets back the trace

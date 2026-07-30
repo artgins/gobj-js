@@ -64,6 +64,7 @@ SDATA_END()
 
 let dst = null;
 let src = null;
+let nester = null;
 
 beforeAll(() => {
     gobj_start_up(null, null, null, null, null, null, null);
@@ -84,10 +85,23 @@ beforeAll(() => {
     );
     gclass_create("C_SENDER", [], [["ST_IDLE", []]], {}, 0, [SDATA_END()], {}, 0, 0, 0, 0);
 
+    /*  A gobj whose action sends ANOTHER event: the only way to get a
+     *  nested line, which is what the indentation is for.  */
+    gclass_create(
+        "C_NESTER",
+        [["EV_OUTER", 0]],
+        [["ST_IDLE", [
+            ["EV_OUTER", (gobj) => gobj_send_event(dst, "EV_PING", {}, gobj), null]
+        ]]],
+        {}, 0, [SDATA_END()], {}, 0, 0, 0, 0
+    );
+
     const yuno = gobj_create_yuno("trace_yuno", "C_TRACE_YUNO", {});
     dst = gobj_create("traced", "C_TRACED", {}, yuno);
     src = gobj_create("sender", "C_SENDER", {}, yuno);
+    nester = gobj_create("nester", "C_NESTER", {}, yuno);
     gobj_start(dst);
+    gobj_start(nester);
 });
 
 beforeEach(() => {
@@ -178,6 +192,28 @@ describe("event-specific levels", () => {
         debugged.length = 0;
         gobj_send_event(dst, "EV_PING", {}, src);
         expect(traced()).toEqual([]);
+    });
+});
+
+describe("indentation", () => {
+    /*
+     *  The C kernel's tab() writes TWO spaces per level of __inside__,
+     *  starting at one: a line at depth 1 is indented 2, a line fired
+     *  from inside that action is indented 4. Reading a JS trace beside
+     *  a node's only works if they agree.
+     */
+    test("is two spaces per nesting level, like gobj.c", () => {
+        gobj_set_global_trace("machine", true);
+        gobj_send_event(nester, "EV_OUTER", {}, src);
+
+        const outer = debugged.find((l) => l.includes("EV_OUTER"));
+        const inner = debugged.find((l) => l.includes("EV_PING"));
+        expect(outer).toBeTruthy();
+        expect(inner).toBeTruthy();
+
+        const lead = (l) => l.length - l.replace(/^ +/, "").length;
+        expect(lead(outer)).toBe(2);
+        expect(lead(inner)).toBe(4);
     });
 });
 

@@ -342,9 +342,16 @@ class Event_Type { // C event_type_t
     }
 }
 
+/*
+ *  Indent a trace line by its nesting depth, the same as the C kernel's
+ *  tab() (gobj.c): TWO spaces per level of `__inside__`, and never zero
+ *  — it writes bf[0] before the loop, so even at depth 0 a line starts
+ *  one space in. This was `2n - 1` here, one short at every level, so a
+ *  trace read side by side with a node's did not line up.
+ */
 function tab()
 {
-    return ' '.repeat(Math.max(0, __inside__ * 2 - 1));
+    return ' '.repeat(Math.max(1, __inside__ * 2));
 }
 
 /*  Machine (automata) trace format, mirroring the C kernel:
