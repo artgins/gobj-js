@@ -598,6 +598,44 @@ a GUI route framework output — **including the automata/FSM trace, which arriv
 as `debug`** — into its own monitor window while keeping the browser console
 clean (gobj-ui's dev-window "Output" selector does exactly this).
 
+### Tracing: the `machine` trace, and the levels around it
+
+The FSM is where things happen, so the trace of the FSM **is** the execution
+log. The level model is the C kernel's — same names, same bits — so a level
+means one thing on both sides and a habit learned on a node transfers here.
+
+```javascript
+gobj_set_global_trace("machine", true)     // everything
+gobj_set_gclass_trace("C_MY_VIEW", "machine", true)
+gobj_set_gobj_trace(gobj, "ev_kw", true)   // + the kw of each event
+gobj_set_gobj_no_trace(noisy, "machine", true)   // veto, by the SOURCE gobj
+
+gobj_global_trace_level()                  // the mask in force
+gobj_trace_level(gobj)                     // global | gclass | gobj, combined
+gobj_repr_global_trace_levels()            // [{name, bit, description, set}]
+gobj_set_deep_trace(1)                     // everything, everywhere
+gobj_set_trace_machine_format(1)           // 1 = one compact line per transition
+```
+
+Levels: `machine`, `create_delete`, `create_delete2`, `subscriptions`,
+`start_stop`, `ev_kw`, `authzs`, `states`, `gbuffers`, `timer`, `fs`,
+`liburing`, `timer_periodic`, `liburing_timer`, `commands`. The ones that only
+exist on a node keep their bit rather than being dropped — removing them would
+shift every bit above and break that alignment.
+
+A gobj's effective level is the **union** of global, gclass and gobj.
+`timer` / `timer_periodic` light up for their own event only. And the veto is
+asked of the **source**, so one noisy sender can be silenced without turning
+the destination off.
+
+The trace arrives as `debug`, so **`set_log_callback()` is how you read it** —
+that is how a dev panel shows the machine inside the app, and how
+`doc.yuneta.io/navigation` feeds the panel under each of its demos.
+
+> The yuno attrs `tracing` / `trace_timer` / `trace_creation` /
+> `trace_start_stop` predate this and still work (gobj-ui's dev panel writes
+> them); they fold in as one more source of bits.
+
 ### i18n: `refresh_language` and the `data-i18n-*` family
 
 The runtime does not translate anything itself — the **app** owns the
