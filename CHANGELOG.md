@@ -6,6 +6,10 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+## 7.9.6
+
+One alignment fix, so a JS trace and a node's read the same.
+
 ### Fixed
 
 - **`tab()` indents by 2 spaces per level, like `gobj.c`.** It was `2n - 1`,
