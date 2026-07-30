@@ -26,24 +26,25 @@ import {
     gobj_play,
     gobj_destroy,
     gobj_is_running,
+    set_log_callback,
 } from "../src/index.js";
 
 const calls = [];
 const logged = [];
 
-/*  gobj-js logs through window.console -- it is written for the
- *  browser.  A small stub keeps these tests dependency-free (no jsdom
- *  for three lifecycle assertions) and, better, lets them READ the
- *  complaint: destroying a live gobj must stay loud as well as
- *  repaired. */
-globalThis.window = globalThis.window || {
-    console: {
-        error: (...a) => { logged.push(a.join(" ")); },
-        warn:  () => {},
-        log:   () => {},
-        info:  () => {}
+/*  The complaint is read through the framework's own log sink, which
+ *  is the supported way to mirror log lines somewhere else and works
+ *  with or without a browser.  (Stubbing window.console used to work
+ *  by accident: helpers.js resolved `window.console` at CALL time, so
+ *  a stub installed after the import still caught the line.  It also
+ *  meant any log_error OUTSIDE a browser threw ReferenceError, which
+ *  is now fixed -- hence this.)  These tests must still READ the
+ *  complaint: destroying a live gobj stays loud as well as repaired. */
+set_log_callback((level, msg) => {
+    if(level === "error") {
+        logged.push(String(msg));
     }
-};
+});
 
 const gmt = {
     mt_start:   () => { calls.push("mt_start"); return 0; },

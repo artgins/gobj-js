@@ -375,6 +375,345 @@ function trace_machine(msg)
     log_debug(tab() + String(msg));
 }
 
+
+/***************************************************************
+ *      Trace levels
+ *
+ *  The SAME names and the SAME bits as the C kernel (gobj.h's
+ *  enum + gobj.c's s_global_trace_level), so a level means one
+ *  thing across the two implementations and a habit learned on
+ *  one side transfers to the other. The levels that only exist
+ *  on a node (fs, liburing, gbuffers) keep their bit anyway:
+ *  dropping them would shift every bit above and break exactly
+ *  that alignment.
+ *
+ *  16 higher bits are global, 16 lower bits are per-gclass user
+ *  levels (`s_user_trace_level` in gclass_create).
+ ***************************************************************/
+const trace_level_t = Object.freeze({
+    TRACE_MACHINE:          0x00010000,
+    TRACE_CREATE_DELETE:    0x00020000,
+    TRACE_CREATE_DELETE2:   0x00040000,
+    TRACE_SUBSCRIPTIONS:    0x00080000,
+    TRACE_START_STOP:       0x00100000,
+    TRACE_EV_KW:            0x00200000,
+    TRACE_AUTHZS:           0x00400000,
+    TRACE_STATES:           0x00800000,
+    TRACE_GBUFFERS:         0x01000000,
+    TRACE_TIMER:            0x02000000,
+    TRACE_FS:               0x04000000,
+    TRACE_URING:            0x08000000,
+    TRACE_TIMER_PERIODIC:   0x10000000,
+    TRACE_URING_TIME:       0x20000000,
+    TRACE_COMMANDS:         0x40000000
+});
+
+const TRACE_USER_LEVEL    = 0x0000FFFF;
+const TRACE_GLOBAL_LEVEL1 = 0x0FFF0000;
+
+/*  Name → bit, in the C table's order. */
+const s_global_trace_level = [
+    ["machine",         trace_level_t.TRACE_MACHINE,        "Trace machine"],
+    ["create_delete",   trace_level_t.TRACE_CREATE_DELETE,  "Trace create/delete of gobjs"],
+    ["create_delete2",  trace_level_t.TRACE_CREATE_DELETE2, "Trace create/delete of gobjs level 2: with kw"],
+    ["subscriptions",   trace_level_t.TRACE_SUBSCRIPTIONS,  "Trace subscriptions of gobjs"],
+    ["start_stop",      trace_level_t.TRACE_START_STOP,     "Trace start/stop of gobjs"],
+    ["ev_kw",           trace_level_t.TRACE_EV_KW,          "Trace event keywords"],
+    ["authzs",          trace_level_t.TRACE_AUTHZS,         "Trace authorizations"],
+    ["states",          trace_level_t.TRACE_STATES,         "Trace change of states"],
+    ["gbuffers",        trace_level_t.TRACE_GBUFFERS,       "Trace gbuffers"],
+    ["timer",           trace_level_t.TRACE_TIMER,          "Trace timers"],
+    ["fs",              trace_level_t.TRACE_FS,             "Trace file system"],
+    ["liburing",        trace_level_t.TRACE_URING,          "Trace liburing mixins"],
+    ["timer_periodic",  trace_level_t.TRACE_TIMER_PERIODIC, "Trace periodic timers"],
+    ["liburing_timer",  trace_level_t.TRACE_URING_TIME,     "Trace liburing timer"],
+    ["commands",        trace_level_t.TRACE_COMMANDS,       "Trace commands"]
+];
+
+let __global_trace_level__ = 0;
+let __global_trace_no_level__ = 0;
+let __deep_trace__ = 0;
+
+function level2bit(level)
+{
+    for(const [name, bit] of s_global_trace_level) {
+        if(name === level) {
+            return bit;
+        }
+    }
+    return 0;
+}
+
+/*  A level name, a decimal bitmask as a string, or empty for "all". */
+function trace_bitmask(level, who)
+{
+    if(empty_string(level)) {
+        return TRACE_GLOBAL_LEVEL1;
+    }
+    if(/^[0-9]+$/.test(String(level))) {
+        const n = Number(level);
+        if(n) {
+            return n;
+        }
+    }
+    const bit = level2bit(String(level));
+    if(!bit) {
+        log_error(`${who}: trace level NOT FOUND: ${level}`);
+        return 0;
+    }
+    return bit;
+}
+
+/************************************************************
+ *  The levels in force for a gobj: global, plus its gclass's,
+ *  plus its own — the union, exactly as the C kernel computes
+ *  it in gobj_trace_level().
+ ************************************************************/
+function gobj_trace_level(gobj)
+{
+    if(__deep_trace__) {
+        return 0xFFFFFFFF;
+    }
+    let bitmask = __global_trace_level__;
+    if(gobj) {
+        bitmask |= gobj.trace_level || 0;
+        if(gobj.gclass) {
+            bitmask |= gobj.gclass.trace_level || 0;
+        }
+    }
+    return bitmask;
+}
+
+function gobj_trace_no_level(gobj)
+{
+    let bitmask = __global_trace_no_level__;
+    if(gobj) {
+        bitmask |= gobj.no_trace_level || 0;
+        if(gobj.gclass) {
+            bitmask |= gobj.gclass.no_trace_level || 0;
+        }
+    }
+    return bitmask;
+}
+
+/*
+ *  The yuno attrs `tracing` / `trace_timer` / `trace_creation` /
+ *  `trace_start_stop` predate this and are what gobj-ui's dev panel
+ *  writes. They stay, folded in here as one more source of bits, so
+ *  the panel keeps working unchanged while the level API above is the
+ *  one that matches the C kernel. `tracing >= 2` is the old way of
+ *  asking for the kw dump, i.e. ev_kw.
+ */
+function legacy_yuno_trace_bits()
+{
+    if(!__yuno__ || !__yuno__.jn_attrs) {
+        return 0;
+    }
+    /*  Every read is guarded: these are OPTIONAL attrs of whatever
+     *  gclass the app uses as its yuno, and probing one that is not
+     *  declared logs "GClass Attribute NOT FOUND" — a trace lookup has
+     *  no business making noise.  */
+    let bits = 0;
+    if(gobj_has_attr(__yuno__, "tracing")) {
+        const tracing = Number(gobj_read_attr(__yuno__, "tracing")) || 0;
+        if(tracing >= 1) {
+            bits |= trace_level_t.TRACE_MACHINE;
+        }
+        if(tracing >= 2) {
+            bits |= trace_level_t.TRACE_EV_KW;
+        }
+    }
+    if(gobj_has_attr(__yuno__, "trace_timer") && gobj_read_attr(__yuno__, "trace_timer")) {
+        bits |= trace_level_t.TRACE_TIMER;
+    }
+    if(gobj_has_attr(__yuno__, "trace_creation") && gobj_read_attr(__yuno__, "trace_creation")) {
+        bits |= trace_level_t.TRACE_CREATE_DELETE;
+    }
+    if(gobj_has_attr(__yuno__, "trace_start_stop") && gobj_read_attr(__yuno__, "trace_start_stop")) {
+        bits |= trace_level_t.TRACE_START_STOP;
+    }
+    return bits;
+}
+
+function __trace_gobj_create_delete__(gobj)
+{
+    return (gobj_trace_level(gobj) | legacy_yuno_trace_bits()) & trace_level_t.TRACE_CREATE_DELETE;
+}
+
+function __trace_gobj_subscriptions__(gobj)
+{
+    return gobj_trace_level(gobj) & trace_level_t.TRACE_SUBSCRIPTIONS;
+}
+
+function __trace_gobj_start_stop__(gobj)
+{
+    return (gobj_trace_level(gobj) | legacy_yuno_trace_bits()) & trace_level_t.TRACE_START_STOP;
+}
+
+function __trace_gobj_ev_kw__(gobj)
+{
+    return (gobj_trace_level(gobj) | legacy_yuno_trace_bits()) & trace_level_t.TRACE_EV_KW;
+}
+
+function __trace_gobj_states__(gobj)
+{
+    return gobj_trace_level(gobj) & trace_level_t.TRACE_STATES;
+}
+
+/************************************************************
+ *  Must trace? — the C kernel's is_machine_tracing(), including
+ *  the two event-specific levels: `timer` and `timer_periodic`
+ *  light up only for their own event.
+ ************************************************************/
+function is_machine_tracing(gobj, event)
+{
+    if(__deep_trace__ > 1) {
+        return true;
+    }
+    if(!gobj) {
+        return false;
+    }
+    const level = gobj_trace_level(gobj) | legacy_yuno_trace_bits();
+    const trace =
+        (level & trace_level_t.TRACE_MACHINE) ||
+        ((level & trace_level_t.TRACE_TIMER_PERIODIC) && event === "EV_TIMEOUT_PERIODIC") ||
+        ((level & trace_level_t.TRACE_TIMER) && event === "EV_TIMEOUT");
+
+    return trace ? true : false;
+}
+
+/************************************************************
+ *  Must NOT trace? Asked of the SOURCE, so a noisy sender can
+ *  be silenced without turning the destination off.
+ ************************************************************/
+function is_machine_not_tracing(gobj, event)
+{
+    if(__deep_trace__ > 1) {
+        return false;
+    }
+    if(!gobj) {
+        return true;
+    }
+    const level = gobj_trace_no_level(gobj);
+    const no_trace =
+        (level & trace_level_t.TRACE_MACHINE) ||
+        ((level & trace_level_t.TRACE_TIMER_PERIODIC) && event === "EV_TIMEOUT_PERIODIC") ||
+        ((level & trace_level_t.TRACE_TIMER) && event === "EV_TIMEOUT");
+
+    return no_trace ? true : false;
+}
+
+/************************************************************
+ *      The setters — same signatures as the C kernel
+ ************************************************************/
+function gobj_set_global_trace(level, set)
+{
+    const bitmask = trace_bitmask(level, "gobj_set_global_trace");
+    if(!bitmask) {
+        return -1;      /*  Error already logged  */
+    }
+    if(set) {
+        __global_trace_level__ |= bitmask;
+    } else {
+        __global_trace_level__ &= ~bitmask;
+    }
+    return 0;
+}
+
+function gobj_set_global_no_trace(level, set)
+{
+    const bitmask = trace_bitmask(level, "gobj_set_global_no_trace");
+    if(!bitmask) {
+        return -1;      /*  Error already logged  */
+    }
+    if(set) {
+        __global_trace_no_level__ |= bitmask;
+    } else {
+        __global_trace_no_level__ &= ~bitmask;
+    }
+    return 0;
+}
+
+function gobj_global_trace_level()
+{
+    return __global_trace_level__;
+}
+
+/*  Everything at once, for a session that is chasing something. */
+function gobj_set_deep_trace(value)
+{
+    __deep_trace__ = Number(value) || 0;
+    return 0;
+}
+
+/*
+ *  Per gclass: `gclass` is the gclass object or its name, so the
+ *  caller does not need a handle it may not have.
+ */
+function gobj_set_gclass_trace(gclass, level, set)
+{
+    const gclass_ = is_string(gclass) ? gclass_find_by_name(gclass) : gclass;
+    if(!gclass_) {
+        log_error(`gobj_set_gclass_trace: gclass NOT FOUND: ${gclass}`);
+        return -1;
+    }
+    const bitmask = trace_bitmask(level, "gobj_set_gclass_trace");
+    if(!bitmask) {
+        return -1;      /*  Error already logged  */
+    }
+    if(set) {
+        gclass_.trace_level |= bitmask;
+    } else {
+        gclass_.trace_level &= ~bitmask;
+    }
+    return 0;
+}
+
+function gobj_set_gobj_trace(gobj, level, set)
+{
+    if(!gobj) {
+        log_error(`gobj_set_gobj_trace: gobj NULL`);
+        return -1;
+    }
+    const bitmask = trace_bitmask(level, "gobj_set_gobj_trace");
+    if(!bitmask) {
+        return -1;      /*  Error already logged  */
+    }
+    if(set) {
+        gobj.trace_level |= bitmask;
+    } else {
+        gobj.trace_level &= ~bitmask;
+    }
+    return 0;
+}
+
+function gobj_set_gobj_no_trace(gobj, level, set)
+{
+    if(!gobj) {
+        log_error(`gobj_set_gobj_no_trace: gobj NULL`);
+        return -1;
+    }
+    const bitmask = trace_bitmask(level, "gobj_set_gobj_no_trace");
+    if(!bitmask) {
+        return -1;      /*  Error already logged  */
+    }
+    if(set) {
+        gobj.no_trace_level |= bitmask;
+    } else {
+        gobj.no_trace_level &= ~bitmask;
+    }
+    return 0;
+}
+
+/*  The catalogue, for a dev panel or a "what can I turn on?" list. */
+function gobj_repr_global_trace_levels()
+{
+    return s_global_trace_level.map(([name, bit, description]) => ({
+        name: name, bit: bit, description: description,
+        set: (__global_trace_level__ & bit) ? true : false
+    }));
+}
+
 /************************************************************
  *      Start up
  ************************************************************/
@@ -1498,8 +1837,8 @@ function gobj_create2(
         }
     }
 
-    let trace_creation = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_creation");
-    if(trace_creation) { // if(__trace_gobj_create_delete__(gobj))
+    let trace_creation = __trace_gobj_create_delete__(gobj);
+    if(trace_creation) {
         trace_machine(sprintf("💙💙⏩ creating: %s^%s",
             gclass.gclass_name, gobj_name
         ));
@@ -1562,7 +1901,7 @@ function gobj_create2(
      *  when the child is full operative
      *-------------------------------------*/
     if(parent && parent.gclass.gmt.mt_child_added) {
-        if(trace_creation) { // if(__trace_gobj_create_delete__(gobj))
+        if(trace_creation) {
             trace_machine(sprintf(
                 "👦👦🔵 child_added(%s): %s",
                 gobj_full_name(parent),
@@ -1572,7 +1911,7 @@ function gobj_create2(
         parent.gclass.gmt.mt_child_added(parent, gobj);
     }
 
-    if(trace_creation) { // if(__trace_gobj_create_delete__(gobj))
+    if(trace_creation) {
         trace_machine(sprintf("💙💙⏪ created: %s", gobj_full_name(gobj)));
     }
 
@@ -1707,8 +2046,8 @@ function gobj_destroy(gobj)
 
     gobj.obflag |= obflag_t.obflag_destroying;
 
-    let trace_creation = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_creation");
-    if(trace_creation) { // if(__trace_gobj_create_delete__(gobj))
+    let trace_creation = __trace_gobj_create_delete__(gobj);
+    if(trace_creation) {
         trace_machine(sprintf("💔💔⏩ destroying: %s", gobj_full_name(gobj)));
     }
 
@@ -1718,7 +2057,7 @@ function gobj_destroy(gobj)
      *----------------------------------------------*/
     let parent = gobj_parent(gobj);
     if(parent && parent.gclass.gmt.mt_child_removed) {
-        if(trace_creation) { // if(__trace_gobj_create_delete__(gobj))
+        if(trace_creation) {
             trace_machine(sprintf("👦👦🔴 child_removed(%s): %s",
                 gobj_full_name(parent),
                 gobj_short_name(gobj)
@@ -1774,7 +2113,7 @@ function gobj_destroy(gobj)
     /*--------------------------------*
      *      Mark as destroyed
      *--------------------------------*/
-    if(trace_creation) { // if(__trace_gobj_create_delete__(gobj))
+    if(trace_creation) {
         trace_machine(sprintf("💔💔⏪ destroyed: %s", gobj_full_name(gobj)));
     }
     gobj.obflag |= obflag_t.obflag_destroyed;
@@ -1836,8 +2175,7 @@ function gobj_start(gobj)
     //     return -1;
     // }
 
-    //if(__trace_gobj_start_stop__(gobj)) {
-    let tracea = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_start_stop");
+    let tracea = __trace_gobj_start_stop__(gobj);
     if(tracea) {
         trace_machine(sprintf("⏺ ⏺ start: %s",
             gobj_full_name(gobj)
@@ -1899,8 +2237,7 @@ function gobj_start_tree(gobj)
         return -1;
     }
 
-    // if(__trace_gobj_start_stop__(gobj)) {
-    let tracea = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_start_stop");
+    let tracea = __trace_gobj_start_stop__(gobj);
     if(tracea) {
         trace_machine(sprintf("⏺ ⏺ ⏺ ⏺ start_tree: %s",
             gobj_full_name(gobj)
@@ -1938,8 +2275,7 @@ function gobj_stop(gobj)
         gobj_pause(gobj);
     }
 
-    // if(__trace_gobj_start_stop__(gobj)) {
-    let tracea = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_start_stop");
+    let tracea = __trace_gobj_start_stop__(gobj);
     if(tracea) {
         trace_machine(sprintf("⏹ ⏹ stop: %s",
             gobj_full_name(gobj)
@@ -1986,8 +2322,7 @@ function gobj_stop_tree(gobj)
         return -1;
     }
 
-    let tracea = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_start_stop");
-    // if(__trace_gobj_start_stop__(gobj)) {
+    let tracea = __trace_gobj_start_stop__(gobj);
     if(tracea) {
         trace_machine(sprintf("⏹ ⏹ ⏹ ⏹ stop_tree: %s",
             gobj_full_name(gobj)
@@ -2028,9 +2363,8 @@ function gobj_play(gobj)
         }
     }
 
-    let tracea = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_start_stop");
+    let tracea = __trace_gobj_start_stop__(gobj);
     if(tracea) {
-    // if(__trace_gobj_start_stop__(gobj)) {
         trace_machine(sprintf("⏯ ⏯ play: %s",
             gobj_full_name(gobj)
         ));
@@ -2062,9 +2396,8 @@ function gobj_pause(gobj)
         return -1;
     }
 
-    let tracea = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_start_stop");
+    let tracea = __trace_gobj_start_stop__(gobj);
     if(tracea) {
-    // if(__trace_gobj_start_stop__(gobj)) {
         trace_machine(sprintf("⏸ ⏸ pause: %s",
             gobj_full_name(gobj)
         ));
@@ -3187,20 +3520,16 @@ function gobj_change_state(gobj, state_name)
     gobj.last_state = gobj.current_state;
     gobj.current_state = new_state;
 
-    // let tracea = is_machine_tracing(gobj, EV_STATE_CHANGED);
-    // let tracea_states = __trace_gobj_states__(gobj)?true:false;
-    // if(tracea || tracea_states) {
-    //     trace_machine(sprintf("🔀🔀 mach(%s%s^%s), new st(%s%s%s), prev st(%s%s%s)",
-    //         (!gobj.running)?"!!":"",
-    //         gobj_gclass_name(gobj), gobj_name(gobj),
-    //         On_Black RGreen,
-    //         gobj_current_state(gobj),
-    //         Color_Off,
-    //         On_Black RGreen,
-    //         gobj.last_state.state_name,
-    //         Color_Off
-    //     ));
-    // }
+    let tracea = is_machine_tracing(gobj, "EV_STATE_CHANGED");
+    let tracea_states = __trace_gobj_states__(gobj) ? true : false;
+    if(tracea || tracea_states) {
+        trace_machine(sprintf("🔀🔀 mach(%s%s^%s), new st(%s), prev st(%s)",
+            (!gobj.running)?"!!":"",
+            gobj_gclass_name(gobj), gobj_name(gobj),
+            gobj_current_state(gobj),
+            gobj.last_state.state_name
+        ));
+    }
 
     // TODO let kw_st = {};
     // kw_st["previous_state"] = gobj.last_state.state_name;
@@ -3270,8 +3599,8 @@ function gobj_change_parent(gobj, parent)
      *  Inform to parent
      *-------------------------------------*/
     if(parent.mt_child_added) {
-        let trace_creation = __yuno__ && gobj_read_bool_attr(__yuno__, "trace_creation");
-        if(trace_creation) { // if(__trace_gobj_create_delete__(gobj))
+        let trace_creation = __trace_gobj_create_delete__(gobj);
+        if(trace_creation) {
             log_debug(sprintf("👦👦🔵 child_added(%s): %s", gobj_full_name(parent), gobj_short_name(gobj)));
         }
         parent.mt_child_added(parent, gobj);
@@ -3392,11 +3721,7 @@ function gobj_send_event(dst, event, kw, src)
     /*----------------------------------*
      *  Find the event/action in state
      *----------------------------------*/
-    let tracea = 0; // TODO is_machine_tracing(dst, event) && !is_machine_not_tracing(src, event);
-    tracea = __yuno__ && gobj_read_integer_attr(__yuno__, "tracing");
-    if(gobj_gclass_name(src) === "C_TIMER") {
-        tracea = __yuno__ && gobj_read_integer_attr(__yuno__, "trace_timer");
-    }
+    let tracea = is_machine_tracing(dst, event) && !is_machine_not_tracing(src, event);
 
     __inside__ ++;
 
@@ -3481,7 +3806,7 @@ function gobj_send_event(dst, event, kw, src)
             ));
         }
         if(kw) {
-            if(tracea > 1) { //if(__trace_gobj_ev_kw__(dst)) {
+            if(__trace_gobj_ev_kw__(dst)) {
                 if(json_object_size(kw)) {
                     trace_json(kw);
                 }
@@ -4600,6 +4925,17 @@ export {
     gobj_name,
     gobj_gclass_name,
     gobj_short_name,
+    trace_level_t,
+    gobj_set_global_trace,
+    gobj_set_global_no_trace,
+    gobj_global_trace_level,
+    gobj_set_gclass_trace,
+    gobj_set_gobj_trace,
+    gobj_set_gobj_no_trace,
+    gobj_set_deep_trace,
+    gobj_trace_level,
+    gobj_trace_no_level,
+    gobj_repr_global_trace_levels,
     gobj_set_trace_machine_format,
     gobj_trace_machine_format,
     gobj_full_name,

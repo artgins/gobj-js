@@ -6,6 +6,45 @@ ahead of the SDK version between releases.
 
 ## Unreleased
 
+### Added
+
+- **The `machine` trace is back, and it is the C kernel's.** The JS port had
+  the trace lines written but disconnected: `tracea` was hard-wired to a yuno
+  attr in `gobj_send_event`, and the calls in `gobj_change_state`,
+  `gobj_start`/`gobj_stop` and create/delete were commented out. The whole
+  level model from `gobj.c` is now in place, with the **same names and the same
+  bits** so a level means one thing on both sides:
+
+  ```js
+  gobj_set_global_trace("machine", true);      // everything
+  gobj_set_gclass_trace("C_TREEDB_VIEW", "machine", true);
+  gobj_set_gobj_trace(gobj, "ev_kw", true);    // + the kw of each event
+  gobj_set_gobj_no_trace(noisy_src, "machine", true);   // veto by SOURCE
+  ```
+
+  Levels: `machine`, `create_delete`, `create_delete2`, `subscriptions`,
+  `start_stop`, `ev_kw`, `authzs`, `states`, `gbuffers`, `timer`, `fs`,
+  `liburing`, `timer_periodic`, `liburing_timer`, `commands`. The node-only
+  ones keep their bit rather than being dropped — removing them would shift
+  every bit above and break exactly the alignment this is for. As in C, a
+  gobj's effective level is the **union** of global, gclass and gobj; `timer`
+  and `timer_periodic` light up for their own event only; and the SOURCE can
+  veto a trace the destination allows. Read it with `set_log_callback()`.
+
+  The pre-existing yuno attrs (`tracing`, `trace_timer`, `trace_creation`,
+  `trace_start_stop`) still work — gobj-ui's dev panel writes them — and are
+  folded in as one more source of bits, guarded so probing a yuno that does
+  not declare them no longer logs *"GClass Attribute NOT FOUND"*.
+
+### Fixed
+
+- **`log_error` / `log_warning` threw `ReferenceError: window is not defined`
+  outside a browser.** Both reached for `window.console` directly, in the very
+  path that reports a failure, so on Node (a test, a build step, SSR) the error
+  being reported was replaced by a crash. They now use the module's already
+  guarded `_console` — identical behaviour in a browser. Found by the new trace
+  tests, which log an error on purpose to check an unknown level is refused.
+
 ## 7.9.4
 
 Ships with SDK **7.9.4**. One fix, applied identically on the C side

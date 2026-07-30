@@ -153,13 +153,13 @@ function log_error(format)
     let hora = current_timestamp();
 
     if(f_error) {
-        if(f_error === window.console.error) {
+        if(f_error === _console.error) {
             if(__console_output_enabled__) {
                 f_error("%c" + hora + " ERROR: " + String(msg), "color:red");
             }
         } else {
             if(__console_output_enabled__) {
-                window.console.error("%c" + hora + " ERROR: " + String(msg), "color:red");
+                _console.error("%c" + hora + " ERROR: " + String(msg), "color:red");
             }
             f_error(`${hora} ERROR: ${String(msg)}`);
         }
@@ -173,13 +173,13 @@ function log_warning(format)
     let hora = current_timestamp();
 
     if(f_warning) {
-        if(f_warning === window.console.warn) {
+        if(f_warning === _console.warn) {
             if(__console_output_enabled__) {
                 f_warning("%c" + hora + " WARNING: " + String(msg), "color:yellow");
             }
         } else {
             if(__console_output_enabled__) {
-                window.console.warn("%c" + hora + " WARNING: " + String(msg), "color:yellow");
+                _console.warn("%c" + hora + " WARNING: " + String(msg), "color:yellow");
             }
             f_warning(`${hora} WARNING: ${String(msg)}`);
         }
