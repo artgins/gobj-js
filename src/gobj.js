@@ -694,6 +694,35 @@ function gobj_set_gobj_trace(gobj, level, set)
     return 0;
 }
 
+/*
+ *  Per gclass, the SILENCING side. What every C main() uses to keep
+ *  the timers out of a `machine` trace:
+ *
+ *      gobj_set_gclass_no_trace("C_TIMER", "machine", true);
+ *      gobj_set_global_no_trace("timer_periodic", true);
+ *
+ *  `machine` traces every event by design, timers included, so without
+ *  this a one-second tick buries whatever you were following.
+ */
+function gobj_set_gclass_no_trace(gclass, level, set)
+{
+    const gclass_ = is_string(gclass) ? gclass_find_by_name(gclass) : gclass;
+    if(!gclass_) {
+        log_error(`gobj_set_gclass_no_trace: gclass NOT FOUND: ${gclass}`);
+        return -1;
+    }
+    const bitmask = trace_bitmask(level, "gobj_set_gclass_no_trace");
+    if(!bitmask) {
+        return -1;      /*  Error already logged  */
+    }
+    if(set) {
+        gclass_.no_trace_level |= bitmask;
+    } else {
+        gclass_.no_trace_level &= ~bitmask;
+    }
+    return 0;
+}
+
 function gobj_set_gobj_no_trace(gobj, level, set)
 {
     if(!gobj) {
@@ -4938,6 +4967,7 @@ export {
     gobj_global_trace_level,
     gobj_set_gclass_trace,
     gobj_set_gobj_trace,
+    gobj_set_gclass_no_trace,
     gobj_set_gobj_no_trace,
     gobj_set_deep_trace,
     gobj_trace_level,

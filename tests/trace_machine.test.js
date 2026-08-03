@@ -34,6 +34,7 @@ import {
     gobj_set_gclass_trace,
     gobj_set_gobj_trace,
     gobj_set_gobj_no_trace,
+    gobj_set_gclass_no_trace,
     gobj_global_trace_level,
     gobj_trace_level,
     gobj_repr_global_trace_levels,
@@ -116,6 +117,7 @@ beforeEach(() => {
         gobj_set_gclass_trace("C_TRACED", lvl, false);
         gobj_set_gobj_trace(dst, lvl, false);
         gobj_set_gobj_no_trace(src, lvl, false);
+        gobj_set_gclass_no_trace("C_SENDER", lvl, false);
     }
 });
 
@@ -168,6 +170,27 @@ describe("machine trace", () => {
         gobj_set_gobj_no_trace(src, "machine", true);
         gobj_send_event(dst, "EV_PING", {}, src);
         expect(traced()).toEqual([]);
+    });
+
+    /*  What every C main() does to keep the timers out of a machine
+     *  trace: silence the noisy gclass, not the level you are chasing.  */
+    test("a whole GCLASS can be silenced, by name", () => {
+        gobj_set_global_trace("machine", true);
+        gobj_set_gclass_no_trace("C_SENDER", "machine", true);
+        gobj_send_event(dst, "EV_PING", {}, src);
+        expect(traced()).toEqual([]);
+    });
+
+    test("silencing a gclass is reversible", () => {
+        gobj_set_global_trace("machine", true);
+        gobj_set_gclass_no_trace("C_SENDER", "machine", true);
+        gobj_set_gclass_no_trace("C_SENDER", "machine", false);
+        gobj_send_event(dst, "EV_PING", {}, src);
+        expect(traced().length).toBeGreaterThan(0);
+    });
+
+    test("an unknown gclass name is reported, not thrown", () => {
+        expect(gobj_set_gclass_no_trace("C_DOES_NOT_EXIST", "machine", true)).toBe(-1);
     });
 });
 

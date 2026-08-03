@@ -4,6 +4,26 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.9.9
+
+- **`gobj_set_gclass_no_trace()`** — the silencing setter the C kernel has and
+  this port did not. The field was already there and already consulted
+  (`gobj_trace_no_level()` ORs `gclass.no_trace_level`); only the setter was
+  missing, so the idiom every C `main()` uses could not be written in JS:
+
+  ```js
+  gobj_set_gclass_no_trace("C_TIMER", "machine", true);
+  gobj_set_global_no_trace("timer_periodic", true);
+  ```
+
+  `machine` traces every event by design — timers included, exactly as
+  `gobj.c` does it — so without this a one-second periodic tick buries
+  whatever you were trying to follow. Silence the noisy gclass, not the level
+  you are chasing.
+
+  Also realigns the package with `YUNETA_VERSION`, which had drifted (7.9.6
+  against an SDK at 7.9.9).
+
 ## Unreleased
 
 ## 7.9.6
