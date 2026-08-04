@@ -24,6 +24,37 @@ ahead of the SDK version between releases.
   Also realigns the package with `YUNETA_VERSION`, which had drifted (7.9.6
   against an SDK at 7.9.9).
 
+## 7.9.10
+
+- **`C_TIMER`: `set_timeout()` arms and `clear_timeout()` disarms — and that is
+  the whole contract**, as in C (`c_timer.h`). Whether the gobj is running was
+  leaking out as the caller's problem: every view had to pair its
+  `set_timeout()` with a `gobj_start()`, and remember a `gobj_stop()` on the way
+  out or get *"Destroying a RUNNING gobj"*. In C `set_timeout()` starts,
+  `clear_timeout()` stops, and a spent one-shot stops itself; here none of the
+  three happened.
+
+  The running state now follows the timeout, and it follows it in **`mt_writing`
+  on the `msec` attribute**, not in the helpers. The attribute is the real
+  interface — `set_timeout()`/`clear_timeout()` are PUBLIC functions on a gclass,
+  which is an escape from the interface every other gclass keeps to, so they must
+  be sugar and nothing else. `gobj_write_integer_attr(timer, "msec", 1000)` now
+  leaves the timer exactly as `set_timeout()` would.
+
+  **BREAKING for callers that stop the timer themselves.** `clear_timeout()`
+  already stopped it, so a following `gobj_stop()` finds it stopped and logs
+  *"GObj NOT RUNNING"*. Drop the `gobj_start()`/`gobj_stop()` pair around a
+  C_TIMER: the two calls are the whole surface. Every in-tree consumer was
+  migrated with this release.
+
+- **A periodic timer cleared from inside its own action really stops.** The
+  re-arm ran *after* the action, so it undid the `clear_timeout()` and re-armed
+  with the `msec` the clear had just written — a negative delay, which
+  `setTimeout()` serves immediately: the timer became a busy loop instead of
+  stopping. It re-arms *before* delivering now, which is also what keeps the
+  period from carrying the execution time of the action (the reason C does it in
+  that order).
+
 ## Unreleased
 
 ## 7.9.6

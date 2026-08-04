@@ -2,10 +2,22 @@
  *          c_timer.js
  *
  *          GClass Timer
- *          High-level, feed timers from periodic time of yuno
- *          IN SECONDS! although the parameter is in milliseconds (msec)
+ *          High-level timer, fed by the browser's own timer service
  *
- *          Copyright (c) 2025, ArtGins.
+ *          Don't use gobj_start()/gobj_stop(), USE set_timeout..(), clear_timeout()
+ *
+ *          The CONTRACT is the C one (see c_timer.h), and it is the whole
+ *          public surface: set_timeout() arms, clear_timeout() disarms, and
+ *          a one-shot is done once it fires. Whether the gobj is running is
+ *          an INTERNAL matter of this gclass -- nobody asking for a timeout
+ *          has to know it exists, and no caller should have to pair a
+ *          set_timeout() with a gobj_start() to make it work.
+ *
+ *          What feeds the timer is the only thing that differs from C, and
+ *          it is deliberately invisible from outside: there the gobj rides
+ *          the yuno's one-second heartbeat, here it is a native setTimeout().
+ *
+ *          Copyright (c) 2025-2026, ArtGins.
  *          All Rights Reserved.
  ****************************************************************************/
 
@@ -20,6 +32,9 @@ import {
     gobj_parent,
     gobj_send_event,
     gobj_publish_event,
+    gobj_start,
+    gobj_stop,
+    gobj_is_running,
     gobj_read_bool_attr,
     gobj_read_integer_attr,
     gobj_read_pointer_attr,
@@ -115,6 +130,29 @@ function mt_writing(gobj, path)
                     priv.msec
                 );
             }
+
+            /*
+             *  The running state follows the timeout, and it follows it HERE,
+             *  on the attribute write -- not in the set_timeout()/clear_timeout()
+             *  helpers. The attribute is the real interface; those three PUBLIC
+             *  functions are an escape from the gclass interface (attributes,
+             *  events, commands, local methods, stats) that c_timer has carried
+             *  since C, and sugar must not be the only door that behaves.
+             *  Writing `msec` by hand has to leave the timer exactly as
+             *  set_timeout() would.
+             *
+             *  No recursion through gobj_stop(): it clears `running` BEFORE
+             *  calling mt_stop(), and mt_stop() lands right back here.
+             */
+            if(priv.msec > 0) {
+                if(!gobj_is_running(gobj)) {
+                    gobj_start(gobj);
+                }
+            } else {
+                if(gobj_is_running(gobj)) {
+                    gobj_stop(gobj);
+                }
+            }
             break;
     }
 }
@@ -163,6 +201,25 @@ function ac_timeout(gobj, event, kw, src)
     let ev = priv.periodic ? "EV_TIMEOUT_PERIODIC" : "EV_TIMEOUT";
 
     /*
+     *  Re-arm BEFORE delivering, like C does, and for its two reasons:
+     *  the period must not carry the execution time of the action, and a
+     *  clear_timeout() made from INSIDE the action has to win. Re-arming
+     *  afterwards undid that clear and re-armed with the msec the clear
+     *  had just written -- a negative delay, which setTimeout() serves
+     *  immediately: a cleared periodic timer turned into a busy loop.
+     */
+    if(priv.periodic && priv.msec > 0) {
+        priv.timer_id = setTimeout(
+            function() {
+                gobj_send_event(gobj, "EV_TIMEOUT", {}, gobj);
+            },
+            priv.msec
+        );
+    } else {
+        priv.timer_id = -1;
+    }
+
+    /*
      *  SERVICE subscription model
      */
     if (gobj_is_pure_child(gobj)) {
@@ -171,13 +228,15 @@ function ac_timeout(gobj, event, kw, src)
         gobj_publish_event(gobj, ev, {});
     }
 
-    if(priv.periodic) {
-        priv.timer_id = setTimeout(
-            function() {
-                gobj_send_event(gobj, "EV_TIMEOUT", {}, gobj);
-            },
-            priv.msec
-        );
+    /*
+     *  A one-shot is spent: it stops itself, so nobody has to stop it.
+     *  Unless the action just re-armed it -- `timer_id` back from -1 is
+     *  the same guard C makes on `t_flush`.
+     */
+    if(!priv.periodic && priv.timer_id === -1) {
+        if(gobj_is_running(gobj)) {
+            gobj_stop(gobj);
+        }
     }
 
     return 0;
