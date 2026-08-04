@@ -14,7 +14,6 @@ import {
     gclass_create,
     gobj_create_pure_child,
     gobj_start,
-    gobj_stop,
     gobj_play,
     gobj_pause,
     gobj_is_playing,
@@ -33,7 +32,8 @@ import {
 } from "./helpers.js";
 
 import {
-    set_timeout_periodic
+    set_timeout_periodic,
+    clear_timeout
 } from "./c_timer.js";
 
 /***************************************************************
@@ -122,7 +122,6 @@ function mt_writing(gobj, path)
  ***************************************************************/
 function mt_start(gobj)
 {
-    gobj_start(gobj.priv.gobj_timer);
     set_timeout_periodic(gobj.priv.gobj_timer, gobj.priv.periodic_timeout);
     return 0;
 }
@@ -135,7 +134,7 @@ function mt_stop(gobj)
     /*
      *  When yuno stops, it's the death of the app
      */
-    gobj_stop(gobj.priv.gobj_timer);
+    clear_timeout(gobj.priv.gobj_timer);
     gobj_stop_children(gobj);
     return 0;
 }

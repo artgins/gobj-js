@@ -43,8 +43,6 @@ import {
     gobj_has_event,
     gobj_find_service,
     gobj_change_state,
-    gobj_start,
-    gobj_stop,
     gobj_read_bool_attr,
 
 } from "./gobj.js";
@@ -215,8 +213,6 @@ function mt_start(gobj)
 {
     let priv = gobj.priv;
 
-    gobj_start(priv.gobj_timer);
-
     /*  Starting is a deliberate act (the operator pressed connect): it must
      *  not inherit the backoff a previous run had escalated to.  */
     priv.retry_ms = 0;
@@ -233,8 +229,6 @@ function mt_stop(gobj)
     let priv = gobj.priv;
 
     clear_timeout(priv.gobj_timer);
-
-    gobj_stop(priv.gobj_timer);
 
     if(priv.websocket) {
         /*

@@ -24,6 +24,17 @@ ahead of the SDK version between releases.
   Also realigns the package with `YUNETA_VERSION`, which had drifted (7.9.6
   against an SDK at 7.9.9).
 
+## 7.9.11
+
+- **The runtime kept its own two timers by hand.** 7.9.10 made
+  `clear_timeout()` stop the timer, and `c_ievent_cli.mt_stop()` still called
+  `gobj_stop()` right after it — so every stop of an ievent client logged
+  *"GObj NOT RUNNING"*, the exact noise the release was meant to end. Its
+  `gobj_start()` in `mt_start` is gone too (`set_timeout()` starts what it
+  arms), and `c_yuno` stops its periodic with `clear_timeout()` instead of
+  `gobj_stop()`. No behaviour change beyond the missing complaint: the two
+  calls are the whole contract, in the runtime as much as in a view.
+
 ## 7.9.10
 
 - **`C_TIMER`: `set_timeout()` arms and `clear_timeout()` disarms — and that is
