@@ -4,6 +4,44 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.10.0
+
+- **`gobj_post_event()` now means the same thing it means in C.** This port has
+  had the call for years — under a comment reading *"post_event, by now only in
+  js"* — and 7.10.0 of the SDK finally added it to C. What came back from that
+  is a contract, and this is the port catching up to it.
+
+  What it was: `setTimeout(() => gobj_send_event(...), 10)`. One timer per
+  event, and ten milliseconds standing in for "later" — which is the very
+  thing this call exists to stop writing.
+
+  What it is now:
+
+  - **A queue drained once per turn**, with `setTimeout(0)` and deliberately
+    **not** `queueMicrotask()`. A microtask runs before the browser can paint
+    or handle an input, so a chain of posted events would hold the page the
+    same way draining-until-empty held the event loop in C. A macrotask gives
+    the browser its turn between one event and the next.
+  - **A snapshot per turn**: the events queued when the drain begins are the
+    ones delivered in it, and whatever an action posts waits for the following
+    turn. So a chain advances one step per turn instead of running to the end.
+  - **Lifetime, both ways.** `gobj_destroy()` drops what a gobj had pending as
+    DESTINATION, and clears `src` on what it left as SOURCE — the destination
+    still wants its event, and it arrives with `src === null`.
+  - **The event is checked against the destination's gclass when you post**,
+    not a turn later, so the error names the caller instead of the drain.
+  - **A ceiling of 10000**, because it is not a work queue, and reaching it is
+    an error.
+  - **A `machine` trace line** when the event is posted.
+
+  `gobj_posted_events_size()` and `gobj_deliver_posted_events()` are exported
+  alongside it, the same two the C side exposes.
+
+  Nothing called `gobj_post_event()` in this repo or in any consumer, so the
+  behaviour change breaks nobody. Covered by `tests/post_event.test.js`, which
+  pins each clause — and the snapshot is pinned by the test that fails when
+  the drain is changed to empty the queue in one turn.
+
 ## 7.9.9
 
 - **`gobj_set_gclass_no_trace()`** — the silencing setter the C kernel has and

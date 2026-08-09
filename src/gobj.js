@@ -2082,6 +2082,12 @@ function gobj_destroy(gobj)
 
     gobj.obflag |= obflag_t.obflag_destroying;
 
+    /*
+     *  AFTER the flag, so it also takes what mt_stop() may have posted
+     *  above: from here on gobj_post_event() refuses this gobj.
+     */
+    purge_posted_events(gobj);
+
     let trace_creation = __trace_gobj_create_delete__(gobj);
     if(trace_creation) {
         trace_machine(sprintf("💔💔⏩ destroying: %s", gobj_full_name(gobj)));
@@ -3721,16 +3727,139 @@ function gobj_has_output_event(gobj, event, event_flag)
 }
 
 /************************************************************
- *      post_event, by now only in js
+ *      Posted events: gobj_send_event(), but on the next turn
+ *
+ *  Same contract as the C side (see gobj.h). It exists to get out of the
+ *  stack you are standing on: gobj_publish_event() dispatches synchronously,
+ *  so a subscriber action runs inside the publisher's own stack, and
+ *  destroying that publisher there dismantles what is still iterating.
+ *
+ *  The queue is drained with setTimeout(0) and NOT with queueMicrotask():
+ *  a microtask runs before the browser can paint or handle an input, so a
+ *  chain of posted events would hold the page exactly the way it used to
+ *  hold the event loop in C. A macrotask gives the browser its turn between
+ *  one event and the next.
+ *
+ *  Delivery is a SNAPSHOT: the events queued when the drain begins are the
+ *  ones delivered in it, and whatever an action posts while it runs waits
+ *  for the following turn.
  ************************************************************/
-function gobj_post_event(gobj, event, kw, src)
+const MAX_POSTED_EVENTS = 10000;
+let __dl_posted_events__ = [];
+let __posted_events_scheduled__ = false;
+
+function gobj_post_event(dst, event, kw, src)
 {
-    setTimeout(() => {
-        if(gobj_is_destroying(gobj)) {
-            return;
+    if(!dst || !(dst instanceof GObj)) {
+        log_error(`gobj_post_event(): gobj dst NULL, event ${event}`);
+        return -1;
+    }
+    if(dst.obflag & (obflag_t.obflag_destroyed|obflag_t.obflag_destroying)) {
+        log_error(`gobj_post_event(): gobj dst DESTROYING, event ${event}`);
+        return -1;
+    }
+    if(empty_string(event)) {
+        log_error(`gobj_post_event(): event EMPTY`);
+        return -1;
+    }
+
+    /*
+     *  Checked now, not when it is delivered: otherwise the
+     *  "Event NOT DEFINED in state" arrives a turn later, with a stack that
+     *  points at the drain instead of at whoever posted it.
+     */
+    if(!gobj_has_event(dst, event, 0)) {
+        log_error(
+            `gobj_post_event(): event NOT DEFINED in gclass ` +
+            `${gobj_gclass_name(dst)}, event ${event}`
+        );
+        return -1;
+    }
+
+    if(__dl_posted_events__.length >= MAX_POSTED_EVENTS) {
+        log_error(
+            `gobj_post_event(): too many posted events, this is NOT a work ` +
+            `queue, event ${event}, pending ${__dl_posted_events__.length}`
+        );
+        return -1;
+    }
+
+    __dl_posted_events__.push({dst: dst, event: event, kw: kw, src: src});
+
+    if(is_machine_tracing(dst, event) && !is_machine_not_tracing(src, event)) {
+        trace_machine(sprintf("📬 posted(%s%s), ev: %s, pending: %d",
+            (!dst.running)?"!!":"",
+            gobj_short_name(dst),
+            event,
+            __dl_posted_events__.length
+        ));
+    }
+
+    if(!__posted_events_scheduled__) {
+        __posted_events_scheduled__ = true;
+        setTimeout(gobj_deliver_posted_events, 0);
+    }
+
+    return 0;
+}
+
+/************************************************************
+ *      How many posted events wait for delivery
+ ************************************************************/
+function gobj_posted_events_size()
+{
+    return __dl_posted_events__.length;
+}
+
+/************************************************************
+ *      Deliver the posted events. One turn, one snapshot.
+ ************************************************************/
+function gobj_deliver_posted_events()
+{
+    __posted_events_scheduled__ = false;
+
+    let snapshot = __dl_posted_events__;
+    __dl_posted_events__ = [];
+
+    let delivered = 0;
+    for(let msg of snapshot) {
+        if(msg.dst.obflag & (obflag_t.obflag_destroyed|obflag_t.obflag_destroying)) {
+            continue;   // destroyed after it was queued, in this same snapshot
         }
-        gobj_send_event(gobj, event, kw, src);
-    }, 10);
+        gobj_send_event(msg.dst, msg.event, msg.kw, msg.src);
+        delivered++;
+    }
+
+    /*
+     *  What the actions posted while this ran is already in the new list.
+     */
+    if(__dl_posted_events__.length > 0 && !__posted_events_scheduled__) {
+        __posted_events_scheduled__ = true;
+        setTimeout(gobj_deliver_posted_events, 0);
+    }
+
+    return delivered;
+}
+
+/************************************************************
+ *      Take a gobj out of the queue of posted events.
+ *
+ *  Called from gobj_destroy(), and the two halves are not the same thing:
+ *  as DESTINATION the entry is dropped, as SOURCE only the pointer is
+ *  cleared -- the destination still wants its event, and it arrives with
+ *  src null, which every action already has to accept.
+ ************************************************************/
+function purge_posted_events(gobj)
+{
+    if(__dl_posted_events__.length === 0) {
+        return;
+    }
+    for(let msg of __dl_posted_events__) {
+        if(msg.src === gobj) {
+            msg.src = null;
+        }
+    }
+    __dl_posted_events__ = __dl_posted_events__.filter(msg => msg.dst !== gobj);
 }
 
 /************************************************************
@@ -5010,6 +5139,8 @@ export {
     gobj_has_event,
     gobj_has_output_event,
     gobj_post_event,
+    gobj_posted_events_size,
+    gobj_deliver_posted_events,
     gobj_send_event,
 
     gobj_subscribe_event,
