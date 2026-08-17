@@ -1479,6 +1479,17 @@ function gclass_find_by_name(gclass_name, verbose)
         if(verbose) {
             log_error(`gclass not found: ${gclass_name}`);
         }
+        /*
+         *  NULL, not undefined: a missing key answers `undefined`, and a
+         *  caller writing the obvious `gclass_find_by_name("X") === null`
+         *  then gets FALSE for a gclass that is not there. gobj-ui had four
+         *  guards written exactly like that -- one of them the "not
+         *  registered by the app" message that could therefore never print,
+         *  leaving a missing gclass to surface as "can't access property
+         *  jn_attrs, e is null" from whoever used what gobj_create refused
+         *  to build.
+         */
+        return null;
     }
     return gclass;
 }
@@ -1518,8 +1529,17 @@ function gobj_find_service(
 {
     service_name = service_name.toLowerCase();
     let service_gobj = __jn_services__[service_name];
-    if(!service_gobj && verbose) {
-        log_error(`gobj service not found: ${service_name}`);
+    if(!service_gobj) {
+        if(verbose) {
+            log_error(`gobj service not found: ${service_name}`);
+        }
+        /*
+         *  Same contract as gclass_find_by_name: ALWAYS null when there is
+         *  no service. It used to answer `null` with verbose and `undefined`
+         *  without it -- the same absent service giving a different falsy
+         *  value depending on a logging flag -- and handing that undefined
+         *  to a DTP_POINTER attr logs "attr undefined" on every use.
+         */
         return null;
     }
     return service_gobj;

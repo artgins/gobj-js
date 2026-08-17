@@ -4,6 +4,42 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.10.1
+
+- **fix: the two lookups answer `null` when they find nothing, never
+  `undefined`.** `gclass_find_by_name()` and `gobj_find_service()` read a plain
+  object by key, and a missing key answers `undefined` — so the obvious guard
+
+  ```js
+  if(gclass_find_by_name("C_FOO") === null) {   /*  never true  */
+  ```
+
+  was FALSE for a gclass that is not registered, and the guard behind it never
+  ran. `gclass_find_by_name` even declared its intent — `let gclass = null;` —
+  and then overwrote it with the missing key.
+
+  gobj-ui had four guards written exactly that way (fixed in its 5.14.2). The
+  one that cost real time was `C_YUI_TREEDB_TOPICS`: its *"not registered by the
+  app"* message could never print, so a missing registration surfaced one frame
+  later as *"can't access property jn_attrs, e is null"*, thrown by whoever used
+  the gobj that `gobj_create` had refused to build — an error naming neither the
+  gclass nor the app that forgot it.
+
+  `gobj_find_service` was not just wrong, it was inconsistent: `null` with
+  `verbose`, `undefined` without it. The same absent service answered a
+  different falsy value depending on a **logging flag**, and handing that
+  `undefined` to a `DTP_POINTER` attr logs *"attr undefined"* on every use —
+  which is why gobj-ui's route map carried a comment warning about it two lines
+  above a `!== null` test on the other lookup.
+
+  Both now return `null` on every path. Nothing that used truthiness changes;
+  no consumer compared either result to `undefined` (checked across gobj-ui,
+  the two in-repo JS yunos, wattyzer, estadodelaire, hidraulia, yunomusica and
+  the three yunovatios GUIs).
+
+  `tests/lookup_contract.test.js` pins it, including the
+  verbose-must-not-change-the-value case.
+
 ## 7.10.0
 
 - **`gobj_post_event()` now means the same thing it means in C.** This port has
