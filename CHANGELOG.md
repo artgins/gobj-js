@@ -4,7 +4,10 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
-## 7.10.1
+## 7.12.0
+
+Aligned with `YUNETA_VERSION` 7.12.0: the SDK release this ships with, rather
+than a patch of its own ahead of it.
 
 - **fix: the two lookups answer `null` when they find nothing, never
   `undefined`.** `gclass_find_by_name()` and `gobj_find_service()` read a plain
