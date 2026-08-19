@@ -374,6 +374,7 @@ const treedb_field_types = [ // WARNING check tr_treedb.h to update new types
     "template", // normal field types
     "uuid",
     "rowid",
+    "qualified",
     "password",
     "email",
     "url",

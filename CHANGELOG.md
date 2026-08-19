@@ -4,6 +4,20 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## Unreleased
+
+- **feat: `qualified` joins the field-type vocabulary.** `treedb_field_types`
+  is what turns a column FLAG into the `type` every form and table switches
+  on, and a flag missing from it leaves `field_desc.type` at the plain
+  `string`. The SDK gained a third way for the store to hand a key out
+  (beside `uuid` and `rowid`): a pkey flagged `qualified` is composed from the
+  parent named in the record's fkey plus its own name, so it is never typed on
+  create and it is stable enough to update. Without the word here, gobj-ui
+  could not tell that key apart from one the user is expected to fill in.
+
+  Mirrors the `flag` enum of `treedb_system_schema.c` and the vocabulary
+  comment in `tr_treedb.h`; the three are one list in three places.
+
 ## 7.12.0
 
 Aligned with `YUNETA_VERSION` 7.12.0: the SDK release this ships with, rather
