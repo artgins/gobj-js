@@ -4,7 +4,11 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
-## Unreleased
+## 7.13.2
+
+Ahead of the SDK release it belongs to: `YUNETA_VERSION` is 7.13.1 and the
+change below only means something with the qualified keys landing after it, so
+this ships at the number the SDK will catch up to.
 
 - **feat: `qualified` joins the field-type vocabulary.** `treedb_field_types`
   is what turns a column FLAG into the `type` every form and table switches
