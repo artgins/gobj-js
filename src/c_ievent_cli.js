@@ -1215,7 +1215,12 @@ function ac_on_message(gobj, event, kw, src)
      *-----------------------------------------*/
     if(gobj_current_state(gobj) !== "ST_SESSION") {
         if(gobj_has_event(gobj, iev_event, event_flag_t.EVF_PUBLIC_EVENT)) {
-            if(gobj_send_event(gobj, iev_event, iev_kw, gobj)===0) {
+            /*  Handled unless the action says it FAILED. Not `=== 0`: an
+             *  action that simply returns nothing answers `undefined`, which
+             *  is not `=== 0`, and the session was then closed on a message
+             *  that had just been processed fine.  */
+            let ret = gobj_send_event(gobj, iev_event, iev_kw, gobj);
+            if(!(ret < 0)) {
                 // iev_kw consumed
                 return 0;
             }

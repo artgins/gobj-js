@@ -2774,6 +2774,37 @@ function gobj_walk_gobj_children_tree(
 /***************************************************************
  *  Walking
  ***************************************************************/
+/***************************************************************
+ *  What a WALK CALLBACK answered, as the number the contract is
+ *  written in: -1 stop the walk, 0 descend into the children,
+ *  >0 do not descend.
+ *
+ *  A javascript callback that simply RETURNS NOTHING is the common
+ *  case, and `undefined` is neither `< 0` nor `=== 0`, so the walk
+ *  used to read it as "do not descend" and skipped the subtree in
+ *  silence. Nothing is 0 here — the neutral answer, the one C gives
+ *  when an action has nothing to say.
+ *
+ *  A boolean is NOT guessed: `true`/`false` could mean either half of
+ *  this contract, so it is reported and taken as 0. A walk that
+ *  silently loses a subtree is the thing this whole function exists
+ *  to stop.
+ ***************************************************************/
+function walk_ret(ret)
+{
+    if(typeof ret === "number" && isFinite(ret)) {
+        return ret;
+    }
+    if(ret === undefined || ret === null) {
+        return 0;
+    }
+    log_error(
+        `walk callback must return a NUMBER (-1 stop, 0 descend, >0 skip children), ` +
+        `got ${typeof ret}: taken as 0`
+    );
+    return 0;
+}
+
 function rc_walk_by_list(
     iter_,              // dl_list_t
     walk_type,          // walk_type_t
@@ -2790,7 +2821,7 @@ function rc_walk_by_list(
     if(walk_type & walk_type_t.WALK_LAST2FIRST) {
         for(let i=iter.length; i>0; i--) {
             child = iter[i-1];
-            let ret = (cb_walking)(child, user_data, user_data2);
+            let ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
             }
@@ -2798,7 +2829,7 @@ function rc_walk_by_list(
     } else {
         for(let i=0; i<iter.length; i++) {
             child = iter[i];
-            let ret = (cb_walking)(child, user_data, user_data2);
+            let ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
             }
@@ -2899,7 +2930,7 @@ function rc_walk_by_tree(
                 return ret;
             }
 
-            ret = (cb_walking)(child, user_data, user_data2);
+            ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
             }
@@ -2909,7 +2940,7 @@ function rc_walk_by_tree(
         for(let i=0; i<iter.length; i++) {
             child = iter[i];
 
-            ret = (cb_walking)(child, user_data, user_data2);
+            ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
             } else if(ret === 0) {
@@ -5089,6 +5120,7 @@ export {
     gobj_flag_t,
     gclass_flag_t,
     event_flag_t,
+    walk_type_t,
     GObj,
     gobj_start_up,
     gobj_hsdata,

@@ -4,6 +4,30 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.13.5
+
+- **fix: the last two sites of the boolean/int trap, the ones 7.13.4 left
+  reported.** Both were about a callback that answers **nothing**, which is the
+  most javascript thing a callback can do, and `undefined` is neither `< 0` nor
+  `=== 0`:
+
+  - **The tree walk** (`rc_walk_by_tree()` / `rc_walk_by_list()`) read a
+    callback that returned nothing as "do not descend", and skipped the whole
+    subtree in silence. What a callback answers is now normalized to the number
+    the contract is written in (`-1` stop, `0` descend, `>0` skip children),
+    with nothing meaning **0** — the neutral answer. A BOOLEAN is not guessed:
+    it could mean either half of that contract, so it is **reported** and taken
+    as 0, because a walk that quietly loses a subtree is the one thing this
+    function must not do.
+  - **`c_ievent_cli`**, in the not-in-session state (the one that processes
+    `EV_IDENTITY_CARD_ACK`), closed the websocket unless the action answered
+    exactly `0`. An action that did its work and returned nothing hung up a
+    session that was fine. Handled now unless the action says it FAILED.
+
+- **feat: `walk_type_t` is exported.** `gobj_walk_gobj_children_tree()` was
+  exported and the enum you must pass it was not, so the API could only be
+  called with a magic number.
+
 ## 7.13.4
 
 - **fix: the same boolean-where-C-returns-an-int trap, in the three siblings of

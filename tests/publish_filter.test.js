@@ -18,6 +18,9 @@ import { describe, test, expect, beforeAll } from "vitest";
 import {
     gobj_play,
     gobj_is_playing,
+    gobj_walk_gobj_children_tree,
+    gobj_name,
+    walk_type_t,
     SDATA,
     SDATA_END,
     data_type_t,
@@ -162,5 +165,26 @@ describe("the hooks that answer with a number in C and a boolean here", () => {
         expect(gobj_is_playing(gobj)).toBe(false);
 
         gobj_destroy(gobj);
+    });
+});
+
+describe("a walk callback that answers nothing", () => {
+    test("the walk still descends into the children", () => {
+        gclass_create("C_TEST_NODE", [], [["ST_IDLE", []]], {}, null,
+            [SDATA_END()], {}, null, null, null, 0);
+
+        const root = gobj_create("root", "C_TEST_NODE", {}, yuno);
+        const mid = gobj_create("mid", "C_TEST_NODE", {}, root);
+        gobj_create("leaf", "C_TEST_NODE", {}, mid);
+
+        /*  the common javascript callback: it does its work and returns
+         *  nothing. `undefined` is neither < 0 nor === 0.  */
+        const seen = [];
+        gobj_walk_gobj_children_tree(root, walk_type_t.WALK_TOP2BOTTOM,
+            (child) => { seen.push(gobj_name(child)); }, 0, 0);
+
+        expect(seen).toEqual(["mid", "leaf"]);
+
+        gobj_destroy(root);
     });
 });
