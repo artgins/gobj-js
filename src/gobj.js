@@ -2437,7 +2437,11 @@ function gobj_play(gobj)
     let ret = 0;
     if(gobj.gclass.gmt.mt_play) {
         ret = gobj.gclass.gmt.mt_play(gobj);
-        if(ret < 0) {
+        /*  `ret === false` too: the C contract is an int and -1 is the
+         *  failure, but a javascript mt_play says it with `false` — and
+         *  `false < 0` is FALSE, so the gobj was left PLAYING after a play
+         *  that failed.  */
+        if(ret < 0 || ret === false) {
             gobj.playing = false;
         }
     }
@@ -4492,7 +4496,9 @@ function gobj_subscribe_event(
             publisher,
             subs
         );
-        if(result < 0) {
+        /*  `false` as well as a negative: the hook refuses the subscription,
+         *  and in javascript that is how it says so.  */
+        if(result < 0 || result === false) {
             _delete_subscription(publisher, subs, true, true);
             subs = 0;
         }
@@ -4787,7 +4793,11 @@ function gobj_publish_event(
             );
             if(topublish<0) {
                 break;
-            } else if(topublish===0) {
+            } else if(!topublish) {
+                /*  `!topublish` and not `=== 0`: this hook is written in
+                 *  javascript, where the natural way to say "do not publish"
+                 *  is `false` — and `false === 0` is FALSE, so it published.
+                 *  Same trap as the `__filter__` guard below.  */
                 continue;
             }
         }

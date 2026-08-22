@@ -4,6 +4,33 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.13.4
+
+- **fix: the same boolean-where-C-returns-an-int trap, in the three siblings of
+  7.13.3.** Auditing every strict comparison against a numeric sentinel in this
+  runtime turned up three more hooks that answer with a number in C and are
+  written with a boolean here:
+
+  - **`mt_publication_pre_filter`** carried the same `topublish === 0` guard as
+    the `__filter__` one, eighty lines above it: a pre-filter saying `false`
+    published anyway.
+  - **`mt_play`**: `if(ret < 0)` is what un-sets `playing`, and `false < 0` is
+    FALSE — a play that failed with `false` left the gobj **playing**.
+  - **`mt_subscription_added`**: a hook refusing the subscription with `false`
+    was ignored and the subscription stayed.
+
+  None of them had an implementation in this tree yet, so nothing was broken in
+  the field; they were all waiting for the first one. Pinned in
+  `tests/publish_filter.test.js`.
+
+  Two more sites of the same family are LEFT ALONE on purpose, because
+  normalizing them changes what a caller's return means rather than repairing
+  it — they are reported instead: the tree walker `rc_walk_by_tree()`, where a
+  callback that returns nothing (`undefined === 0` is false) stops the walk
+  from descending; and `c_ievent_cli`'s `gobj_send_event(...) === 0` in the
+  not-in-session state, where an action that forgets to `return 0` closes the
+  websocket.
+
 ## 7.13.3
 
 - **fix: `__filter__` on a subscription never filtered anything.**
