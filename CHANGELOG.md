@@ -4,6 +4,30 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.13.3
+
+- **fix: `__filter__` on a subscription never filtered anything.**
+  `gobj_publish_event()` asks `kw_match_simple()`, which answers a **boolean**,
+  and then compares it with `topublish === 0`. `false === 0` is FALSE in
+  javascript, so a subscription whose filter did not match fell straight
+  through the guard and was published to anyway — with the machine trace
+  printing `💜💜🔄👎 publishing with filter` on the line right above the
+  delivery. The C side passes an int around and has always been right; this is
+  the port.
+
+  What it cost, where it was found: a treedb view subscribes to
+  `EV_TREEDB_NODE_DELETED` once per topic, each with a
+  `{treedb_name, topic_name}` filter. Deleting one row delivered the event
+  **five times** (once per topic of that treedb), and the four deliveries that
+  belonged to other topics went looking for the row in the table that was open
+  and logged *"record not found"*. Every filtered subscription in every app on
+  this runtime was doing the same, quietly.
+
+  The filter result is normalized to the 1/0 the contract is written in
+  (`-1` break, `0` skip, `1` publish) and the guard now reads `!topublish`, so
+  an `mt_publication_filter` that answers `false` means what it says too.
+  Pinned by `tests/publish_filter.test.js`.
+
 ## 7.13.2
 
 Ahead of the SDK release it belongs to: `YUNETA_VERSION` is 7.13.1 and the

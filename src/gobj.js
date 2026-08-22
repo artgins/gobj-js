@@ -4837,7 +4837,15 @@ function gobj_publish_event(
                     subscriber
                 );
             } else if(json_size(__filter__)>0) {
-                topublish = kw_match_simple(kw2publish , __filter__);
+                /*  `kw_match_simple()` answers a BOOLEAN, and what is
+                 *  compared below is `topublish === 0`. `false === 0` is
+                 *  FALSE in javascript, so a filter that did not match fell
+                 *  straight through the guard and published anyway: the
+                 *  trace said 👎 and the subscriber got the event all the
+                 *  same. Normalize to the 1/0 the contract is written in
+                 *  (-1 break, 0 skip, 1 publish), which is what the C side
+                 *  passes around.  */
+                topublish = kw_match_simple(kw2publish , __filter__) ? 1 : 0;
                 if(tracea) {
                     trace_machine(sprintf(
                         "💜💜🔄%s publishing with filter, event '%s', subscriber'%s', publisher %s",
@@ -4852,10 +4860,15 @@ function gobj_publish_event(
 
             if(topublish<0) {
                 break;
-            } else if(topublish===0) {
+            } else if(!topublish) {
                 /*
                  *  Must not be published
                  *  Next subs
+                 *
+                 *  `!topublish` and not `=== 0`: a filter or an
+                 *  mt_publication_filter that answers `false` means the same
+                 *  as 0, and a strict comparison with the number let it
+                 *  through.
                  */
                 continue;
             }
