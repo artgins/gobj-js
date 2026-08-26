@@ -4,6 +4,29 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.13.7
+
+- **change: the machine trace defaults to the SIMPLER shape, the C kernel's
+  default.** `trace_machine_format` was 0 here and 1 there
+  (gobj.c: `PRIVATE int trace_machine_format = 1; // 0 legacy, 1 simpler`),
+  so a browser yuno wrote THREE lines for one transition — the call, the
+  state change, and a `<- mach(…) ret: N` return — where a node wrote one.
+  The same trace, three times the wall, and the two sides did not look alike
+  read side by side.
+
+  Both shapes stay, and `gobj_set_trace_machine_format(0)` still asks for the
+  old one (gobj-ui's dev window has the toggle, now on by default):
+
+  ```
+  1  🔄 EV_TIMEOUT C_TIMER^t ST_IDLE from C_TIMER^t
+  0  🔄 mach(C_TIMER^t), st: ST_IDLE, ev: EV_TIMEOUT, ac: fi(), from(C_TIMER^t)
+     🔀🔀 mach(C_TIMER^t), new st(ST_IDLE), prev st(ST_IDLE)
+     <- mach(C_TIMER^t), st: ST_IDLE, ev: EV_TIMEOUT, ret: 0
+  ```
+
+  Both name the event, so anything that reads the trace back by event name
+  keeps working across the switch.
+
 ## 7.13.6
 
 - **feat: `set_console_log_filter(fn)` — a per-LINE say over the console

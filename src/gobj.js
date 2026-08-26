@@ -355,11 +355,17 @@ function tab()
 }
 
 /*  Machine (automata) trace format, mirroring the C kernel:
- *      0 = verbose  ("🔄 mach(gclass^name), st: STATE, ev: EVENT, ac: …, from(…)"
- *                    + a "<- mach(…) ret: N" return line)
- *      1 = compact  ("🔄 EVENT dst STATE from src", no return line) — the
- *                    simple one-line-per-transition view. */
-let __trace_machine_format__ = 0;
+ *      0 = legacy   ("🔄 mach(gclass^name), st: STATE, ev: EVENT, ac: …, from(…)"
+ *                    + a "🔀🔀 new st(…)" line + a "<- mach(…) ret: N" line —
+ *                    THREE lines for one transition)
+ *      1 = simpler  ("🔄 EVENT dst STATE from src") — one line per transition,
+ *                    no return line and no state-change line.
+ *
+ *  DEFAULT 1, which is the C kernel's default (`trace_machine_format` in
+ *  gobj.c: "0 legacy, 1 simpler, 2 full"). The JS port shipped 0 and so read
+ *  three lines a transition where a node read one — the same trace, three
+ *  times the wall, and the two sides did not look alike. */
+let __trace_machine_format__ = 1;
 
 function gobj_set_trace_machine_format(format)
 {

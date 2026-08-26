@@ -627,8 +627,25 @@ gobj_global_trace_level()                  // the mask in force
 gobj_trace_level(gobj)                     // global | gclass | gobj, combined
 gobj_repr_global_trace_levels()            // [{name, bit, description, set}]
 gobj_set_deep_trace(1)                     // everything, everywhere
-gobj_set_trace_machine_format(1)           // 1 = one compact line per transition
+gobj_set_trace_machine_format(1)           // 1 = simpler (DEFAULT), 0 = legacy
 ```
+
+**Two shapes for the machine trace**, the C kernel's two, and the same default
+(`1`, since 7.13.7):
+
+```
+1  🔄 EV_TIMEOUT C_TIMER^t ST_IDLE from C_TIMER^t
+0  🔄 mach(C_TIMER^t), st: ST_IDLE, ev: EV_TIMEOUT, ac: fi(), from(C_TIMER^t)
+   🔀🔀 mach(C_TIMER^t), new st(ST_IDLE), prev st(ST_IDLE)
+   <- mach(C_TIMER^t), st: ST_IDLE, ev: EV_TIMEOUT, ret: 0
+```
+
+One line per transition against three. Both name the event, so anything that
+reads the trace back by event name works across the switch. Every line is
+prefixed by its nesting depth (two spaces per level of `__inside__`), so an
+event sent from inside another one's action is indented under it — **keep that
+indentation when you render the line somewhere else**; it is the only thing
+that says a transition happened *during* another.
 
 Levels: `machine`, `create_delete`, `create_delete2`, `subscriptions`,
 `start_stop`, `ev_kw`, `authzs`, `states`, `gbuffers`, `timer`, `fs`,
