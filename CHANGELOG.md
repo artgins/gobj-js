@@ -4,6 +4,28 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.13.6
+
+- **feat: `set_console_log_filter(fn)` — a per-LINE say over the console
+  writes.** `set_console_log_enabled()` is all or nothing, and the console
+  write happens BEFORE the log sink is called, so nothing downstream can
+  un-print a line. A consumer that wants one CLASS of lines kept off the
+  console had no way to ask for it: gobj-ui's dev monitor could hide the
+  `machine` trace's timer traffic — two `EV_TIMEOUT` lines a second, for ever
+  — from its own window and had to watch the same flood arrive in the browser
+  console beside it.
+
+  `fn(level, msg)` returns true to let the line through; `null` (the default,
+  and anything that is not a function) restores the behaviour there has always
+  been. It filters the **console only**: the log sink still receives every
+  line, so a monitor keeps its complete record and decides separately what to
+  show. The master switch still wins, and a filter that **throws** is ignored
+  — a broken one must never be able to silence the log.
+
+  Every console write of the log helpers goes through it: `log_error`,
+  `log_warning` (both of their branches, direct and remote), `log_info`,
+  `log_debug`, `trace_msg` and `trace_json`.
+
 ## 7.13.5
 
 - **fix: the last two sites of the boolean/int trap, the ones 7.13.4 left

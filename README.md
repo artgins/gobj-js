@@ -589,6 +589,10 @@ set_log_callback(fn)                      // fn(level, message)
 
 // Gate the DIRECT browser-console writes of all the functions above
 set_console_log_enabled(enabled)          // default: true (unchanged behaviour)
+
+// ...and a per-LINE say over them, on top of that switch (7.13.6)
+set_console_log_filter(fn)                // fn(level, msg) -> true to print
+set_console_log_filter(null)              // default: everything prints
 ```
 
 **Three independent output paths.** `set_console_log_enabled(false)` silences
@@ -597,6 +601,15 @@ remote log functions (`set_remote_log_functions`) still fire. That is what lets
 a GUI route framework output — **including the automata/FSM trace, which arrives
 as `debug`** — into its own monitor window while keeping the browser console
 clean (gobj-ui's dev-window "Output" selector does exactly this).
+
+**Why a filter and not just the switch.** The console write happens **before**
+the sink is called, so nothing downstream can un-print a line: a consumer that
+wants one CLASS of lines kept off the console — the dev monitor hiding the
+`machine` trace's timer traffic, two `EV_TIMEOUT` lines a second for ever — can
+only say so here. The filter decides the **console alone**: the sink still
+receives every line, so a monitor keeps a complete record and decides
+separately what to show. The master switch still wins, and a filter that
+**throws** is ignored — a broken one must never be able to silence the log.
 
 ### Tracing: the `machine` trace, and the levels around it
 

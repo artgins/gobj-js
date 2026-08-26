@@ -77,6 +77,44 @@ function set_console_log_enabled(enabled)
     __console_output_enabled__ = enabled ? true : false;
 }
 
+/*  A per-LINE say over the console writes, on top of the master switch above.
+ *  `fn(level, msg)` returns true to let the line through; null (default)
+ *  lets everything through, which is the behaviour there has always been.
+ *
+ *  It exists because the console write happens BEFORE the log sink is
+ *  called, so nothing downstream can un-print a line: a consumer that wants
+ *  to silence a class of lines on the console -- gobj-ui's dev monitor
+ *  silencing the timer traffic of the `machine` trace, which is two lines a
+ *  second for ever -- has no way to do it except here. The alternative was
+ *  for the monitor to turn this console off entirely and reprint everything
+ *  itself, which duplicates the format of every helper below.
+ *
+ *  It filters the CONSOLE only. The log sink still receives every line, so a
+ *  monitor keeps its own complete record and decides separately what to show. */
+let __console_log_filter__ = null;
+
+function set_console_log_filter(fn)
+{
+    __console_log_filter__ = (typeof fn === "function") ? fn : null;
+}
+
+/*  Does the console want this line? A filter that throws is ignored: a
+ *  broken one must never be able to silence the log. */
+function console_wants(level, msg)
+{
+    if(!__console_output_enabled__) {
+        return false;
+    }
+    if(!__console_log_filter__) {
+        return true;
+    }
+    try {
+        return __console_log_filter__(level, msg) ? true : false;
+    } catch(e) {
+        return true;
+    }
+}
+
 let __in_log_callback__ = false;
 
 function emit_log_callback(level, msg, hora)
@@ -154,11 +192,11 @@ function log_error(format)
 
     if(f_error) {
         if(f_error === _console.error) {
-            if(__console_output_enabled__) {
+            if(console_wants("error", msg)) {
                 f_error("%c" + hora + " ERROR: " + String(msg), "color:red");
             }
         } else {
-            if(__console_output_enabled__) {
+            if(console_wants("error", msg)) {
                 _console.error("%c" + hora + " ERROR: " + String(msg), "color:red");
             }
             f_error(`${hora} ERROR: ${String(msg)}`);
@@ -174,11 +212,11 @@ function log_warning(format)
 
     if(f_warning) {
         if(f_warning === _console.warn) {
-            if(__console_output_enabled__) {
+            if(console_wants("warning", msg)) {
                 f_warning("%c" + hora + " WARNING: " + String(msg), "color:yellow");
             }
         } else {
-            if(__console_output_enabled__) {
+            if(console_wants("warning", msg)) {
                 _console.warn("%c" + hora + " WARNING: " + String(msg), "color:yellow");
             }
             f_warning(`${hora} WARNING: ${String(msg)}`);
@@ -193,7 +231,7 @@ function log_info(format)
     let hora = current_timestamp();
 
     if(f_info) {
-        if(__console_output_enabled__) {
+        if(console_wants("info", msg)) {
             f_info("%c" + hora + " INFO: " + String(msg), "color:cyan");
         }
     }
@@ -206,7 +244,7 @@ function log_debug(format)
     let hora = current_timestamp();
 
     if(f_debug) {
-        if(__console_output_enabled__) {
+        if(console_wants("debug", msg)) {
             f_debug("%c" + hora + " DEBUG: " + String(msg), "color:silver");
         }
     }
@@ -219,7 +257,7 @@ function trace_msg(format)
     let hora = current_timestamp();
 
     if(f_debug) {
-        if(__console_output_enabled__) {
+        if(console_wants("msg", msg)) {
             f_debug("%c" + hora + " MSG: " + String(msg), "color:cyan");
         }
     }
@@ -228,7 +266,7 @@ function trace_msg(format)
 
 function trace_json(jn, msg)
 {
-    if(__console_output_enabled__) {
+    if(console_wants("json", msg)) {
         if(msg) {
             window.console.warn("=====> " + msg);
         }
@@ -3537,6 +3575,7 @@ export {
     set_remote_log_functions,
     set_log_callback,
     set_console_log_enabled,
+    set_console_log_filter,
     log_error,
     log_warning,
     log_info,
