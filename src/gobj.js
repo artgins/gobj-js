@@ -3626,12 +3626,18 @@ function gobj_change_state(gobj, state_name)
     let tracea = is_machine_tracing(gobj, "EV_STATE_CHANGED");
     let tracea_states = __trace_gobj_states__(gobj) ? true : false;
     if(tracea || tracea_states) {
-        trace_machine(sprintf("🔀🔀 mach(%s%s^%s), new st(%s), prev st(%s)",
-            (!gobj.running)?"!!":"",
-            gobj_gclass_name(gobj), gobj_name(gobj),
-            gobj_current_state(gobj),
-            gobj.last_state.state_name
-        ));
+        if(__trace_machine_format__ === 1) {
+            /*  No state line, like the C kernel: in the simpler shape the
+             *  transition line already carries the state it ran in, and a
+             *  second line per change doubles the trace to say it again. */
+        } else {
+            trace_machine(sprintf("🔀🔀 mach(%s%s^%s), new st(%s), prev st(%s)",
+                (!gobj.running)?"!!":"",
+                gobj_gclass_name(gobj), gobj_name(gobj),
+                gobj_current_state(gobj),
+                gobj.last_state.state_name
+            ));
+        }
     }
 
     // TODO let kw_st = {};
@@ -3956,14 +3962,23 @@ function gobj_send_event(dst, event, kw, src)
         if(dst.gclass.gmt.mt_inject_event) {
             __inside__ --;
             if(tracea) {
-                trace_machine(sprintf("🔃 mach(%s%s), st: %s, ev: %s, from(%s%s)",
-                    (!dst.running)?"!!":"",
-                    gobj_short_name(dst),
-                    state.state_name,
-                    event?event:"",
-                    (src && !src.running)?"!!":"",
-                    gobj_short_name(src)
-                ));
+                if(__trace_machine_format__ === 1) {
+                    trace_machine(sprintf("🔜 %s %s%s %s",
+                        event?event:"",
+                        (!dst.running)?"!!":"",
+                        gobj_short_name(dst),
+                        state.state_name
+                    ));
+                } else {
+                    trace_machine(sprintf("🔃 mach(%s%s), st: %s, ev: %s, from(%s%s)",
+                        (!dst.running)?"!!":"",
+                        gobj_short_name(dst),
+                        state.state_name,
+                        event?event:"",
+                        (src && !src.running)?"!!":"",
+                        gobj_short_name(src)
+                    ));
+                }
                 if(kw) {
                     //if(__trace_gobj_ev_kw__(dst)) {
                     if(tracea > 1) {
@@ -4775,15 +4790,31 @@ function gobj_publish_event(
     // let tracea = __trace_gobj_subscriptions__(publisher) &&
     //     !is_machine_not_tracing(publisher, event);
     if(tracea) {
-        trace_machine(sprintf("🔝🔝 mach(%s%s^%s), st: %s, ev: %s%s%s",
-            (!publisher.running)?"!!":"",
-            gobj_gclass_name(publisher), gobj_name(publisher),
-            publisher.current_state.state_name,
-            "", //On_Black BBlue,
-            event?event:"",
-            "" //Color_Off
-        ));
-        trace_json(kw);
+        if(__trace_machine_format__ === 1) {
+            trace_machine(sprintf("🔝🔝 %s %s%s %s",
+                event?event:"",
+                (!publisher.running)?"!!":"",
+                gobj_short_name(publisher),
+                publisher.current_state.state_name
+            ));
+        } else {
+            trace_machine(sprintf("🔝🔝 mach(%s%s^%s), st: %s, ev: %s%s%s",
+                (!publisher.running)?"!!":"",
+                gobj_gclass_name(publisher), gobj_name(publisher),
+                publisher.current_state.state_name,
+                "", //On_Black BBlue,
+                event?event:"",
+                "" //Color_Off
+            ));
+        }
+        /*  Only a kw with something IN it, like the C kernel
+         *  (`if(json_object_size(kw))`): an unguarded dump printed a bare
+         *  `{}` under every publish, which in a yuno whose timer publishes
+         *  is one empty line per tick, interleaved with the trace it is
+         *  meant to annotate. */
+        if(json_object_size(kw)) {
+            trace_json(kw);
+        }
     }
 
     /*----------------------------------------------------------*
@@ -4965,15 +4996,30 @@ function gobj_publish_event(
              *  Send event
              */
             if(tracea) {
-                trace_machine(sprintf("🔝🔄 mach(%s%s), st: %s, ev: %s, from(%s%s)",
-                    (!subscriber.running)?"!!":"",
-                    gobj_short_name(subscriber),
-                    gobj_current_state(subscriber),
-                    event?event:"",
-                    (publisher && !publisher.running)?"!!":"",
-                    gobj_short_name(publisher)
-                ));
-                trace_json(kw2publish);
+                if(__trace_machine_format__ === 1) {
+                    /*  The event as PUBLISHED and the one the subscriber is
+                     *  sent, which a `__rename_event_name__` can make
+                     *  different -- the C kernel prints both, and the pair is
+                     *  the only place the rename is visible. */
+                    trace_machine(sprintf("🔝🔄 %s (%s) %s%s",
+                        event?event:"",
+                        event?event:"",
+                        (!subscriber.running)?"!!":"",
+                        gobj_short_name(subscriber)
+                    ));
+                } else {
+                    trace_machine(sprintf("🔝🔄 mach(%s%s), st: %s, ev: %s, from(%s%s)",
+                        (!subscriber.running)?"!!":"",
+                        gobj_short_name(subscriber),
+                        gobj_current_state(subscriber),
+                        event?event:"",
+                        (publisher && !publisher.running)?"!!":"",
+                        gobj_short_name(publisher)
+                    ));
+                }
+                if(json_object_size(kw2publish)) {
+                    trace_json(kw2publish);
+                }
             }
 
             let ret_ = gobj_send_event(

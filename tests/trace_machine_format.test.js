@@ -25,6 +25,7 @@ import {
     gobj_set_global_trace,
     gobj_set_trace_machine_format,
     gobj_trace_machine_format,
+    gobj_change_state,
     set_log_callback,
 } from "../src/index.js";
 
@@ -42,10 +43,15 @@ beforeAll(() => {
     gobj_start_up(null, null, null, null, null, null, null);
 
     gclass_create("C_FMT_YUNO", [], [["ST_IDLE", []]], {}, 0, [SDATA_END()], {}, 0, 0, 0, 0);
+    /*  TWO states: gobj_change_state() to the state it is already in is a
+     *  no-op, so a one-state probe can never make a state line at all.  */
     gclass_create(
         "C_FMT_TRACED",
         [["EV_PING", 0]],
-        [["ST_IDLE", [["EV_PING", function ac_ping() { return 0; }, "ST_IDLE"]]]],
+        [
+            ["ST_IDLE",  [["EV_PING", function ac_ping() { return 0; }, "ST_IDLE"]]],
+            ["ST_OTHER", [["EV_PING", function ac_ping2() { return 0; }, "ST_IDLE"]]]
+        ],
         {}, 0, [SDATA(data_type_t.DTP_STRING, "x", 0, "", "x"), SDATA_END()], {}, 0, 0, 0, 0
     );
     gclass_create("C_FMT_SENDER", [], [["ST_IDLE", []]], {}, 0, [SDATA_END()], {}, 0, 0, 0, 0);
@@ -100,6 +106,32 @@ describe("the machine trace format", () => {
         expect(ping_lines().every((l) => /EV_PING/.test(l))).toBe(true);
         gobj_set_trace_machine_format(0);
         expect(ping_lines().every((l) => /EV_PING/.test(l))).toBe(true);
+    });
+
+    test("EVERY machine line has a shape in 1, not just the transition", () => {
+        /*  The port branched at TWO sites while the C kernel branches at six,
+         *  so a `mach(…)` line kept leaking into the simpler trace: the state
+         *  change, the injection, the publish and the subscriber forward.  */
+        gobj_set_trace_machine_format(1);
+        gobj_set_global_trace("machine", true);
+        debugged.length = 0;
+        gobj_send_event(dst, "EV_PING", {}, src);
+        gobj_change_state(dst, "ST_OTHER");
+        gobj_change_state(dst, "ST_IDLE");
+        expect(debugged.some((l) => /mach\(/.test(l))).toBe(false);
+    });
+
+    test("the state change writes NO line of its own in 1", () => {
+        gobj_set_trace_machine_format(1);
+        gobj_set_global_trace("machine", true);
+        debugged.length = 0;
+        gobj_change_state(dst, "ST_OTHER");
+        expect(debugged.filter((l) => /🔀🔀/.test(l)).length).toBe(0);
+
+        gobj_set_trace_machine_format(0);
+        debugged.length = 0;
+        gobj_change_state(dst, "ST_IDLE");
+        expect(debugged.filter((l) => /🔀🔀/.test(l)).length).toBe(1);
     });
 
     test("anything that is not 1 is the legacy one", () => {

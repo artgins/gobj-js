@@ -4,6 +4,29 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.13.8
+
+- **fix: the simpler machine trace leaked the LEGACY shape at four of its six
+  sites.** 7.13.7 moved the default to format 1 and only two call sites knew
+  about it — the transition and its return. The C kernel branches at six, so a
+  browser yuno in the "simpler" shape still wrote `mach(…), st: …, ev: …` for
+  the state change, the event injection, the publish and the subscriber
+  forward: a mixed trace that looked like the default had not taken. The four
+  now mirror the C kernel exactly:
+
+  ```
+  🔀🔀  (nothing — the transition line already carries the state)
+  🔜 EV_ON_MESSAGE C_GATE^gate ST_IDLE
+  🔝🔝 EV_STATE_CHANGED C_PROT_MQTT^input-2 ST_WAIT_FRAME_HEADER
+  🔝🔄 EV_TX_READY (EV_TX_READY) C_PROT_TCP4H^output-0
+  ```
+
+- **fix: the publish path dumped an EMPTY kw.** `trace_json()` ran unguarded on
+  both publish sites, so a bare `{}` was printed under every publication — in
+  a yuno whose timer publishes, one empty line per tick, interleaved with the
+  trace it is meant to annotate. Guarded by `json_object_size()`, the way the
+  C kernel guards it and the way the other two sites in this file already did.
+
 ## 7.13.7
 
 - **change: the machine trace defaults to the SIMPLER shape, the C kernel's
