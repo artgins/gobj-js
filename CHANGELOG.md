@@ -1,10 +1,20 @@
 # Changelog
 
 `@yuneta/gobj-js` — the GObject-JS runtime (JavaScript port of the C GObject
-kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
-ahead of the SDK version between releases.
+kernel). **Versioned to track `YUNETA_VERSION`, and never ahead of it except in
+the third index**: the first two are the SDK's, the third is this package's own
+life between SDK releases. Rule set on 2026-08-28; before it the line had
+drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
+about which SDK it was built against.
 
-## 7.13.9
+## 7.16.0
+
+**Alineada con el SDK de C, que va por 7.16.2.** Desde ahora `gobj-js` **no
+adelanta** al C salvo en el tercer índice: los dos primeros son los del SDK y el
+tercero es la vida propia del paquete entre releases. Se saltan las 7.14 y 7.15
+a propósito: el número no cuenta releases del paquete, dice **contra qué SDK
+está**, que es lo que un consumidor necesita saber.
+
 
 - **feat: el json plano — `json2flat`, `flat2json`, `flat_key_join`,
   `flat_key_split`, `flat_diff`, `flat_apply`.** Un json visto como tabla: una
