@@ -3476,6 +3476,366 @@ function build_path(...segments)
     return result;
 }
 
+
+
+                    /***************************************
+                     *      Flat json (id -> value)
+                     ***************************************/
+
+
+
+
+/************************************************************
+ *  THE FLAT FORM, AND WHY IT IS SHAPED LIKE THIS
+ *
+ *  A json seen as a table: one row per LEAF, the id being the
+ *  PATH of the item and the value its value. Easier to store,
+ *  to compare and to diff than the nested form, and the only
+ *  one a person can read when two configurations disagree.
+ *
+ *      {a: {b: 1}, c: [10, 20]}
+ *          ->  {"a`b": 1, "c`[0]": 10, "c`[1]": 20}
+ *
+ *  Same grammar as the C side (kwid.c), because the point is
+ *  that a flat json written by either can be read by the other:
+ *
+ *      - segments joined by '`', the SDK's own path delimiter;
+ *      - a literal '`' in a key is DOUBLED, so no key is
+ *        forbidden -- a dict keyed by "1630" is a dict, not an
+ *        array of 1631 elements, which is what the first C
+ *        implementation answered;
+ *      - an array index is '[N]', canonical, no leading zeros;
+ *      - a dict key starting with '[' doubles it ('[[0]'), so it
+ *        can never be read as an index;
+ *      - AN EMPTY CONTAINER IS A LEAF: {} and [] hold no leaves,
+ *        and 'properties': {} is everywhere in our configs.
+ *
+ *  flat2json() THROWS instead of guessing: an id used as leaf and
+ *  as container would depend on the order the ids are read in.
+ ************************************************************/
+const FLAT_MAX_DEPTH = 256;
+const FLAT_MAX_INDEX = 100000;
+
+/************************************************************
+ *  Is this raw segment an array index, '[N]'?
+ *  Returns the index, or null.
+ ************************************************************/
+function flat_seg_index(seg)
+{
+    if(typeof seg !== "string" || seg.length < 3 || seg[0] !== "[") {
+        return null;
+    }
+    if(seg[seg.length-1] !== "]") {
+        return null;
+    }
+    const body = seg.slice(1, -1);
+    if(!/^[0-9]+$/.test(body)) {
+        return null;
+    }
+    if(body.length > 1 && body[0] === "0") {
+        return null;    // canonical: '[00]' is malformed, not a second '[0]'
+    }
+    return parseInt(body, 10);
+}
+
+/************************************************************
+ *  Escape one dict key.
+ ************************************************************/
+function flat_escape_key(key)
+{
+    const s = String(key).replace(/`/g, "``");
+    return s[0] === "[" ? "[" + s : s;
+}
+
+/************************************************************
+ *  Compose a flat id from its segments.
+ *
+ *  A STRING segment is a dict key and gets escaped; a NUMBER is
+ *  an array index and is written '[N]'. They are two types and
+ *  not two spellings: as strings, the key "[0]" and the index 0
+ *  would both be "[0]", which is the ambiguity '[N]' removes.
+ ************************************************************/
+function flat_key_join(segments)
+{
+    if(!Array.isArray(segments) || segments.length === 0) {
+        return "";
+    }
+    return segments.map(
+        (seg) => (typeof seg === "number" ? `[${seg}]` : flat_escape_key(seg))
+    ).join("`");
+}
+
+/************************************************************
+ *  Split a flat id into its segments, undoing the escapes.
+ *
+ *  An index comes back as a NUMBER and a dict key as a STRING.
+ ************************************************************/
+function flat_key_split(key)
+{
+    if(typeof key !== "string") {
+        return null;
+    }
+
+    let raw = [];
+    let cur = "";
+    for(let i = 0; i < key.length; i++) {
+        if(key[i] === "`") {
+            if(key[i+1] === "`") {
+                cur += "`";
+                i++;
+                continue;
+            }
+            raw.push(cur);
+            cur = "";
+            continue;
+        }
+        cur += key[i];
+    }
+    raw.push(cur);
+
+    /*  Decide what each segment IS before undoing the bracket escape:
+     *  the other way round, '[[0]' would become '[0]' and read as an
+     *  index. */
+    return raw.map((seg) => {
+        const idx = flat_seg_index(seg);
+        if(idx !== null) {
+            return idx;
+        }
+        if(seg[0] === "[" && seg[1] === "[") {
+            return seg.slice(1);
+        }
+        return seg;
+    });
+}
+
+/************************************************************
+ *  Nested -> flat.
+ ************************************************************/
+function json2flat(jn)
+{
+    const flat = {};
+
+    const walk = (value, path, depth) => {
+        if(depth > FLAT_MAX_DEPTH) {
+            throw new Error(`json2flat: deeper than ${FLAT_MAX_DEPTH}`);
+        }
+        if(value !== null && typeof value === "object" && !Array.isArray(value)) {
+            const keys = Object.keys(value);
+            if(keys.length > 0) {
+                for(const key of keys) {
+                    const seg = flat_escape_key(key);
+                    walk(value[key], depth === 0 ? seg : path + "`" + seg, depth+1);
+                }
+                return;
+            }
+        } else if(Array.isArray(value) && value.length > 0) {
+            value.forEach((child, index) => {
+                const seg = `[${index}]`;
+                walk(child, depth === 0 ? seg : path + "`" + seg, depth+1);
+            });
+            return;
+        }
+        /*  A leaf: a scalar, or an EMPTY container, which has no leaves
+         *  of its own and would otherwise vanish. Depth, not the length
+         *  of the path: {"": 1} is a json whose only id is "". */
+        if(depth === 0) {
+            return;     // a scalar root has no path
+        }
+        flat[path] = value;
+    };
+
+    if(jn === undefined || jn === null) {
+        return flat;
+    }
+    walk(jn, "", 0);
+    return flat;
+}
+
+/************************************************************
+ *  Flat -> nested. Throws on the FIRST id that does not fit:
+ *  rebuilding "most of it" is how a configuration comes back
+ *  subtly different from the one that was saved.
+ ************************************************************/
+function flat2json(flat)
+{
+    if(flat === null || typeof flat !== "object" || Array.isArray(flat)) {
+        throw new Error("flat2json: a flat json is an object of id -> value");
+    }
+
+    let root = null;
+
+    for(const key of Object.keys(flat)) {
+        const segments = flat_key_split(key);
+        if(!segments || segments.length === 0) {
+            throw new Error(`flat2json: malformed flat id: '${key}'`);
+        }
+        if(segments.length > FLAT_MAX_DEPTH) {
+            throw new Error(`flat2json: '${key}' deeper than ${FLAT_MAX_DEPTH}`);
+        }
+
+        const first_is_index = (typeof segments[0] === "number");
+        if(root === null) {
+            root = first_is_index ? [] : {};
+        } else if(first_is_index !== Array.isArray(root)) {
+            throw new Error(
+                `flat2json: '${key}' does not fit a ` +
+                `${Array.isArray(root)? "array": "object"} root`
+            );
+        }
+
+        let current = root;
+        for(let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            const is_index = (typeof seg === "number");
+            const is_last = (i === segments.length - 1);
+            const next_is_index = is_last? false: (typeof segments[i+1] === "number");
+
+            if(is_index && seg > FLAT_MAX_INDEX) {
+                throw new Error(
+                    `flat2json: array index ${seg} over the limit ` +
+                    `(${FLAT_MAX_INDEX}) in '${key}'`
+                );
+            }
+            if(is_index !== Array.isArray(current)) {
+                throw new Error(
+                    `flat2json: '${key}' uses a ${is_index? "array index": "key"} ` +
+                    `where the tree already has a ` +
+                    `${Array.isArray(current)? "array": "object"}`
+                );
+            }
+
+            if(is_last) {
+                if(Array.isArray(current)) {
+                    while(current.length <= seg) {
+                        current.push(null);
+                    }
+                    current[seg] = flat[key];
+                } else {
+                    if(Object.prototype.hasOwnProperty.call(current, seg)) {
+                        throw new Error(
+                            `flat2json: '${key}' is written twice, or once as a ` +
+                            `value and once as a container`
+                        );
+                    }
+                    current[seg] = flat[key];
+                }
+                break;
+            }
+
+            let child;
+            if(Array.isArray(current)) {
+                while(current.length <= seg) {
+                    current.push(null);
+                }
+                child = current[seg];
+                if(child === null || child === undefined) {
+                    child = next_is_index? []: {};
+                    current[seg] = child;
+                }
+            } else {
+                child = current[seg];
+                if(child === undefined) {
+                    child = next_is_index? []: {};
+                    current[seg] = child;
+                }
+            }
+
+            if(child === null || typeof child !== "object") {
+                throw new Error(
+                    `flat2json: '${key}' walks through a value: the same id is ` +
+                    `a leaf and a container at once`
+                );
+            }
+            if(next_is_index !== Array.isArray(child)) {
+                throw new Error(
+                    `flat2json: '${key}' needs a ${next_is_index? "array": "object"} ` +
+                    `where the tree already has a ` +
+                    `${Array.isArray(child)? "array": "object"}`
+                );
+            }
+            current = child;
+        }
+    }
+
+    return root === null ? {} : root;
+}
+
+/************************************************************
+ *  Deep equality, for comparing two leaf values.
+ ************************************************************/
+function flat_value_equal(a, b)
+{
+    if(a === b) {
+        return true;
+    }
+    if(a === null || b === null || typeof a !== "object" || typeof b !== "object") {
+        return false;
+    }
+    return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/************************************************************
+ *  What changed between two flat dicts:
+ *
+ *      {added: {id: value}, removed: {id: value},
+ *       changed: {id: {from, to}}}
+ ************************************************************/
+function flat_diff(flat1, flat2)
+{
+    const a = (flat1 && typeof flat1 === "object")? flat1: {};
+    const b = (flat2 && typeof flat2 === "object")? flat2: {};
+    const diff = {added: {}, removed: {}, changed: {}};
+
+    for(const key of Object.keys(a)) {
+        if(!Object.prototype.hasOwnProperty.call(b, key)) {
+            diff.removed[key] = a[key];
+        } else if(!flat_value_equal(a[key], b[key])) {
+            diff.changed[key] = {from: a[key], to: b[key]};
+        }
+    }
+    for(const key of Object.keys(b)) {
+        if(!Object.prototype.hasOwnProperty.call(a, key)) {
+            diff.added[key] = b[key];
+        }
+    }
+
+    return diff;
+}
+
+/************************************************************
+ *  Apply that diff to a flat dict, which is MUTATED.
+ *
+ *  On the flat form on purpose: there an id addresses one value,
+ *  so applying is setting and deleting, with nothing to walk and
+ *  nothing to guess. Nested is json2flat -> flat_apply -> flat2json.
+ ************************************************************/
+function flat_apply(flat, diff)
+{
+    if(flat === null || typeof flat !== "object" || Array.isArray(flat)) {
+        throw new Error("flat_apply: a flat json is an object of id -> value");
+    }
+    if(diff === null || typeof diff !== "object") {
+        throw new Error("flat_apply: a diff is the object flat_diff() answers");
+    }
+
+    for(const key of Object.keys(diff.removed || {})) {
+        delete flat[key];
+    }
+    for(const key of Object.keys(diff.added || {})) {
+        flat[key] = diff.added[key];
+    }
+    for(const key of Object.keys(diff.changed || {})) {
+        const change = diff.changed[key];
+        if(!change || !Object.prototype.hasOwnProperty.call(change, "to")) {
+            throw new Error(`flat_apply: changed '${key}' without a 'to'`);
+        }
+        flat[key] = change.to;
+    }
+
+    return flat;
+}
+
+
 export {
     kw_flag_t,
     json_deep_copy,
@@ -3603,4 +3963,11 @@ export {
     get_function_name,
     debounce,
     build_path,
+
+    json2flat,
+    flat2json,
+    flat_key_join,
+    flat_key_split,
+    flat_diff,
+    flat_apply,
 };

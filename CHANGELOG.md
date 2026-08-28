@@ -4,6 +4,31 @@
 kernel). Versioned to track `YUNETA_VERSION`; a gobj-js-only patch may move
 ahead of the SDK version between releases.
 
+## 7.13.9
+
+- **feat: el json plano — `json2flat`, `flat2json`, `flat_key_join`,
+  `flat_key_split`, `flat_diff`, `flat_apply`.** Un json visto como tabla: una
+  fila por hoja, el id es la ruta del item. Para guardar, comparar y hacer diff
+  es mejor forma que la nativa, y es la única que se lee cuando dos
+  configuraciones no coinciden.
+
+  **La gramática es la misma que la del lado C** (`kwid.c`), y ése es el punto:
+  un json plano lo escribe uno y lo lee el otro. Separador `` ` ``; un `` ` ``
+  dentro de una clave se duplica, así que **no hay claves prohibidas**; un
+  índice de array es `[N]` canónico; una clave que empieza por `[` duplica el
+  corchete; y **un contenedor vacío es una hoja**, porque `{}` y `[]` no tienen
+  hojas propias y `"properties": {}` está por todas partes en nuestras configs.
+
+  `flat2json()` **lanza en vez de adivinar** cuando un id es hoja y contenedor a
+  la vez —el resultado dependería del orden de las claves—, cuando un índice se
+  pasa del tope o cuando la ruta es demasiado profunda.
+
+  Índice y clave son **dos tipos**: `flat_key_split()` devuelve el índice como
+  número y la clave como cadena. Como cadenas, la clave `"[0]"` y el índice `0`
+  serían la misma cosa, que es la ambigüedad que el `[N]` viene a quitar.
+
+  36 tests en `tests/json_flat.test.js`, fijando los mismos ids que el test de C.
+
 ## 7.13.8
 
 - **fix: the simpler machine trace leaked the LEGACY shape at four of its six
