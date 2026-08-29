@@ -7,6 +7,43 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.16.1
+
+- **fix: an inter-event addressed to a service that is GONE is dropped, not
+  published to everyone.** `C_IEVENT_CLI` looked the destination service up and,
+  when it did not find one, fell through to the SERVICE subscription model:
+  publish the message to every local subscriber of the transport. That fallback
+  is right for a message that names NO destination and wrong for one that names
+  a service — an addressed message belongs to its addressee or to nobody.
+
+  The shape that hits it is the ordinary end of a view's life, not an edge case.
+  A view mounted under a service name subscribes to a backend event; the user
+  navigates away; the view is destroyed; the frames already on the wire keep
+  arriving addressed to a name nobody answers to. They were then handed to every
+  subscriber — in an SPA that means the application gobj, which subscribes to the
+  transport with a **null** event (deliberately: naming `EV_ON_OPEN` in a
+  subscription forwards it upstream and the remote rejects it) and a null
+  subscription matches everything. Its FSM does not declare a device frame, so it
+  said so, once per frame: **38 errors in a single 26 ms burst** on a node with 38
+  devices, none of them actionable, and two per frame counting the lookup's own.
+
+  Now: a named destination that is missing is **dropped with a warning** that
+  says which service and which event were lost. A warning and not an error
+  because it is a race and not a broken invariant — an unsubscribe cannot recall
+  what is already on the wire — and the lookup no longer logs its own generic
+  error on top (`gobj_find_service(..., false)`).
+
+  **The unaddressed path is untouched**, and `tests/ievent_dispatch.test.js`
+  pins all three cases together, because the fix is only correct if the third
+  one still works: addressed to a live service → it alone; addressed to a dead
+  one → dropped; addressed to nobody → published, as before.
+
+  ⚠️ The **C side carries the same open question** (`c_ievent_cli.c` has the
+  identical `TODO Shouldn't this event be rejected?`) and is deliberately left
+  alone here: it is consolidated kernel code, and changing how a backend routes
+  is not a JS decision. Until it moves, a C client and a JS client differ on
+  what they do with an orphaned addressed event.
+
 ## 7.16.0
 
 **Alineada con el SDK de C, que va por 7.16.2.** Desde ahora `gobj-js` **no

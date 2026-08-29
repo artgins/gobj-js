@@ -1258,7 +1258,6 @@ function ac_on_message(gobj, event, kw, src)
     /*----------------------------------------*
      *  Check dst service
      *----------------------------------------*/
-    let ret = 0;
     let iev_dst_service = kw_get_str(gobj, event_id, "dst_service", "");
 
     /*------------------------------------*
@@ -1294,28 +1293,55 @@ function ac_on_message(gobj, event, kw, src)
         return 0;
     }
 
-    /*-------------------------*
+    /*-------------------------------------------------------------*
      *  Dispatch the event
-     *-------------------------*/
-    let gobj_service = gobj_find_service(iev_dst_service, true);
-
-    if(gobj_service) {
-        if(gobj_has_event(gobj_service, iev_event, event_flag_t.EVF_PUBLIC_EVENT)) {
-            gobj_send_event(gobj_service, iev_event, iev_kw, gobj);
-        } else {
+     *
+     *  A MESSAGE THAT NAMES A SERVICE IS ADDRESSED TO IT, and when
+     *  that service is gone the message is not for anybody else.
+     *  Delivering it to the fallback below is how a view's private
+     *  stream ends up on every other subscriber of this transport.
+     *
+     *  In an SPA that is not theoretical, and the shape is always the
+     *  same: a view mounted under a service name subscribes to a
+     *  backend event, the user navigates away, the view is destroyed,
+     *  and the frames already in flight keep arriving addressed to a
+     *  name nobody answers to. They were then published to everyone,
+     *  which in practice means the application gobj -- subscribed to
+     *  this transport with a NULL event, deliberately, because naming
+     *  EV_ON_OPEN in a subscription forwards it upstream and the
+     *  remote rejects it -- and a null subscription matches
+     *  everything. Its FSM does not declare a device frame, so it said
+     *  so, loudly, once per frame: 38 of them in one 26 ms burst on a
+     *  node with 38 devices.
+     *
+     *  It is the ordinary end of a view's life and not a broken
+     *  invariant -- an unsubscribe cannot recall what is already on
+     *  the wire -- so the message is dropped with a WARNING that names
+     *  what was lost, not with an error and a stack.
+     *-------------------------------------------------------------*/
+    if(!empty_string(iev_dst_service)) {
+        let gobj_service = gobj_find_service(iev_dst_service, false);
+        if(!gobj_service) {
+            log_warning(`${gobj_short_name(gobj)}: event for a service that is gone, DROPPED: service '${iev_dst_service}', ev '${iev_event}'`);
+            return 0;
+        }
+        if(!gobj_has_event(gobj_service, iev_event, event_flag_t.EVF_PUBLIC_EVENT)) {
             log_error(`${gobj_short_name(gobj)}: Service found but no event or not public, service '${gobj_short_name(gobj_service)}', ev '${iev_event}'`);
             return -1;
         }
+        gobj_send_event(gobj_service, iev_event, iev_kw, gobj);
+        return 0;
+    }
+
+    /*
+     *  SERVICE subscription model: the message names NO destination,
+     *  so it belongs to whoever subscribed here. This is the path the
+     *  check above protects, not one it replaces.
+     */
+    if(gobj_is_pure_child(gobj)) {
+        gobj_send_event(gobj_parent(gobj), iev_event, iev_kw, gobj);
     } else {
-        /*
-         *  SERVICE subscription model
-         *  TODO Shouldn't this event be rejected? It may make sense in routing task.
-         */
-        if(gobj_is_pure_child(gobj)) {
-            gobj_send_event(gobj_parent(gobj), iev_event, iev_kw, gobj);
-        } else {
-            gobj_publish_event(gobj, iev_event, iev_kw);
-        }
+        gobj_publish_event(gobj, iev_event, iev_kw);
     }
 
     return 0;

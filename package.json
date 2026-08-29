@@ -1,7 +1,7 @@
 {
   "name": "@yuneta/gobj-js",
-  "version": "7.16.0",
-  "description": "GObject + FSM runtime for JavaScript \u2014 event-driven components with typed attributes, pub/sub, and WebSocket inter-event client",
+  "version": "7.16.1",
+  "description": "GObject + FSM runtime for JavaScript — event-driven components with typed attributes, pub/sub, and WebSocket inter-event client",
   "author": "ArtGins",
   "license": "MIT",
   "type": "module",
