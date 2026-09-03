@@ -7,6 +7,22 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.16.2
+
+- **add: `empty_json()`, the question to ask over a json.** True for
+  null/undefined, `{}`, `[]`, `""` and any scalar; false only when there is
+  content. It is a wrapper over the `json_size()` that was already here, and
+  it exists for **parity with the C runtime**, where the same name is now the
+  guard that has to be written instead of `if(!jn)`: there an attr declared
+  `DTP_JSON` with a null default holds `json_null()`, a valid pointer, so the
+  pointer test is dead code. Here `if(!x)` happens to work, and that
+  difference is what a port across the two runtimes gets wrong, in both
+  directions — including a subscription's optional `__filter__`, which in C
+  is never a C NULL. Write the same question in both.
+
+  The other question — "absent or explicitly null", C's `json_absent()` — is
+  `is_null()` here, since javascript has no second null to tell apart.
+
 ## 7.16.1
 
 - **fix: an inter-event addressed to a service that is GONE is dropped, not

@@ -504,7 +504,9 @@ function json_array_size(a)
 }
 
 /************************************************************
- *  String element = 1 if not empty string
+ *  How much content a json carries: elements of a container,
+ *  1 for a non-empty string, 0 for everything else
+ *  (null/undefined, scalars). C twin: json_size() in helpers.h.
  ************************************************************/
 function json_size(a)
 {
@@ -517,6 +519,24 @@ function json_size(a)
     } else {
         return 0;
     }
+}
+
+/************************************************************
+ *  "There is nothing usable here": null/undefined, {}, [],
+ *  "" and any scalar. C twin: empty_json() in helpers.h,
+ *  where it is the guard to write instead of `if(!jn)` --
+ *  there an absent DTP_JSON is json_null(), a valid pointer.
+ *  Here `if(!x)` happens to work, and that difference is what
+ *  a port across the two runtimes gets wrong: write the same
+ *  question in both.
+ *
+ *  The other question -- "absent or explicitly null", C's
+ *  json_absent() -- is is_null() here, since javascript has
+ *  no second null to tell apart.
+ ************************************************************/
+function empty_json(a)
+{
+    return json_size(a) === 0;
 }
 
 /************************************************************
@@ -3855,6 +3875,7 @@ export {
     json_object_size,
     json_array_size,
     json_size,
+    empty_json,
 
     is_object,
     is_array,
