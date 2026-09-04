@@ -383,6 +383,7 @@ const treedb_field_types = [ // WARNING check tr_treedb.h to update new types
     "date",
     "color",
     "image",
+    "icon",
     "tel",
     "table",
     "id",

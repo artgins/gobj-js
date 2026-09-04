@@ -7,6 +7,16 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.16.3
+
+- **add: `icon` as a treedb field type.** A col flagged `icon` holds the NAME
+  of an icon of the app's set (`yi-bolt`), not a file: `image` was the closest
+  thing on the list and it is a different case, so the table built an `<img
+  src="yi-bolt">` and drew a broken-image glyph. Adding it to
+  `treedb_field_types` is what makes `treedb_get_field_desc()` answer
+  `type: "icon"`; the drawing is gobj-ui's (7.23.53), and the C side carries
+  the same word in `tr_treedb.h`, where the vocabulary is documented.
+
 ## 7.16.2
 
 - **add: `empty_json()`, the question to ask over a json.** True for
