@@ -7,6 +7,16 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.16.4
+
+- **add: `file` as a treedb field type.** A col flagged `['fkey','file']` holds
+  an fkey into the treedb's system topic `__assets__`: the bytes live on disk
+  under the treedb, the index in memory, and the column names the asset by
+  its sha256. Adding the word to `treedb_field_types` is what makes
+  `treedb_get_field_desc()` see it; the form control that picks, hashes and
+  attaches a file is gobj-ui's, still to come. The C side stores and checks
+  (`tr_treedb.c`, SDK `## Unreleased`).
+
 ## 7.16.3
 
 - **add: `icon` as a treedb field type.** A col flagged `icon` holds the NAME

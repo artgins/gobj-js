@@ -384,6 +384,7 @@ const treedb_field_types = [ // WARNING check tr_treedb.h to update new types
     "color",
     "image",
     "icon",
+    "file",     // an fkey into __assets__: the bytes on disk under the treedb
     "tel",
     "table",
     "id",
