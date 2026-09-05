@@ -412,6 +412,7 @@ function treedb_get_field_desc(col)
         placeholder: col.placeholder,
         fillspace: col.fillspace || 4,
         fkey: col.fkey || null, // fkey mapping {topic_name: hook_name} (fkey cols)
+        is_file: false,        // ['fkey','file']: an fkey into __assets__
     };
 
     if(!col.flag) {
@@ -433,6 +434,9 @@ function treedb_get_field_desc(col)
                 case "table":
                     field_desc.enum_list = col.table;
                     break;
+                case "file":
+                    field_desc.is_file = true;
+                    break;
             }
             field_desc.type = f;
 
@@ -452,6 +456,18 @@ function treedb_get_field_desc(col)
                     break;
             }
         }
+    }
+
+    /*
+     *  A `file` column is flagged ['fkey','file'] -- `file` QUALIFIES the
+     *  fkey, it does not replace it -- and the loop above takes the LAST
+     *  type word it meets, so the ORDER of the flag array would decide
+     *  what this answers. The C side does not care about the order
+     *  (derive_file_hooks() asks for both words with kw_has_word), so
+     *  neither may this: `file` wins wherever it sits.
+     */
+    if(field_desc.is_file) {
+        field_desc.type = "file";
     }
 
     return field_desc;

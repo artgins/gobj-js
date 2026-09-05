@@ -7,6 +7,19 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.16.5
+
+- **fix: the ORDER of the flags decided whether a `file` column was one.**
+  `treedb_get_field_desc()` walks the flag array and every type word it meets
+  OVERWRITES the answer, so `['fkey','file']` answered `file` and
+  `['file','fkey']` answered `fkey` — the same column, drawn as a file picker
+  or as a select depending on how the author happened to write the list. The C
+  side asks for both words with `kw_has_word()` and does not care in which
+  order they sit (`derive_file_hooks()`), so neither may this: `file` wins
+  wherever it sits, and a new `is_file` says it without going through `type`
+  at all. A `file` column is an fkey QUALIFIED by `file`, the way `enum`
+  qualifies a string; it never replaces the `fkey`.
+
 ## 7.16.4
 
 - **add: `file` as a treedb field type.** A col flagged `['fkey','file']` holds
