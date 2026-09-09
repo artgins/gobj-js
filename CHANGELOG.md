@@ -7,6 +7,19 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.16.6
+
+- **fix: `refresh_language()` never translated the element it was GIVEN.** It
+  looks its four attributes up with `querySelectorAll`, which searches
+  DESCENDANTS and never returns the node it is called on — so a caller that
+  hands it the very element carrying the key got the children translated and
+  that element's own `data-i18n` / `-title` / `-aria-label` / `-placeholder`
+  left in the source language. It is invisible in English, where the key IS
+  the text, and it bites exactly where a widget is built lazily and translated
+  as a unit: measured on a deployed shell, the toolbar's language dropdown
+  opened as `role="menu" aria-label="select language"` while its own trigger,
+  a sibling, read *"Elegir idioma"*. The root is now included.
+
 ## 7.16.5
 
 - **fix: the ORDER of the flags decided whether a `file` column was one.**

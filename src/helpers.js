@@ -3210,7 +3210,25 @@ function refresh_language(element, t)
     if(!element) {
         element = document;
     }
-    element.querySelectorAll('[data-i18n]').forEach(function(elem) {
+
+    /*  `querySelectorAll` searches DESCENDANTS: it never returns the
+     *  element it was called on.  So a caller that hands us the very
+     *  node carrying the key -- which is what happens whenever a widget
+     *  is built lazily and translated as a unit -- got its children
+     *  translated and its own attribute left in the source language.
+     *  Measured on the deployed shell: the toolbar's language dropdown
+     *  opened as role="menu" aria-label="select language" while its
+     *  trigger next to it said "Elegir idioma".  Include the root.  */
+    const matching = (selector) => {
+        let out = [];
+        if(typeof element.matches === "function" && element.matches(selector)) {
+            out.push(element);
+        }
+        out.push(...element.querySelectorAll(selector));
+        return out;
+    };
+
+    matching('[data-i18n]').forEach(function(elem) {
         let value = elem.getAttribute('data-i18n');
         for(let node of elem.childNodes) {
             if (node.nodeType === Node.TEXT_NODE) {
@@ -3228,7 +3246,7 @@ function refresh_language(element, t)
      *  nav and toolbar renderers to keep tooltips in sync with the
      *  active language, since refresh_language() above only touches
      *  text-node content. */
-    element.querySelectorAll('[data-i18n-title]').forEach(function(elem) {
+    matching('[data-i18n-title]').forEach(function(elem) {
         let value = elem.getAttribute('data-i18n-title');
         if(value) {
             elem.setAttribute('title', t(value));
@@ -3240,7 +3258,7 @@ function refresh_language(element, t)
      *  Same contract as data-i18n-title above — emitted by lib-yui's
      *  toolbar and nav renderers next to the static `aria-label` so
      *  screen readers track language switches. */
-    element.querySelectorAll('[data-i18n-aria-label]').forEach(function(elem) {
+    matching('[data-i18n-aria-label]').forEach(function(elem) {
         let value = elem.getAttribute('data-i18n-aria-label');
         if(value) {
             elem.setAttribute('aria-label', t(value));
@@ -3251,7 +3269,7 @@ function refresh_language(element, t)
      *  any element carrying `data-i18n-placeholder="<canonical key>"`.
      *  Same contract as data-i18n-title above — a placeholder is not a
      *  text node, so the data-i18n walk cannot reach it. */
-    element.querySelectorAll('[data-i18n-placeholder]').forEach(function(elem) {
+    matching('[data-i18n-placeholder]').forEach(function(elem) {
         let value = elem.getAttribute('data-i18n-placeholder');
         if(value) {
             elem.setAttribute('placeholder', t(value));
