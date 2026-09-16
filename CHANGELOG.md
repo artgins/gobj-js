@@ -7,6 +7,41 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.21.0
+
+The SDK is at 7.21.0 and this package was at 7.16.6, which by the rule above
+tells a consumer the wrong thing: the first two indices are the SDK's. 7.17
+to 7.20 are skipped on purpose -- the number does not count releases of this
+package, it names the SDK the package belongs to.
+
+The `kwid_*` id helpers, reviewed 2026-09-10 and carried in yunetas' `TODO.md`
+since. They serve one rule -- **the key of a data record is its `id`, and the
+rest of the record is value** -- and nothing covered them: `tests/kwid.test.js`
+is new, 19 cases.
+
+- **fix: `kwid_find_one_record()` crashed when there was no data.**
+  `kwid_collect()` answers `null` -- not an empty list -- for a `kw` that is
+  neither a list nor a dict, and this read `list.length` off it: a `TypeError`
+  thrown at the caller. One caller hands it the `data` of a command answer,
+  which is missing exactly when the command found nothing, so the shape that
+  triggered it was the ordinary "nothing matched" and it took a view down with
+  it.
+- **fix: `kwid_new_dict()` dropped a record without `id` in silence.** The C
+  twin passes `KW_REQUIRED` and logs it; this passed `0`. The dict came back
+  short and nothing said which row had gone. Under the rule a record without an
+  `id` is broken, and it says so now.
+- **feat: `kwid_new_list()`, which only C had.** The normalizing function of
+  the family: a dict of records becomes a list, and each record gets its KEY
+  written as its `id`, overwriting one that disagrees -- which is the point,
+  and is what the C `json_object_set_new(v, "id", ...)` does. A list comes back
+  as itself. It is the shape a table indexed and sorted by `id` wants.
+- **docs: three comments that described the C and not this.** `kwid_collect()`
+  promised `JSON_INCREF` clones; javascript has no refcount, the LIST is new
+  and its records are the same objects, so a write through a collected row
+  writes into the source. `kwid_new_dict()` said "a new dict" and hands a dict
+  input straight back, as C does, where "new" means a new REFERENCE. And
+  `kwid_match_id()` had its comments in Spanish.
+
 ## 7.16.6
 
 - **fix: `refresh_language()` never translated the element it was GIVEN.** It

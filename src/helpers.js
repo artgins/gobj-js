@@ -1864,13 +1864,13 @@ function kw_remove_local_storage_value(key)
 function kwid_match_id(ids, id)
 {
     if(is_null(ids) || is_null(id)) {
-        // Si no hay filtro pasan todos.
+        // No filter: everything passes.
         return true;
     }
 
     if(is_array(ids)) {
         if(ids.length===0) {
-            // A empty object at first level evaluate as true.
+            // An empty list at the first level evaluates as true.
             return true;
         }
         for(let i=0; i<ids.length; i++) {
@@ -1882,7 +1882,7 @@ function kwid_match_id(ids, id)
 
     } else if(is_object(ids)) {
         if(Object.keys(ids).length===0) {
-            // A empty object at first level evaluate as true.
+            // An empty object at the first level evaluates as true.
             return true;
         }
         for(let key in ids) {
@@ -1906,10 +1906,18 @@ function kwid_match_id(ids, id)
         - list of strings [s,...]
         - list of dicts [{},...]
         - dict of dicts {id:{},...}
-    return a **NEW** list of incref (clone) kw filtering the rows by `jn_filter` (where),
-    and matching the ids.
-    If match_fn is 0 then kw_match_simple is used.
-    NOTE Using JSON_INCREF/JSON_DECREF HACK
+    return a NEW list holding the rows that match `ids` and the
+    `jn_filter` (where). If match_fn is 0 then kw_match_simple is used.
+
+    WARNING the LIST is new; its elements are THE SAME objects, not
+    copies. The C twin increfs each one and says "clone", which this
+    comment repeated for years: javascript has no refcount, so a write
+    through a collected row writes into `kw`. Copy what you mean to
+    modify.
+
+    Returns null -- not an empty list -- for a `kw` that is neither a
+    list nor a dict, so a caller that reads `.length` off the answer
+    must check it first (kwid_find_one_record does).
  *************************************************************/
 function kwid_collect(gobj, kw, ids, jn_filter, match_fn)
 {
@@ -1966,12 +1974,17 @@ function kwid_collect(gobj, kw, ids, jn_filter, match_fn)
 
 /*************************************************************
     Utility for databases.
-    Return a new dict from a "dict of records" or "list of records"
-    WARNING the "id" of a dict's record is hardcorded to their key.
+    Return a dict from a "dict of records" or "list of records".
+    WARNING the "id" of a dict's record is hardcoded to its key.
     Convention:
-        - all arrays are list of records (dicts) with "id" field as primary key
+        - all arrays are lists of records (dicts) with "id" as primary key
         - delimiter is '`' and '.'
     If path is empty then use kw
+
+    WARNING "new" is the C twin's word, where it means a new REFERENCE:
+    handed a dict, both return THAT dict and not a copy of it. Only the
+    list case builds something new, and even then the records inside it
+    are the same objects.
  *************************************************************/
 function kwid_new_dict(gobj, kw, path)
 {
@@ -1988,7 +2001,12 @@ function kwid_new_dict(gobj, kw, path)
     } else if(is_array(kw)) {
         for(let i=0; i<kw.length; i++) {
             let kv = kw[i];
-            let id = kw_get_str(gobj, kv, "id", "", 0);
+            /*  KW_REQUIRED, as the C twin passes: under the rule this
+             *  file serves -- the key of a data record is its `id` -- a
+             *  record without one is broken, and it used to be dropped
+             *  in silence. The dict then came back short, and nothing
+             *  said which row had gone or why.  */
+            let id = kw_get_str(gobj, kv, "id", "", kw_flag_t.KW_REQUIRED);
             if(!empty_string(id)) {
                 new_dict[id] = kv;
             }
@@ -2002,6 +2020,59 @@ function kwid_new_dict(gobj, kw, path)
 }
 
 /*************************************************************
+    Utility for databases.
+    Return a list from a "dict of records" or "list of records".
+    The NORMALIZING function of this family: whatever shape the data
+    arrives in, what comes back is the shape a table indexed and
+    sorted by `id` wants.
+    Convention:
+        - all arrays are lists of records (dicts) with "id" as primary key
+        - delimiter is '`' and '.'
+    If path is empty then use kw
+
+    WARNING handed a DICT it writes each record's key into the record
+    as its `id`, OVERWRITING one that differs -- in the source records,
+    which it does not copy. That is the C twin's behaviour
+    (`json_object_set_new(v, "id", ...)` in kwid.c) and it is the point:
+    a dict keyed by id whose records disagree with their own key is
+    exactly what this is for. Handed a LIST it returns that same list,
+    untouched, as C returns a new reference to it.
+ *************************************************************/
+function kwid_new_list(gobj, kw, path)
+{
+    if(gobj && !is_gobj(gobj)) {
+        log_error(`GObj bad instanceof`);
+    }
+    if(!empty_string(path)) {
+        kw = kw_find_path(gobj, kw, path);
+    }
+
+    if(is_array(kw)) {
+        return kw;
+    }
+
+    if(is_object(kw)) {
+        let new_list = [];
+        for(let id of Object.keys(kw)) {
+            let record = kw[id];
+            if(!is_object(record)) {
+                log_error(
+                    `${gobj_short_name(gobj)} kwid_new_list: ` +
+                    `not a record: '${id}'`
+                );
+                continue;
+            }
+            record["id"] = id;      // WARNING id hardcoded, as in C
+            new_list.push(record);
+        }
+        return new_list;
+    }
+
+    log_error(`${gobj_short_name(gobj)} kwid_new_list: wrong type for list`);
+    return [];
+}
+
+/*************************************************************
  *  Utility for databases. See kwid_collect parameters
  *************************************************************/
 function kwid_find_one_record(gobj, kw, ids, jn_filter, match_fn)
@@ -2010,11 +2081,15 @@ function kwid_find_one_record(gobj, kw, ids, jn_filter, match_fn)
         log_error(`GObj bad instanceof`);
     }
     let list = kwid_collect(gobj, kw, ids, jn_filter, match_fn);
-    if(list.length > 0) {
-        return list[0];
-    } else {
+    /*  kwid_collect() answers null -- not an empty list -- for a kw that
+     *  is neither a list nor a dict, and for a kw that is missing
+     *  altogether. Reading `.length` off that is a TypeError thrown at
+     *  the caller, which is how a command answer with no data crashed a
+     *  view instead of finding nothing.  */
+    if(!list || list.length === 0) {
         return null;
     }
+    return list[0];
 }
 
 /*************************************************************
@@ -3944,6 +4019,7 @@ export {
     kwid_match_id,
     kwid_collect,
     kwid_new_dict,
+    kwid_new_list,
     kwid_find_one_record,
     kwid_get_ids,
     list2options,
