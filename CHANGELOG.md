@@ -7,6 +7,19 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.22.1
+
+**fix: `current_timestamp()` wrote UTC time followed by the LOCAL offset.**
+`toISOString()` is UTC, and the offset appended to it was `getTimezoneOffset()`'s:
+at +0200 every log line said `11:05:34.370+0200` at 13:05 local, two hours
+wrong for anyone reading it, and read back as an instant it was two hours off
+too. It writes the local wall clock now, as the C kernel does; the offset's
+hours are floored, so a half-hour zone no longer prints `5.5`. The function
+takes an optional `Date`, for the test.
+
+Tests: `tests/current_timestamp.test.js`, run in four time zones; red against
+the previous code.
+
 ## 7.22.0
 
 **BREAKING: the trace switches are the C kernel's, and the yuno persists them.**

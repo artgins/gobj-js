@@ -3393,24 +3393,26 @@ function timeTracker(tracker_name="Time Tracker", verbose=false)
  *  Get the current timestamp in ISO 8601 format with milliseconds and time zone.
  *  Example Output: "2024-02-24T14:05:30.123+0200"
  ************************************************************/
-function current_timestamp()
+function current_timestamp(now)
 {
-    const now = new Date();
+    now = now || new Date();
+    const pad = (n, w) => String(n).padStart(w, "0");
 
-    // Format YYYY-MM-DDTHH:mm:ss
-    const timestamp = now.toISOString().slice(0, 19);
+    /*  LOCAL time, because the offset written after it is the local one:
+     *  toISOString() is UTC, and "UTC time +0200" is a wall clock two
+     *  hours wrong for anyone reading it (C writes local time too).  */
+    const timestamp =
+        `${now.getFullYear()}-${pad(now.getMonth() + 1, 2)}-${pad(now.getDate(), 2)}` +
+        `T${pad(now.getHours(), 2)}:${pad(now.getMinutes(), 2)}:${pad(now.getSeconds(), 2)}`;
+    const milliseconds = pad(now.getMilliseconds(), 3);
 
-    // Get milliseconds (3-digit nanosecond equivalent)
-    const milliseconds = String(now.getMilliseconds()).padStart(3, "0");
-
-    // Get time zone offset in ±HHMM format
+    // Time zone offset in ±HHMM format (getTimezoneOffset() is positive WEST of UTC)
     const offsetMinutes = now.getTimezoneOffset();
     const sign = offsetMinutes > 0 ? "-" : "+";
-    const hours = String(Math.abs(offsetMinutes) / 60).padStart(2, "0");
-    const minutes = String(Math.abs(offsetMinutes) % 60).padStart(2, "0");
-    const timezone = `${sign}${hours}${minutes}`;
+    const hours = pad(Math.floor(Math.abs(offsetMinutes) / 60), 2);
+    const minutes = pad(Math.abs(offsetMinutes) % 60, 2);
 
-    return `${timestamp}.${milliseconds}${timezone}`;
+    return `${timestamp}.${milliseconds}${sign}${hours}${minutes}`;
 }
 
 /********************************************
