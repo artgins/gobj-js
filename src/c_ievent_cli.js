@@ -7,7 +7,7 @@
  *
  *      Licence: MIT (http://www.opensource.org/licenses/mit-license)
  *      Copyright (c) 2014,2024 Niyamaka.
- *      Copyright (c) 2025, ArtGins.
+ *      Copyright (c) 2025-2026, ArtGins.
  **************************************************************************/
 import {
     YUNETA_VERSION,
@@ -21,6 +21,7 @@ import {
     gobj_parent,
     gobj_short_name,
     gobj_yuno,
+    gobj_trace_level,
     gobj_send_event,
     gobj_publish_event,
     gobj_read_integer_attr,
@@ -113,17 +114,21 @@ SDATA_END()
  *  required paired correlative strings
  *  in s_user_trace_level
  *---------------------------------------------*/
-// enum {
-//     TRACE_IEVENTS       = 0x0001,
-//     TRACE_IEVENTS2      = 0x0002,
-//     TRACE_IDENTITY_CARD = 0x0004,
-// };
-// PRIVATE const trace_level_t s_user_trace_level[16] = {
-//     {"ievents",        "Trace inter-events with metadata of kw"},
-//     {"ievents2",       "Trace inter-events with full kw"},
-//     {"identity-card",  "Trace identity_card messages"},
-//     {0, 0},
-// };
+const TRACE_IEVENTS       = 0x0001;
+const TRACE_IEVENTS2      = 0x0002;
+const s_user_trace_level = [
+    ["ievents",        "Trace inter-events with metadata of kw"],
+    ["ievents2",       "Trace inter-events with full kw"],
+    ["identity-card",  "Trace identity_card messages"],
+];
+
+/*  The traffic trace is this gclass's own level, as in the C kernel
+ *  (`set-gclass-trace gclass=C_IEVENT_CLI level=ievents`). Where it goes
+ *  is the yuno's `trace_ievent_callback`, the console when there is none. */
+function is_traffic_tracing(gobj)
+{
+    return (gobj_trace_level(gobj) & (TRACE_IEVENTS|TRACE_IEVENTS2)) ? true : false;
+}
 
 /*---------------------------------------------*
  *              Private data
@@ -668,7 +673,7 @@ function send_iev(gobj, iev)
 
     let msg = JSON.stringify(iev);
 
-    if(gobj_read_bool_attr(gobj_yuno(), "trace_inter_event")) {
+    if(is_traffic_tracing(gobj)) {
         let url = gobj_read_str_attr(gobj, "url");
         let prefix = gobj_name(gobj_yuno()) + ' ==> ' + url;
         let trace_ievent_callback = gobj_read_attr(gobj_yuno(), "trace_ievent_callback");
@@ -1192,7 +1197,7 @@ function ac_on_message(gobj, event, kw, src)
     /*---------------------------------------*
      *          trace inter_event
      *---------------------------------------*/
-    if(gobj_read_bool_attr(gobj_yuno(), "trace_inter_event")) {
+    if(is_traffic_tracing(gobj)) {
         let prefix = gobj_name(gobj_yuno()) + ' <== ' + url;
         let size = kw.data.length;
         let trace_ievent_callback = gobj_read_attr(gobj_yuno(), "trace_ievent_callback");
@@ -1494,7 +1499,7 @@ function create_gclass(gclass_name)
         PRIVATE_DATA,
         0,  // authz_table,
         0,  // command_table,
-        0,  // s_user_trace_level
+        s_user_trace_level,
         gclass_flag_t.gcflag_no_check_output_events // gclass_flag
     );
     if(!__gclass__) {

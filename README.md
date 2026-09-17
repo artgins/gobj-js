@@ -662,9 +662,27 @@ The trace arrives as `debug`, so **`set_log_callback()` is how you read it** —
 that is how a dev panel shows the machine inside the app, and how
 `doc.yuneta.io/navigation` feeds the panel under each of its demos.
 
-> The yuno attrs `tracing` / `trace_timer` / `trace_creation` /
-> `trace_start_stop` predate this and still work (gobj-ui's dev panel writes
-> them); they fold in as one more source of bits.
+**The yuno persists the levels a user sets**, as a C yuno does: `C_YUNO` has the
+trace commands of the C kernel (`set-global-trace`, `set-global-no-trace`,
+`set-gclass-trace`, `set-gclass-no-trace` and their `get-` forms) and saves
+each scope whole in `trace_levels` / `no_trace_levels`. At start up a saved
+scope **replaces** what `main.js` set before creating the yuno:
+
+```javascript
+gobj_set_global_no_trace("timer_periodic", true);           // main.js default
+let yuno = gobj_create_yuno("app_yuno", "C_YUNO", {...});    // restores the saved scopes
+gobj_command(yuno, "set-global-no-trace", {level: "timer_periodic", set: 0}, yuno);
+// no_trace_levels.__global_no_trace__ = [] -- stays off after a reload
+```
+
+The traffic of the websocket is `C_IEVENT_CLI`'s own level `ievents`; its lines
+go to the yuno attr `trace_ievent_callback`, or to the console.
+
+> The old yuno attrs `tracing`, `trace_timer`, `trace_inter_event`,
+> `trace_creation`, `trace_start_stop`, `trace_subscriptions`, `trace_i18n` and
+> `no_poll` are gone (7.22.0). A `gobj_create_yuno()` that still passes them
+> logs *"GClass Attribute NOT FOUND"* for each: remove them, and turn traces on
+> with the commands above.
 
 ### i18n: `refresh_language` and the `data-i18n-*` family
 

@@ -54,12 +54,8 @@ const gmt = {
     mt_destroy: () => { calls.push("mt_destroy"); }
 };
 
-/*  The yuno only exists because a gobj needs a parent.  It declares
- *  the two trace attrs the runtime reads on every create/stop so its
- *  own "Attribute NOT FOUND" noise does not land in `logged`. */
+/*  The yuno only exists because a gobj needs a parent. */
 const yuno_attrs = [
-SDATA(data_type_t.DTP_BOOLEAN, "trace_creation",   0, 0, "trace create/delete"),
-SDATA(data_type_t.DTP_BOOLEAN, "trace_start_stop", 0, 0, "trace start/stop"),
 SDATA_END()
 ];
 

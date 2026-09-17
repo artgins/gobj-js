@@ -7,6 +7,50 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.22.0
+
+**BREAKING: the trace switches are the C kernel's, and the yuno persists them.**
+
+The trace of this runtime was already the C one -- the same levels, the same
+bits, `gobj_set_global_trace()` and its family -- but nobody drove it that way.
+gobj-ui's Developer window wrote a zoo of yuno attrs (`tracing`, `trace_timer`,
+`trace_inter_event`, `trace_creation`, `trace_start_stop`,
+`trace_subscriptions`, `trace_i18n`, `no_poll`), kept each in its own
+localStorage key, and the runtime read them BESIDE the levels: a
+`legacy_yuno_trace_bits()` folded some in, the subscription trace read
+`trace_subscriptions` instead of `TRACE_SUBSCRIPTIONS`, the command trace read
+`tracing` instead of `TRACE_COMMANDS`, the traffic trace read
+`trace_inter_event`, and `no_poll` was read by nothing at all.
+
+- **removed: those eight yuno attrs, and `legacy_yuno_trace_bits()`.** A
+  `gobj_create_yuno()` that still passes one logs *"GClass Attribute NOT
+  FOUND"*; remove it. `trace_ievent_callback` stays: it is where the traffic
+  trace GOES, not a switch.
+- **every trace decision is a bit.** Subscriptions and unsubscriptions by
+  `TRACE_SUBSCRIPTIONS`, publications as in C (`subscriptions` or `machine`,
+  vetoed by the source's no-trace), commands by `TRACE_COMMANDS` or `machine`
+  (the kw with `ev_kw`), the websocket traffic by `C_IEVENT_CLI`'s own levels
+  `ievents` / `ievents2`, declared now as in the C gclass.
+- **feat: `C_YUNO` persists the trace levels, as the C one.** Attrs
+  `trace_levels` / `no_trace_levels` (`SDF_PERSIST`), restored in `mt_create`,
+  and the C commands through `mt_command_parser`: `set-global-trace`,
+  `set-global-no-trace`, `set-gclass-trace`, `set-gclass-no-trace` and their
+  `get-` forms, same parameters. A command saves its scope WHOLE, from the
+  levels in force, an empty one as `[]`; at start up a saved scope REPLACES
+  what `main.js` set before creating the yuno, and a scope never saved keeps
+  it. The rule went into the C `C_YUNO` in the same round.
+- **feat: the getters of C.** `gobj_get_global_trace_level()`,
+  `gobj_get_global_trace_no_level()`, `gobj_get_gclass_trace_level()` (with the
+  global levels, as C), `gobj_get_gclass_trace_level2()` (the gclass's own),
+  `gobj_get_gclass_trace_no_level()`, `gobj_global_trace_no_level()`, and the
+  bitmask setters `gobj_set_global_trace2()` / `gobj_set_global_no_trace2()`.
+  A gclass's own level names come from its `s_user_trace_level`, a list of
+  `[name, description]` in bit order; `gobj_set_gclass_trace(gclass, null,
+  false)` clears all of them.
+
+Tests: `tests/trace_levels.test.js`, 10 cases -- the restore that replaces,
+the empty scope, the default kept, each command and its refusals.
+
 ## 7.21.0
 
 The SDK is at 7.21.0 and this package was at 7.16.6, which by the rule above

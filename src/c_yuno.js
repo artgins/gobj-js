@@ -3,7 +3,7 @@
  *
  *          The default yuno in js
  *
- *          Copyright (c) 2025, ArtGins.
+ *          Copyright (c) 2025-2026, ArtGins.
  *          All Rights Reserved. ****************************************************************************/
 import {
     YUNETA_VERSION,
@@ -24,12 +24,35 @@ import {
     gobj_read_attr,
     gobj_publish_event,
     gobj_write_str_attr,
+    gobj_write_attr,
+    gobj_yuno_role,
+    gobj_yuno_name,
+    gclass_find_by_name,
+    gobj_set_global_trace,
+    gobj_set_global_no_trace,
+    gobj_set_global_trace2,
+    gobj_set_global_no_trace2,
+    gobj_set_gclass_trace,
+    gobj_set_gclass_no_trace,
+    gobj_get_global_trace_level,
+    gobj_get_global_trace_no_level,
+    gobj_get_gclass_trace_level,
+    gobj_get_gclass_trace_level2,
+    gobj_get_gclass_trace_no_level,
+    gobj_save_persistent_attrs,
+    sdata_flag_t,
 } from "./gobj.js";
 
 import {
     current_timestamp,
     log_error, node_uuid,
+    is_object,
+    is_array,
 } from "./helpers.js";
+
+import {
+    build_command_response,
+} from "./command_parser.js";
 
 import {
     set_timeout_periodic,
@@ -61,15 +84,9 @@ SDATA(data_type_t.DTP_STRING,   "yuno_release",         0,  "",     "Yuno Releas
 SDATA(data_type_t.DTP_STRING,   "yuno_version",         0,  "",     "Yuno version (APP_VERSION)"),
 SDATA(data_type_t.DTP_STRING,   "yuneta_version",       0,  YUNETA_VERSION, "Yuneta version"),
 SDATA(data_type_t.DTP_LIST,     "required_services",    0,  "[]",   "Required services"),
-SDATA(data_type_t.DTP_INTEGER,  "tracing",              0,  0,      "Tracing level"),
-SDATA(data_type_t.DTP_BOOLEAN,  "trace_timer",          0,  0,      "Trace timers"),
-SDATA(data_type_t.DTP_BOOLEAN,  "trace_inter_event",    0,  0,      "Trace traffic"),
-SDATA(data_type_t.DTP_POINTER,  "trace_ievent_callback",0,  null,   "Trace traffic callback"),
-SDATA(data_type_t.DTP_BOOLEAN,  "trace_creation",       0,  0,      "Trace creation"),
-SDATA(data_type_t.DTP_BOOLEAN,  "trace_start_stop",     0,  0,      "Trace start/stop"),
-SDATA(data_type_t.DTP_BOOLEAN,  "trace_subscriptions",  0,  0,      "Trace subscription"),
-SDATA(data_type_t.DTP_BOOLEAN,  "trace_i18n",           0,  0,      "Trace i18n"),
-SDATA(data_type_t.DTP_BOOLEAN,  "no_poll",              0,  0,      "no poll"),
+SDATA(data_type_t.DTP_DICT,     "trace_levels",         sdata_flag_t.SDF_PERSIST, "{}", "Trace levels"),
+SDATA(data_type_t.DTP_DICT,     "no_trace_levels",      sdata_flag_t.SDF_PERSIST, "{}", "No trace levels"),
+SDATA(data_type_t.DTP_POINTER,  "trace_ievent_callback",0,  null,   "Where the traffic trace goes (C_IEVENT_CLI levels ievents/ievents2); console when null"),
 SDATA(data_type_t.DTP_BOOLEAN,  "developer",            0,  false,  "Developer mode enabled"),
 SDATA(data_type_t.DTP_INTEGER,  "periodic_timeout",     0,  "1000", "Timeout periodic, in miliseconds."),
 SDATA_END()
@@ -108,6 +125,14 @@ function mt_create(gobj)
     gobj.priv.gobj_timer = gobj_create_pure_child(gobj_name(gobj), "C_TIMER", {}, gobj);
 
     priv.periodic_timeout   = gobj_read_attr(gobj, "periodic_timeout");
+
+    /*
+     *  Traces: what the user persisted wins over what main() set by
+     *  default. The persistent attrs are already loaded (a yuno is a
+     *  service), as in the C kernel's C_YUNO.
+     */
+    set_user_gclass_traces(gobj);
+    set_user_gclass_no_traces(gobj);
 }
 
 /***************************************************************
@@ -181,8 +206,218 @@ function mt_destroy(gobj)
 
 
 /***************************************************************
+ *  Restore the trace levels the user persisted.
  *
+ *  A saved scope REPLACES what is in force: main() sets its defaults
+ *  (gobj_set_global_no_trace("timer_periodic"), a gclass it wants quiet)
+ *  before the yuno is created, and a default the user turned off must
+ *  stay off. A scope is saved whole, empty included (save_global_trace());
+ *  a scope never saved keeps main()'s. The C kernel's C_YUNO does the same.
  ***************************************************************/
+function set_user_gclass_traces(gobj)
+{
+    let jn_trace_levels = gobj_read_attr(gobj, "trace_levels");
+    if(!is_object(jn_trace_levels)) {
+        return 0;
+    }
+
+    let jn_global = jn_trace_levels["__global_trace__"];
+    if(is_array(jn_global)) {
+        gobj_set_global_trace2(0xFFFFFFFF, false);
+        for(let level of jn_global) {
+            gobj_set_global_trace(level, true);
+        }
+    }
+
+    for(const [name, jn_levels] of Object.entries(jn_trace_levels)) {
+        let gclass = gclass_find_by_name(name);
+        if(!gclass) {
+            /*  Not a gclass (__global_trace__) or one not registered in
+             *  this app: nothing to restore, and nothing worth a log.  */
+            continue;
+        }
+        if(!is_array(jn_levels)) {
+            log_error(`${gobj_name(gobj)}: trace_levels of ${name} MUST be a list`);
+            continue;
+        }
+        gobj_set_gclass_trace(gclass, null, false);
+        for(let level of jn_levels) {
+            gobj_set_gclass_trace(gclass, level, true);
+        }
+    }
+    return 0;
+}
+
+/***************************************************************
+ *  Restore the no-trace levels, see set_user_gclass_traces()
+ ***************************************************************/
+function set_user_gclass_no_traces(gobj)
+{
+    let jn_no_trace_levels = gobj_read_attr(gobj, "no_trace_levels");
+    if(!is_object(jn_no_trace_levels)) {
+        return 0;
+    }
+
+    let jn_global = jn_no_trace_levels["__global_no_trace__"];
+    if(is_array(jn_global)) {
+        gobj_set_global_no_trace2(0xFFFFFFFF, false);
+        for(let level of jn_global) {
+            gobj_set_global_no_trace(level, true);
+        }
+    }
+
+    for(const [name, jn_levels] of Object.entries(jn_no_trace_levels)) {
+        let gclass = gclass_find_by_name(name);
+        if(!gclass) {
+            continue;   // see set_user_gclass_traces()
+        }
+        if(!is_array(jn_levels)) {
+            log_error(`${gobj_name(gobj)}: no_trace_levels of ${name} MUST be a list`);
+            continue;
+        }
+        gobj_set_gclass_no_trace(gclass, null, false);
+        for(let level of jn_levels) {
+            gobj_set_gclass_no_trace(gclass, level, true);
+        }
+    }
+    return 0;
+}
+
+/***************************************************************
+ *  Save a scope WHOLE, from the levels in force (see
+ *  set_user_gclass_traces()): a saved scope replaces main()'s, so it
+ *  has to carry everything that must be in force.
+ ***************************************************************/
+function save_trace_scope(gobj, attr, scope, levels)
+{
+    let jn_levels = gobj_read_attr(gobj, attr);
+    if(!is_object(jn_levels)) {
+        jn_levels = {};
+    }
+    jn_levels[scope] = levels;
+    gobj_write_attr(gobj, attr, jn_levels);
+    return gobj_save_persistent_attrs(gobj, attr);
+}
+
+/***************************************************************
+ *  "set" as the C command reads it: TRUE / set / 1, FALSE / reset / 0
+ ***************************************************************/
+function parse_set(value)
+{
+    if(value === true || value === false) {
+        return value;
+    }
+    let v = String(value === undefined || value === null ? "" : value).toLowerCase();
+    if(v === "true" || v === "set") {
+        return true;
+    }
+    if(v === "false" || v === "reset") {
+        return false;
+    }
+    if(v === "" || isNaN(Number(v))) {
+        return null;
+    }
+    return Number(v) ? true : false;
+}
+
+function yuno_prefix()
+{
+    return `${gobj_yuno_role()}^${gobj_yuno_name()}`;
+}
+
+
+
+
+                    /***************************
+                     *      Commands
+                     ***************************/
+
+
+
+
+/***************************************************************
+ *  The trace commands of the C kernel's C_YUNO, same names and same
+ *  parameters (`level`, `set`, `gclass_name` / `gclass`). Setting a
+ *  level saves its scope.
+ ***************************************************************/
+function mt_command_parser(gobj, command, kw, src)
+{
+    kw = kw || {};
+    switch(command) {
+        case "get-global-trace":
+            return build_command_response(gobj, 0, null, null, gobj_get_global_trace_level());
+        case "get-global-no-trace":
+            return build_command_response(gobj, 0, null, null, gobj_get_global_trace_no_level());
+        case "set-global-trace":
+        case "set-global-no-trace":
+        {
+            let no = (command === "set-global-no-trace");
+            let level = kw.level;
+            let set = parse_set(kw.set);
+            if(!level) {
+                return build_command_response(gobj, -1, `${yuno_prefix()}: what level?`, null, null);
+            }
+            if(set === null) {
+                return build_command_response(gobj, -1, `${yuno_prefix()}: bitmask set or re-set?`, null, null);
+            }
+            let ret = no ? gobj_set_global_no_trace(level, set) : gobj_set_global_trace(level, set);
+            if(ret < 0) {
+                return build_command_response(
+                    gobj, -1, `${yuno_prefix()}: global trace level not found: ${level}`, null, null
+                );
+            }
+            if(no) {
+                save_trace_scope(gobj, "no_trace_levels", "__global_no_trace__", gobj_get_global_trace_no_level());
+                return build_command_response(gobj, 0, null, null, gobj_get_global_trace_no_level());
+            }
+            save_trace_scope(gobj, "trace_levels", "__global_trace__", gobj_get_global_trace_level());
+            return build_command_response(gobj, 0, null, null, gobj_get_global_trace_level());
+        }
+        case "get-gclass-trace":
+        case "get-gclass-no-trace":
+        case "set-gclass-trace":
+        case "set-gclass-no-trace":
+        {
+            let no = command.indexOf("no-trace") >= 0;
+            let gclass_name = kw.gclass_name || kw.gclass || "";
+            let gclass = gclass_find_by_name(gclass_name);
+            if(!gclass) {
+                return build_command_response(
+                    gobj, -1, `${yuno_prefix()}: what gclass is '${gclass_name}'?`, null, null
+                );
+            }
+            if(command.indexOf("get-") === 0) {
+                return build_command_response(gobj, 0, null, null,
+                    no ? gobj_get_gclass_trace_no_level(gclass) : gobj_get_gclass_trace_level(gclass)
+                );
+            }
+            let level = kw.level;
+            let set = parse_set(kw.set);
+            if(!level) {
+                return build_command_response(gobj, -1, `${yuno_prefix()}: what level?`, null, null);
+            }
+            if(set === null) {
+                return build_command_response(gobj, -1, `${yuno_prefix()}: bitmask set or re-set?`, null, null);
+            }
+            let ret = no ? gobj_set_gclass_no_trace(gclass, level, set) : gobj_set_gclass_trace(gclass, level, set);
+            if(ret < 0) {
+                return build_command_response(
+                    gobj, -1, `${yuno_prefix()}: trace level of ${gclass_name} not found: ${level}`, null, null
+                );
+            }
+            if(no) {
+                save_trace_scope(gobj, "no_trace_levels", gclass_name, gobj_get_gclass_trace_no_level(gclass));
+                return build_command_response(gobj, 0, null, null, gobj_get_gclass_trace_no_level(gclass));
+            }
+            save_trace_scope(gobj, "trace_levels", gclass_name, gobj_get_gclass_trace_level2(gclass));
+            return build_command_response(gobj, 0, null, null, gobj_get_gclass_trace_level(gclass));
+        }
+        default:
+            return build_command_response(
+                gobj, -1, `${yuno_prefix()}: command not available: ${command}`, null, null
+            );
+    }
+}
 
 
 
@@ -224,6 +459,7 @@ const gmt = {
     mt_destroy: mt_destroy,
     mt_play:    mt_play,
     mt_pause:   mt_pause,
+    mt_command_parser: mt_command_parser,
 };
 
 
