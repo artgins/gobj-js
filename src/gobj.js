@@ -4062,8 +4062,7 @@ function gobj_send_event(dst, event, kw, src)
                     ));
                 }
                 if(kw) {
-                    //if(__trace_gobj_ev_kw__(dst)) {
-                    if(tracea > 1) {
+                    if(__trace_gobj_ev_kw__(dst)) {
                         if(json_object_size(kw)) {
                             trace_json(kw);
                         }
@@ -4615,7 +4614,7 @@ function gobj_subscribe_event(
             gobj_short_name(publisher),
             gobj_short_name(subscriber)
         ));
-        if(kw) {
+        if(kw && (__trace_gobj_ev_kw__(subscriber) || __trace_gobj_ev_kw__(publisher))) {
             trace_json(kw);
         }
     }
@@ -4886,12 +4885,10 @@ function gobj_publish_event(
                 "" //Color_Off
             ));
         }
-        /*  Only a kw with something IN it, like the C kernel
-         *  (`if(json_object_size(kw))`): an unguarded dump printed a bare
-         *  `{}` under every publish, which in a yuno whose timer publishes
-         *  is one empty line per tick, interleaved with the trace it is
-         *  meant to annotate. */
-        if(json_object_size(kw)) {
+        /*  The kw only with `ev_kw`, and only with something IN it, like the
+         *  C kernel: the `machine` trace alone printed the payload of every
+         *  publication, in the console and in any monitor. */
+        if(__trace_gobj_ev_kw__(publisher) && json_object_size(kw)) {
             trace_json(kw);
         }
     }
@@ -5096,7 +5093,7 @@ function gobj_publish_event(
                         gobj_short_name(publisher)
                     ));
                 }
-                if(json_object_size(kw2publish)) {
+                if(__trace_gobj_ev_kw__(publisher) && json_object_size(kw2publish)) {
                     trace_json(kw2publish);
                 }
             }

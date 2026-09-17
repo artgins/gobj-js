@@ -7,6 +7,29 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.22.2
+
+The browser console and a log monitor (gobj-ui's Developer window) showed
+different things, for two reasons in the runtime -- neither was the monitor's.
+
+- **fix: the kw was dumped without `ev_kw`.** A publication printed its payload
+  under the `machine` trace alone -- once for the publication, once per
+  subscriber -- and so did a subscription; while the compact `machine` format
+  never printed an event's kw at all, because it still compared the old
+  `tracing` integer (`tracea > 1`) with what is a boolean now. Every one asks
+  `ev_kw` now, as the C kernel does: `machine` writes the transitions, `ev_kw`
+  adds their payloads.
+- **fix: a log sink missed every line written before it was installed.** The
+  application installs it in its own startup, after `gobj_start_up()` and the
+  first services have already logged, so a monitor began mid-way through what
+  the console showed whole. The log helpers keep the last 600 lines, and a new
+  sink is handed them first (the same sink installed again is not); a json line
+  is kept as text, because the object it came from goes on changing.
+
+Tests: `tests/log_backlog_and_ev_kw.test.js`; red on both against 7.22.1.
+`console_log_filter.test.js` clears what a new sink is replayed before it
+measures.
+
 ## 7.22.1
 
 **fix: `current_timestamp()` wrote UTC time followed by the LOCAL offset.**

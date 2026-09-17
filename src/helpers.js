@@ -57,9 +57,52 @@ let f_debug = _console.debug;
  *  pretty-print it — a sink must handle both. */
 let __log_callback__ = null;
 
+/*  The lines the log helpers wrote since the page loaded, bounded. A sink is
+ *  installed by application code, well after the first lines are written
+ *  (gobj_start_up, the yuno, the first services): without this, a monitor
+ *  would start mid-way through what the browser console shows whole. A new
+ *  sink is handed this backlog first, so both show the same session. A json
+ *  line is kept as text, because the object it came from goes on changing. */
+const LOG_BACKLOG_MAX = 600;
+const __log_backlog__ = [];
+
+function keep_in_backlog(level, msg, hora)
+{
+    let m = msg;
+    if(level === "json") {
+        try {
+            m = JSON.stringify(msg);
+        } catch(e) {
+            m = String(msg);
+        }
+    }
+    __log_backlog__.push([level, m, hora]);
+    if(__log_backlog__.length > LOG_BACKLOG_MAX) {
+        __log_backlog__.shift();
+    }
+}
+
 function set_log_callback(fn)
 {
-    __log_callback__ = (typeof fn === "function") ? fn : null;
+    fn = (typeof fn === "function") ? fn : null;
+    if(fn && fn !== __log_callback__) {
+        /*  The same sink installed again (an app that re-applies its dev
+         *  setup) is not replayed to, or it would see every line twice.  */
+        __log_callback__ = fn;
+        for(const [level, m, hora] of __log_backlog__.slice()) {
+            let msg = m;
+            if(level === "json") {
+                try {
+                    msg = JSON.parse(m);
+                } catch(e) {
+                    msg = m;
+                }
+            }
+            __deliver_log__(level, msg, hora);
+        }
+        return;
+    }
+    __log_callback__ = fn;
 }
 
 /*  Master switch for the DIRECT browser-console writes of the log helpers
@@ -118,6 +161,15 @@ function console_wants(level, msg)
 let __in_log_callback__ = false;
 
 function emit_log_callback(level, msg, hora)
+{
+    if(__in_log_callback__) {
+        return;     /*  a line logged BY the sink is not part of the session  */
+    }
+    keep_in_backlog(level, msg, hora);
+    __deliver_log__(level, msg, hora);
+}
+
+function __deliver_log__(level, msg, hora)
 {
     if(__log_callback__ && !__in_log_callback__) {
         /*  Re-entrancy guard: a sink that itself logs (directly or through any

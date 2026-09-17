@@ -36,9 +36,12 @@ const {
 let sunk;
 
 beforeEach(() => {
-    calls = [];
     sunk = [];
     set_log_callback((level, msg) => { sunk.push([level, String(msg)]); });
+    /*  A new sink is handed the backlog of earlier lines first: not what
+     *  these tests measure.  */
+    sunk = [];
+    calls = [];
 });
 
 afterEach(() => {
