@@ -19,7 +19,9 @@ import {
     kwid_new_dict,
     kwid_new_list,
     kwid_find_one_record,
-    kwid_get_ids
+    kwid_get_ids,
+    set_log_callback,
+    set_console_log_enabled
 } from "../src/index.js";
 
 
@@ -121,6 +123,22 @@ describe("kwid_new_dict", () => {
     test("reads a path when given one", () => {
         const kw = {data: [{id: "a"}]};
         expect(kwid_new_dict(null, kw, "data")).toEqual({a: {id: "a"}});
+    });
+
+    test("a record without id is left out, and SAYS so", () => {
+        /*  The fix of 7.21.0 had no test: with KW_REQUIRED put back to 0
+         *  every case above stayed green and the drop was silent again
+         *  (M42 of yunetas' 2026-09-21 review).  */
+        const lines = [];
+        set_console_log_enabled(false);     // the sink only: node has no window
+        set_log_callback((level, msg) => { lines.push([level, msg]); });
+        const from = lines.length;
+        expect(kwid_new_dict(null, [{id: "a"}, {n: 1}])).toEqual({a: {id: "a"}});
+        const logged = lines.slice(from);
+        set_log_callback(null);
+        set_console_log_enabled(true);
+        expect(logged.some(([level, msg]) =>
+            level === "error" && String(msg).includes("id"))).toBe(true);
     });
 });
 
