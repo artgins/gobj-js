@@ -351,7 +351,8 @@ const treedb_real_types = [ // WARNING check tr_treedb.h to update new real type
 ];
 
 const treedb_field_attributes = [ // WARNING check tr_treedb.h to update new types
-    "persistent",   // implicit readable
+    "persistent",   // stored on disk; implicit readable, NOT writable
+                    // (see tr_treedb.h: unlike SDF_PERSIST of a gobj attr)
     "required",
     "notnull",
     "wild",
