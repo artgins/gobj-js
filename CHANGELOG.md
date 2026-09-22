@@ -7,6 +7,15 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.0
+
+- **The version is back in line with the SDK: 7.25.0, as yunetas 7.25.x.**
+  No runtime change since 7.22.2: `lib_treedb.js` says in its comment that
+  `persistent` means stored on disk, not writable (as `tr_treedb.h` does),
+  and `kwid_new_dict()` has a test for the record it leaves out for lacking
+  an id. The first two numbers say which SDK the package belongs to; 7.23
+  and 7.24 are skipped on purpose, the number does not count releases.
+
 ## 7.22.2
 
 The browser console and a log monitor (gobj-ui's Developer window) showed
