@@ -1250,7 +1250,12 @@ function kw_get_real(gobj, kw, path, default_value, flag)
 }
 
 /************************************************************
- *
+ *  The default comes back AS GIVEN, as in the C kw_get_str()
+ *  (`const char *default_value`, where 0 is NULL). Turned into
+ *  a string, a default of 0 or null was "0" or "null", which is
+ *  TRUE: an `if(value)` on the answer took an absent key for a
+ *  present one. KW_CREATE stores a string default, and null for
+ *  any other, as C stores json_null() for a NULL default.
  ************************************************************/
 function kw_get_str(gobj, kw, path, default_value, flag)
 {
@@ -1266,15 +1271,15 @@ function kw_get_str(gobj, kw, path, default_value, flag)
 
     if(v === undefined) {
         if(create) {
-            let v = String(default_value);
-            kw_set_dict_value(gobj, kw, path, v);
-            return v;
+            kw_set_dict_value(gobj, kw, path,
+                is_string(default_value)? default_value : null);
+            return default_value;
 
         } else if(required) {
             log_error(`path not found: '${path}'`);
             trace_json(kw);
         }
-        return String(default_value);
+        return default_value;
     }
 
     if(extract) {
@@ -1286,10 +1291,10 @@ function kw_get_str(gobj, kw, path, default_value, flag)
             log_error(`${gobj_short_name(gobj)}: path value MUST BE a string: ${path}`);
             trace_msg(kw);
         }
-        return String(default_value);
+        return default_value;
     }
 
-    return String(v);
+    return v;
 }
 
 /************************************************************

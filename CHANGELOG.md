@@ -7,6 +7,22 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.1
+
+- **fix: `kw_get_str()` returns its default as given.** It returned
+  `String(default_value)`, so a default of `0` or `null` came back as `"0"`
+  or `"null"`, and those are TRUE. An `if(value)` on the answer then took an
+  absent key for a present one. Two places in this package had that bug:
+  `kwid_get_ids()` added the id `"0"` for a record with no `id`, and the
+  ievent client sent `"null"` (stats) or `"0"` (an event without
+  `__service__`) as the destination service instead of its
+  `wanted_yuno_service`. The server did not find those services and used its
+  main service, so the message still arrived there. Now the default comes
+  back unchanged, as in the C `kw_get_str()`. `KW_CREATE` stores a string
+  default, and `null` for any other default, as C does.
+
+Tests: `tests/kw_get_str_default.test.js`; red on 4 of 5 against 7.25.0.
+
 ## 7.25.0
 
 - **The version is back in line with the SDK: 7.25.0, as yunetas 7.25.x.**
