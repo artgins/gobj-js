@@ -127,8 +127,7 @@ describe("kwid_new_dict", () => {
 
     test("a record without id is left out, and SAYS so", () => {
         /*  The fix of 7.21.0 had no test: with KW_REQUIRED put back to 0
-         *  every case above stayed green and the drop was silent again
-         *  (M42 of yunetas' 2026-09-21 review).  */
+         *  every case above stayed green and the drop was silent again.  */
         const lines = [];
         set_console_log_enabled(false);     // the sink only: node has no window
         set_log_callback((level, msg) => { lines.push([level, msg]); });
