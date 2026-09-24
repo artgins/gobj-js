@@ -1,0 +1,174 @@
+/***********************************************************************
+ *          kw_typed_readers.test.js
+ *
+ *      kw_get_bool(), kw_get_dict() and kw_get_list() answer the way
+ *      the C readers do: the value when it has the type of the reader,
+ *      and otherwise the default AS GIVEN.
+ *
+ *      Before gobj-js 7.25.2 they passed everything through a JS
+ *      constructor:
+ *        - kw_get_list() answered Array(v), so a list found came back
+ *          WRAPPED ({x: [1, 2]} gave [[1, 2]]), a default of [] gave
+ *          [[]] and a default of null gave [null];
+ *        - kw_get_dict() answered Object(default), so a null default
+ *          came back as {} and a default of 0 as a Number object;
+ *        - kw_get_bool() answered Boolean(v), so the string "false"
+ *          was TRUE.
+ *
+ *          Copyright (c) 2026, ArtGins.
+ *          All Rights Reserved.
+ ***********************************************************************/
+import {describe, test, expect, beforeAll, beforeEach, afterEach, afterAll} from "vitest";
+import {
+    kw_get_bool, kw_get_dict, kw_get_list, kw_set_subdict_value,
+    kw_flag_t, set_log_callback
+} from "../src/index.js";
+
+const logged = [];
+
+beforeAll(() => {
+    set_log_callback((level, msg) => {
+        logged.push(String(msg));
+    });
+});
+
+beforeEach(() => {
+    logged.length = 0;
+});
+
+afterEach(() => {
+    expect(logged).toEqual([]);
+});
+
+afterAll(() => {
+    set_log_callback(null);
+});
+
+describe("kw_get_list", () => {
+    test("a list found comes back as it is, not wrapped", () => {
+        const list = [1, 2];
+        expect(kw_get_list(null, {x: list}, "x", [], 0)).toBe(list);
+        expect(kw_get_list(null, {a: {x: []}}, "a`x", null, 0)).toEqual([]);
+    });
+
+    test("an absent key answers the default itself", () => {
+        const dflt = [];
+        expect(kw_get_list(null, {}, "x", dflt, 0)).toBe(dflt);
+        expect(kw_get_list(null, {}, "x", null, 0)).toBe(null);
+        expect(kw_get_list(null, {}, "x", undefined, 0)).toBe(undefined);
+    });
+
+    test("a value that is not a list answers the default itself", () => {
+        expect(kw_get_list(null, {x: 5}, "x", null, 0)).toBe(null);
+        expect(kw_get_list(null, {x: {}}, "x", [], 0)).toEqual([]);
+        expect(kw_get_list(null, {x: "a,b"}, "x", [], 0)).toEqual([]);
+    });
+
+    test("KW_CREATE stores a list default, and nothing for null", () => {
+        let kw = {};
+        const got = kw_get_list(null, kw, "x", [], kw_flag_t.KW_CREATE);
+        expect(got).toEqual([]);
+        expect(kw.x).toBe(got);
+
+        kw = {};
+        expect(kw_get_list(null, kw, "x", null, kw_flag_t.KW_CREATE)).toBe(null);
+        expect(kw).toEqual({});
+    });
+
+    test("KW_EXTRACT takes the list out of the kw", () => {
+        const kw = {x: [1]};
+        expect(kw_get_list(null, kw, "x", null, kw_flag_t.KW_EXTRACT)).toEqual([1]);
+        expect(kw).toEqual({});
+    });
+
+    test("KW_REQUIRED logs an absent key and a value that is not a list", () => {
+        expect(kw_get_list(null, {}, "x", null, kw_flag_t.KW_REQUIRED)).toBe(null);
+        expect(logged.some((m) => m.includes("path not found: 'x'"))).toBe(true);
+        logged.length = 0;
+
+        expect(kw_get_list(null, {x: 5}, "x", null, kw_flag_t.KW_REQUIRED)).toBe(null);
+        expect(logged.some((m) => m.includes("MUST BE an array"))).toBe(true);
+        logged.length = 0;
+    });
+});
+
+describe("kw_get_dict", () => {
+    test("a dict found comes back as it is", () => {
+        const dict = {a: 1};
+        expect(kw_get_dict(null, {x: dict}, "x", {}, 0)).toBe(dict);
+    });
+
+    test("an absent key answers the default itself", () => {
+        const dflt = {};
+        expect(kw_get_dict(null, {}, "x", dflt, 0)).toBe(dflt);
+        expect(kw_get_dict(null, {}, "x", null, 0)).toBe(null);
+        expect(kw_get_dict(null, {}, "x", 0, 0)).toBe(0);
+    });
+
+    test("a value that is not a dict answers the default itself", () => {
+        expect(kw_get_dict(null, {x: [1]}, "x", null, 0)).toBe(null);
+        expect(kw_get_dict(null, {x: "s"}, "x", {}, 0)).toEqual({});
+        expect(kw_get_dict(null, {x: null}, "x", null, 0)).toBe(null);
+    });
+
+    test("KW_CREATE stores a dict default, and nothing for null", () => {
+        let kw = {};
+        const got = kw_get_dict(null, kw, "a`b", {}, kw_flag_t.KW_CREATE);
+        expect(kw.a.b).toBe(got);
+
+        kw = {};
+        expect(kw_get_dict(null, kw, "x", null, kw_flag_t.KW_CREATE)).toBe(null);
+        expect(kw).toEqual({});
+    });
+
+    test("KW_REQUIRED logs a value that is not a dict", () => {
+        expect(kw_get_dict(null, {x: 5}, "x", null, kw_flag_t.KW_REQUIRED)).toBe(null);
+        expect(logged.some((m) => m.includes("MUST BE a dict"))).toBe(true);
+        logged.length = 0;
+    });
+
+    test("kw_set_subdict_value() creates the dict it writes into", () => {
+        const kw = {};
+        expect(kw_set_subdict_value(null, kw, "a", "k", 1)).toBe(0);
+        expect(kw).toEqual({a: {k: 1}});
+    });
+});
+
+describe("kw_get_bool", () => {
+    test("a boolean found comes back as it is", () => {
+        expect(kw_get_bool(null, {x: true}, "x", false, 0)).toBe(true);
+        expect(kw_get_bool(null, {x: false}, "x", true, 0)).toBe(false);
+    });
+
+    test("an absent key answers the default as a boolean", () => {
+        expect(kw_get_bool(null, {}, "x", true, 0)).toBe(true);
+        expect(kw_get_bool(null, {}, "x", 0, 0)).toBe(false);
+    });
+
+    test("a value that is not a boolean answers the default", () => {
+        expect(kw_get_bool(null, {x: "false"}, "x", false, 0)).toBe(false);
+        expect(kw_get_bool(null, {x: "true"}, "x", false, 0)).toBe(false);
+        expect(kw_get_bool(null, {x: 1}, "x", false, 0)).toBe(false);
+        expect(kw_get_bool(null, {x: {}}, "x", true, 0)).toBe(true);
+    });
+
+    test("KW_WILD_NUMBER reads a number, a string or null as C does", () => {
+        const W = kw_flag_t.KW_WILD_NUMBER;
+        expect(kw_get_bool(null, {x: "false"}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: "FALSE"}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: "True"}, "x", false, W)).toBe(true);
+        expect(kw_get_bool(null, {x: "0"}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: "7"}, "x", false, W)).toBe(true);
+        expect(kw_get_bool(null, {x: "no"}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: 0}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: 2.5}, "x", false, W)).toBe(true);
+        expect(kw_get_bool(null, {x: null}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: [true]}, "x", true, W)).toBe(true);
+    });
+
+    test("KW_REQUIRED logs a value that is not a boolean", () => {
+        expect(kw_get_bool(null, {x: "false"}, "x", true, kw_flag_t.KW_REQUIRED)).toBe(true);
+        expect(logged.some((m) => m.includes("MUST BE a boolean"))).toBe(true);
+        logged.length = 0;
+    });
+});

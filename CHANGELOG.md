@@ -7,6 +7,42 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.2
+
+- **fix: `kw_get_list()`, `kw_get_dict()` and `kw_get_bool()` answer like
+  the C readers.** A value of the reader's type is the answer; any other
+  value, or an absent key, gives the default back **as given**.
+  - `kw_get_list()` returned `Array(v)`, and `Array()` WRAPS its argument:
+    a list found came back as `[list]` (`{x: [1, 2]}` gave `[[1, 2]]`), a
+    default of `[]` as `[[]]` and a default of `null` as `[null]`.
+  - `kw_get_dict()` returned `Object(default_value)`: a `null` default came
+    back as `{}` and a default of `0` as a `Number` object.
+  - `kw_get_bool()` returned `Boolean(v)`, so the string `"false"` was
+    TRUE. Now only a boolean is read; with `KW_WILD_NUMBER` a number
+    (`0` is false), a string (`"true"`/`"false"` in any case, else its
+    integer) or `null` (false) is read, as in C.
+  - `KW_CREATE` stores only a default of the right type (never a `null`),
+    and `KW_EXTRACT` takes out only a value of the right type, as in C.
+    `KW_REQUIRED` logs a value of the wrong type.
+  - `kw_set_subdict_value()` asked `kw_get_dict()` for `KW_REQUIRED`
+    (flag `true`) where it meant `KW_CREATE`: on a kw without the dict it
+    logged *"path not found"* and wrote the key into a dict that nobody
+    held. `msg_iev_set_msg_type()` goes through it.
+
+  No caller in gobj-js, gobj-ui, the yunetas yunos or the project SPAs
+  relied on the old answers: every `kw_get_dict()` of them reads a dict
+  that is there or takes `{}`/`null` as the default and tests it with
+  `json_size()` or `if()`; `kw_get_list()` had no caller; `kw_get_bool()`
+  reads booleans only.
+- **fix: `trace_json()` wrote through `window.console`**, which is not
+  there in a worker or in node: a `KW_REQUIRED` miss threw
+  *"window is not defined"* instead of logging. It uses the console the
+  other log helpers use.
+
+Tests: `tests/kw_typed_readers.test.js`, red on 14 of 17 against 7.25.1;
+`tests/kw_get_str_default.test.js` now checks what was logged (it collected
+the lines and never looked at them) and takes its log sink away at the end.
+
 ## 7.25.1
 
 - **fix: `kw_get_str()` returns its default as given.** It returned

@@ -527,6 +527,12 @@ kw_get_str (gobj, kw, path, default_value, flag)
 kw_get_dict(gobj, kw, path, default_value, flag)
 kw_get_list(gobj, kw, path, default_value, flag)
 kw_get_dict_value(gobj, kw, path, default_value, flag)
+// A typed reader answers the value when it has the reader's type, and
+// the default AS GIVEN otherwise (absent key or other type), as in C:
+//   kw_get_list(gobj, {x: [1, 2]}, "x", [], 0)   → [1, 2]  (the same array)
+//   kw_get_dict(gobj, {}, "x", null, 0)          → null
+//   kw_get_bool(gobj, {x: "false"}, "x", true, 0) → true   (not a boolean)
+//   kw_get_bool(gobj, {x: "false"}, "x", true, KW_WILD_NUMBER) → false
 
 kw_set_dict_value(gobj, kw, path, value)
 kw_set_subdict_value(gobj, kw, path, key, value)

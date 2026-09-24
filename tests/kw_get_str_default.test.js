@@ -12,15 +12,31 @@
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
  ***********************************************************************/
-import {describe, test, expect, beforeAll} from "vitest";
+import {describe, test, expect, beforeAll, beforeEach, afterEach, afterAll} from "vitest";
 import {kw_get_str, kw_flag_t, kwid_get_ids, set_log_callback} from "../src/index.js";
 
+/*  What the reader logs is part of what it answers: a plain read (flag 0)
+ *  of an absent or mistyped key says nothing, a KW_REQUIRED one says it.
+ *  Every test ends by checking what was logged, and the sink is taken
+ *  away again, so it does not listen to the next test file.  */
 const logged = [];
 
 beforeAll(() => {
     set_log_callback((level, msg) => {
         logged.push(String(msg));
     });
+});
+
+beforeEach(() => {
+    logged.length = 0;
+});
+
+afterEach(() => {
+    expect(logged).toEqual([]);
+});
+
+afterAll(() => {
+    set_log_callback(null);
 });
 
 describe("kw_get_str: the default comes back as given", () => {
@@ -54,6 +70,16 @@ describe("kw_get_str: the default comes back as given", () => {
         kw = {};
         expect(kw_get_str(null, kw, "x", 0, kw_flag_t.KW_CREATE)).toBe(0);
         expect(kw).toHaveProperty("x", null);
+    });
+
+    test("KW_REQUIRED logs an absent key and a value that is not a string", () => {
+        expect(kw_get_str(null, {}, "x", "d", kw_flag_t.KW_REQUIRED)).toBe("d");
+        expect(logged.some((m) => m.includes("path not found: 'x'"))).toBe(true);
+        logged.length = 0;
+
+        expect(kw_get_str(null, {x: 5}, "x", "d", kw_flag_t.KW_REQUIRED)).toBe("d");
+        expect(logged.some((m) => m.includes("MUST BE a string"))).toBe(true);
+        logged.length = 0;
     });
 
     test("kwid_get_ids() takes no id from a record that has none", () => {

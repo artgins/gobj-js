@@ -320,9 +320,9 @@ function trace_json(jn, msg)
 {
     if(console_wants("json", msg)) {
         if(msg) {
-            window.console.warn("=====> " + msg);
+            _console.warn("=====> " + msg);
         }
-        window.console.dir(jn);
+        _console.dir(jn);
     }
     /*  Also mirror it to the log sink (e.g. the dev monitor) so the payload
      *  shows next to the trace that dumped it — console.dir stays in the
@@ -1132,7 +1132,11 @@ function kw_delete(gobj, kw, path)
 }
 
 /************************************************************
- *
+ *  As the C kw_get_bool(): a boolean found is the answer, and
+ *  anything else gives the default back -- unless KW_WILD_NUMBER
+ *  asks to read a number (0 is false), a string ("true"/"false"
+ *  in any case, else its integer) or null (false). Before gobj-js
+ *  7.25.2 the value went through Boolean(), so "false" was TRUE.
  ************************************************************/
 function kw_get_bool(gobj, kw, path, default_value, flag)
 {
@@ -1144,6 +1148,7 @@ function kw_get_bool(gobj, kw, path, default_value, flag)
     const required = flag && (flag & kw_flag_t.KW_REQUIRED);
     const create = flag && (flag & kw_flag_t.KW_CREATE);
     const extract = flag && (flag & kw_flag_t.KW_EXTRACT);
+    const wild = flag && (flag & kw_flag_t.KW_WILD_NUMBER);
 
     if(b === undefined) {
         if(create) {
@@ -1157,10 +1162,34 @@ function kw_get_bool(gobj, kw, path, default_value, flag)
         }
         return Boolean(default_value);
     }
+
+    let value;
+    if(is_boolean(b)) {
+        value = b;
+    } else if(wild && is_number(b)) {
+        value = (b !== 0);
+    } else if(wild && is_string(b)) {
+        if(b.toLowerCase() === "true") {
+            value = true;
+        } else if(b.toLowerCase() === "false") {
+            value = false;
+        } else {
+            value = (parseInt(b) || 0) !== 0;
+        }
+    } else if(wild && b === null) {
+        value = false;
+    } else {
+        if(required) {
+            log_error(`${gobj_short_name(gobj)}: path value MUST BE a boolean: ${path}`);
+            trace_msg(kw);
+        }
+        return Boolean(default_value);
+    }
+
     if(extract) {
         kw_delete(gobj, kw, path);
     }
-    return Boolean(b);
+    return value;
 }
 
 /************************************************************
@@ -1333,7 +1362,11 @@ function kw_get_pointer(gobj, kw, path, default_value, flag)
 }
 
 /************************************************************
- *
+ *  As the C kw_get_dict(): a dict found is the answer, and
+ *  anything else gives the default back AS GIVEN (null stays
+ *  null). KW_CREATE stores a dict default, never a null one.
+ *  Before gobj-js 7.25.2 the answer went through Object(), so a
+ *  null default came back as {} and a 0 as a Number object.
  ************************************************************/
 function kw_get_dict(gobj, kw, path, default_value, flag)
 {
@@ -1348,31 +1381,30 @@ function kw_get_dict(gobj, kw, path, default_value, flag)
     const extract = flag && (flag & kw_flag_t.KW_EXTRACT);
 
     if(v === undefined) {
-        if(create) {
-            let v = Object(default_value);
-            kw_set_dict_value(gobj, kw, path, v);
-            return v;
-
-        } else if(required) {
+        if(create && is_object(default_value) && kw) {
+            kw_set_dict_value(gobj, kw, path, default_value);
+            return default_value;
+        }
+        if(required) {
             log_error(`path not found: '${path}'`);
             trace_json(kw);
         }
-        return Object(default_value);
+        return default_value;
+    }
+
+    if(!is_object(v)) {
+        if(required) {
+            log_error(`${gobj_short_name(gobj)}: path value MUST BE a dict: ${path}`);
+            trace_msg(kw);
+        }
+        return default_value;
     }
 
     if(extract) {
         kw_delete(gobj, kw, path);
     }
 
-    if(!is_object(v)) {
-        if(required) {
-            log_error(`path value MUST BE a dict: ${path}`);
-            trace_msg(kw);
-        }
-        return Object(default_value);
-    }
-
-    return Object(v);
+    return v;
 }
 
 /************************************************************
@@ -1411,7 +1443,12 @@ function kw_get_dict_value(gobj, kw, path, default_value, flag)
 }
 
 /************************************************************
- *
+ *  As the C kw_get_list(): a list found is the answer, and
+ *  anything else gives the default back AS GIVEN. KW_CREATE
+ *  stores a list default, never a null one. Before gobj-js
+ *  7.25.2 the answer went through Array(), which WRAPS its
+ *  argument: a list found came back as [list], a default of []
+ *  as [[]] and a null one as [null].
  ************************************************************/
 function kw_get_list(gobj, kw, path, default_value, flag)
 {
@@ -1426,31 +1463,30 @@ function kw_get_list(gobj, kw, path, default_value, flag)
     const extract = flag && (flag & kw_flag_t.KW_EXTRACT);
 
     if(v === undefined) {
-        if(create) {
-            let v = Array(default_value);
-            kw_set_dict_value(gobj, kw, path, v);
-            return v;
-
-        } else if(required) {
+        if(create && is_array(default_value) && kw) {
+            kw_set_dict_value(gobj, kw, path, default_value);
+            return default_value;
+        }
+        if(required) {
             log_error(`path not found: '${path}'`);
             trace_json(kw);
         }
-        return Array(default_value);
+        return default_value;
+    }
+
+    if(!is_array(v)) {
+        if(required) {
+            log_error(`${gobj_short_name(gobj)}: path value MUST BE an array: ${path}`);
+            trace_msg(kw);
+        }
+        return default_value;
     }
 
     if(extract) {
         kw_delete(gobj, kw, path);
     }
 
-    if(!is_array(v)) {
-        if(required) {
-            log_error(`path value MUST BE an array: ${path}`);
-            trace_msg(kw);
-        }
-        return Array(default_value);
-    }
-
-    return Array(v);
+    return v;
 }
 
 /************************************************************
@@ -1505,7 +1541,7 @@ function kw_set_subdict_value(gobj, kw, path, key, value)
         return -1;
     }
 
-    let subdict = kw_get_dict(gobj, kw, path, {}, true, true);
+    let subdict = kw_get_dict(gobj, kw, path, {}, kw_flag_t.KW_CREATE);
     if(!is_object(subdict)) {
         log_error("subdict is not an object");
         return -1;
