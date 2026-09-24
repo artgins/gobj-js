@@ -3,7 +3,7 @@
  *
  *      Licence: MIT (http://www.opensource.org/licenses/mit-license)
  *      Copyright (c) 2014,2024 Niyamaka.
- *      Copyright (c) 2025, ArtGins.
+ *      Copyright (c) 2025-2026, ArtGins.
  *********************************************************************************/
 import {
     GObj,
@@ -1136,10 +1136,13 @@ function kw_delete(gobj, kw, path)
  *  anything else gives the default back, LOGGED ("path MUST BE a
  *  json boolean", required or not) -- unless KW_WILD_NUMBER asks
  *  to read a number (0 is false), a string ("true"/"false" in any
- *  case, else its integer) or null (false); a list or a dict is
- *  then false, logged too. Before gobj-js 7.25.2 the value went
- *  through Boolean(), so "false" was TRUE; before 7.25.3 a value
- *  of the wrong type gave the default back in silence.
+ *  case, else its decimal integer as atoi() reads it: "0x1F" is 0,
+ *  so false) or null (false); a list or a dict is then false,
+ *  logged too. Before gobj-js 7.25.2 the value went through
+ *  Boolean(), so "false" was TRUE; before 7.25.3 a value of the
+ *  wrong type gave the default back in silence; before 7.25.5 the
+ *  string went through parseInt() with no base, which reads hex:
+ *  "0x1F" was TRUE.
  ************************************************************/
 function kw_get_bool(gobj, kw, path, default_value, flag)
 {
@@ -1177,7 +1180,7 @@ function kw_get_bool(gobj, kw, path, default_value, flag)
         } else if(b.toLowerCase() === "false") {
             value = false;
         } else {
-            value = (parseInt(b) || 0) !== 0;
+            value = (parseInt(b, 10) || 0) !== 0;
         }
     } else if(wild && b === null) {
         value = false;
@@ -1359,6 +1362,27 @@ function kw_get_real(gobj, kw, path, default_value, flag)
 }
 
 /************************************************************
+ *  TRUE when the last key of `path` is a key of its dict, whatever
+ *  its value: kw_find_path() answers undefined both for a key that
+ *  is not there and for one whose value is undefined.
+ ************************************************************/
+function kw_path_holds_key(kw, path)
+{
+    let ss = is_string(path)? path.split('`') : [];
+    let parent = kw;
+    for(let i=0; i<ss.length-1; i++) {
+        if(!(is_object(parent) || is_array(parent))) {
+            return false;
+        }
+        parent = parent[ss[i]];
+    }
+    if(!(is_object(parent) || is_array(parent)) || ss.length === 0) {
+        return false;
+    }
+    return Object.prototype.hasOwnProperty.call(parent, ss[ss.length-1]);
+}
+
+/************************************************************
  *  The default comes back AS GIVEN, as in the C kw_get_str()
  *  (`const char *default_value`, where 0 is NULL). Turned into
  *  a string, a default of 0 or null was "0" or "null", which is
@@ -1370,6 +1394,12 @@ function kw_get_real(gobj, kw, path, default_value, flag)
  *  C refuses to extract a string at all ("Cannot extract a
  *  string": its answer would point into the freed json); a JS
  *  string outlives the kw, so here it is taken out.
+ *  A value that is there and is not a string gives the default
+ *  back, LOGGED ("path MUST BE a json str", required or not), as
+ *  C does; a null value is the key saying "no string" and is not
+ *  logged, and KW_REQUIRED logs only a path that is not there at
+ *  all. Before gobj-js 7.25.5 a value of another type was logged
+ *  only with KW_REQUIRED, and then a null one too.
  ************************************************************/
 function kw_get_str(gobj, kw, path, default_value, flag)
 {
@@ -1389,7 +1419,7 @@ function kw_get_str(gobj, kw, path, default_value, flag)
                 is_string(default_value)? default_value : null);
             return default_value;
 
-        } else if(required) {
+        } else if(required && !kw_path_holds_key(kw, path)) {
             log_error(`path not found: '${path}'`);
             trace_json(kw);
         }
@@ -1397,9 +1427,10 @@ function kw_get_str(gobj, kw, path, default_value, flag)
     }
 
     if(!is_string(v)) {
-        if(required) {
-            log_error(`${gobj_short_name(gobj)}: path value MUST BE a string: ${path}`);
-            trace_msg(kw);
+        if(v !== null) {
+            log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+                `path MUST BE a json str: '${path}'`);
+            trace_json(kw);
         }
         return default_value;
     }
@@ -1479,8 +1510,9 @@ function kw_get_dict(gobj, kw, path, default_value, flag)
 
     if(!is_object(v)) {
         if(required) {
-            log_error(`${gobj_short_name(gobj)}: path value MUST BE a dict: ${path}`);
-            trace_msg(kw);
+            log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+                `path MUST BE a json dict: '${path}'`);
+            trace_json(kw);
         }
         return default_value;
     }
@@ -1561,8 +1593,9 @@ function kw_get_list(gobj, kw, path, default_value, flag)
 
     if(!is_array(v)) {
         if(required) {
-            log_error(`${gobj_short_name(gobj)}: path value MUST BE an array: ${path}`);
-            trace_msg(kw);
+            log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+                `path MUST BE a json list: '${path}'`);
+            trace_json(kw);
         }
         return default_value;
     }

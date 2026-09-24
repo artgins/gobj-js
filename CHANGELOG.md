@@ -7,6 +7,44 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.5
+
+- **fix: `kw_get_str()` logs what the C reader logs.** A value that is there
+  and is not a string (a number, a boolean, a dict, a list) gives the default
+  back and now logs *"path MUST BE a json str"* with or without
+  `KW_REQUIRED`, as C does; before, it was silent unless the caller passed
+  `KW_REQUIRED`. A `null` value (the key is there and says "no string") is
+  never logged -- before, `KW_REQUIRED` logged it. `KW_REQUIRED` still logs a
+  path that is not there at all.
+
+  ```js
+  kw_get_str(gobj, {name: 5}, "name", "none", 0);                         // "none", logged
+  kw_get_str(gobj, {name: null}, "name", "none", kw_flag_t.KW_REQUIRED);  // "none", not logged
+  kw_get_str(gobj, {}, "name", "none", kw_flag_t.KW_REQUIRED);            // "none", logged: path not found
+  ```
+
+  Every caller in gobj-js, gobj-ui (v2 and v1), the yunetas yunos, wattyzer,
+  the yunovatios GUIs, estadodelaire and hidraulia was checked: none reads a
+  value that is not a string or null in normal operation. Two latent ones
+  are named in the audit: `kwid_collect()` / `kwid_get_ids()` on a list of
+  records with INTEGER ids now log once per record (C does the same), and
+  gobj-ui's `C_YUI_UPLOT` read a series `stroke`/`fill` with `kw_get_str()`
+  although uPlot takes a function there (fixed in gobj-ui 7.25.19).
+- **fix: `kw_get_dict()`, `kw_get_list()` and `kw_get_str()` with no gobj
+  logged a false "gobj bad type"** before their own message, which then began
+  with "null: ". The message is now the reader's alone, as in `kw_get_bool/
+  int/real`, and in C's words: *"path MUST BE a json dict"* / *"... a json
+  list"* / *"... a json str"*, with the kw dumped by `trace_json()`.
+- **fix: `kw_get_bool()` with `KW_WILD_NUMBER` read a string with
+  `parseInt()` and no base**, which reads hex: `{on: "0x1F"}` was `true`. C
+  reads it with `atoi()`, decimal only, so `"0x1F"` is `0`, `false`. It is
+  `parseInt(s, 10)` now (leading spaces and a sign, then decimal digits, as
+  `atoi()`). No caller passes `KW_WILD_NUMBER` today.
+
+Tests: `tests/kw_get_str_default.test.js` and `tests/kw_typed_readers.test.js`
+assert the EXACT log lines now (they checked for one message and then cleared
+the list, which hid the extra "gobj bad type"); red on 7 of 41 against 7.25.4.
+
 ## 7.25.4
 
 - **fix: `kw_get_int()` and `kw_get_real()` answer like the C readers.**

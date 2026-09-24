@@ -540,6 +540,14 @@ kw_get_dict_value(gobj, kw, path, default_value, flag)
 //   kw_get_int(gobj, {x: 3.9}, "x", 0, 0)               → 3  (truncated, as C)
 //   kw_get_int(gobj, {x: "12"}, "x", 5, 0)              → 5  (not a number: logged)
 //   kw_get_int(gobj, {x: "0x1F"}, "x", 5, KW_WILD_NUMBER) → 31 (strtoll base 0)
+//   kw_get_bool(gobj, {x: "0x1F"}, "x", true, KW_WILD_NUMBER) → false (atoi: decimal)
+// kw_get_str() logs as C too: a value that is there and is not a
+// string, required or not ("path MUST BE a json str"), never a null
+// value, and with KW_REQUIRED a path that is not there:
+//   kw_get_str(gobj, {x: 5}, "x", "d", 0)              → "d" (logged)
+//   kw_get_str(gobj, {x: null}, "x", "d", KW_REQUIRED) → "d" (not logged)
+// kw_get_dict() / kw_get_list() log a value of another type only with
+// KW_REQUIRED ("path MUST BE a json dict" / "... a json list"), as C.
 // KW_EXTRACT takes out only a value the reader answers with: a value
 // of another type stays in the kw.
 

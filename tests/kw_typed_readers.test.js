@@ -91,14 +91,18 @@ describe("kw_get_list", () => {
         expect(kw).toEqual({});
     });
 
+    /*  The exact lines: before gobj-js 7.25.5 a caller with no gobj got a
+     *  "gobj bad type" first, and a "null: " in front of the message.  */
     test("KW_REQUIRED logs an absent key and a value that is not a list", () => {
         expect(kw_get_list(null, {}, "x", null, kw_flag_t.KW_REQUIRED)).toBe(null);
-        expect(logged.some((m) => m.includes("path not found: 'x'"))).toBe(true);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path not found: 'x'", "[object Object]"
+        ]);
 
         expect(kw_get_list(null, {x: 5}, "x", null, kw_flag_t.KW_REQUIRED)).toBe(null);
-        expect(logged.some((m) => m.includes("MUST BE an array"))).toBe(true);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json list: 'x'", "[object Object]"
+        ]);
     });
 });
 
@@ -133,8 +137,9 @@ describe("kw_get_dict", () => {
 
     test("KW_REQUIRED logs a value that is not a dict", () => {
         expect(kw_get_dict(null, {x: 5}, "x", null, kw_flag_t.KW_REQUIRED)).toBe(null);
-        expect(logged.some((m) => m.includes("MUST BE a dict"))).toBe(true);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json dict: 'x'", "[object Object]"
+        ]);
     });
 
     test("kw_set_subdict_value() creates the dict it writes into", () => {
@@ -165,10 +170,13 @@ describe("kw_get_bool", () => {
         expect(kw_get_bool(null, {x: 1}, "x", false, 0)).toBe(false);
         expect(kw_get_bool(null, {x: {}}, "x", true, 0)).toBe(true);
         expect(kw_get_bool(null, {x: null}, "x", true, 0)).toBe(true);
-        const errors = logged.filter((m) => m.includes("path MUST BE a json boolean"));
-        expect(errors.length).toBe(5);
-        expect(errors[0]).toContain("'x'");
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json boolean: 'x'", "[object Object]",
+            "path MUST BE a json boolean: 'x'", "[object Object]",
+            "path MUST BE a json boolean: 'x'", "[object Object]",
+            "path MUST BE a json boolean: 'x'", "[object Object]",
+            "path MUST BE a json boolean: 'x'", "[object Object]"
+        ]);
     });
 
     test("KW_WILD_NUMBER reads a number, a string or null as C does", () => {
@@ -184,19 +192,32 @@ describe("kw_get_bool", () => {
         expect(kw_get_bool(null, {x: null}, "x", true, W)).toBe(false);
     });
 
+    /*  C reads the string with atoi(): decimal only. Before gobj-js
+     *  7.25.5 parseInt() with no base read "0x1F" as hex, so TRUE.  */
+    test("KW_WILD_NUMBER reads a string as atoi() does, in base 10", () => {
+        const W = kw_flag_t.KW_WILD_NUMBER;
+        expect(kw_get_bool(null, {x: "0x1F"}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: "0X10"}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: "  -3abc"}, "x", false, W)).toBe(true);
+        expect(kw_get_bool(null, {x: "010"}, "x", false, W)).toBe(true);
+        expect(kw_get_bool(null, {x: "000"}, "x", true, W)).toBe(false);
+    });
+
     test("KW_WILD_NUMBER on a list or a dict: false, and logged, as C does", () => {
         const W = kw_flag_t.KW_WILD_NUMBER;
         expect(kw_get_bool(null, {x: [true]}, "x", true, W)).toBe(false);
         expect(kw_get_bool(null, {x: {a: 1}}, "x", true, W)).toBe(false);
-        const errors = logged.filter((m) => m.includes("path MUST BE a simple json element"));
-        expect(errors.length).toBe(2);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a simple json element: 'x'", "[object Object]",
+            "path MUST BE a simple json element: 'x'", "[object Object]"
+        ]);
     });
 
     test("KW_REQUIRED logs a value that is not a boolean", () => {
         expect(kw_get_bool(null, {x: "false"}, "x", true, kw_flag_t.KW_REQUIRED)).toBe(true);
-        expect(logged.some((m) => m.includes("path MUST BE a json boolean"))).toBe(true);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json boolean: 'x'", "[object Object]"
+        ]);
     });
 });
 
@@ -220,10 +241,12 @@ describe("kw_get_int", () => {
         expect(kw_get_int(null, {x: true}, "x", 5, 0)).toBe(5);
         expect(kw_get_int(null, {x: null}, "x", 5, 0)).toBe(5);
         expect(kw_get_int(null, {x: [1]}, "x", 5, 0)).toBe(5);
-        const errors = logged.filter((m) => m.includes("path MUST BE a json integer"));
-        expect(errors.length).toBe(4);
-        expect(errors[0]).toContain("'x'");
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json integer: 'x'", "[object Object]",
+            "path MUST BE a json integer: 'x'", "[object Object]",
+            "path MUST BE a json integer: 'x'", "[object Object]",
+            "path MUST BE a json integer: 'x'", "[object Object]"
+        ]);
     });
 
     test("KW_EXTRACT takes out a number, and leaves a value it did not answer with", () => {
@@ -235,12 +258,16 @@ describe("kw_get_int", () => {
         kw = {x: "4"};
         expect(kw_get_int(null, kw, "x", 0, X)).toBe(0);
         expect(kw).toEqual({x: "4"});
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json integer: 'x'", "[object Object]"
+        ]);
 
         kw = {x: {a: 1}};
         expect(kw_get_int(null, kw, "x", 0, X | kw_flag_t.KW_WILD_NUMBER)).toBe(0);
         expect(kw).toEqual({x: {a: 1}});
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a simple json element: 'x'", "[object Object]"
+        ]);
     });
 
     test("KW_WILD_NUMBER reads a boolean, a string or null as C does", () => {
@@ -262,9 +289,10 @@ describe("kw_get_int", () => {
         const W = kw_flag_t.KW_WILD_NUMBER;
         expect(kw_get_int(null, {x: [1]}, "x", 5, W)).toBe(0);
         expect(kw_get_int(null, {x: {a: 1}}, "x", 5, W)).toBe(0);
-        const errors = logged.filter((m) => m.includes("path MUST BE a simple json element"));
-        expect(errors.length).toBe(2);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a simple json element: 'x'", "[object Object]",
+            "path MUST BE a simple json element: 'x'", "[object Object]"
+        ]);
     });
 
     test("KW_CREATE stores the default when the key is absent", () => {
@@ -275,8 +303,9 @@ describe("kw_get_int", () => {
 
     test("KW_REQUIRED logs an absent key", () => {
         expect(kw_get_int(null, {}, "x", 5, kw_flag_t.KW_REQUIRED)).toBe(5);
-        expect(logged.some((m) => m.includes("path not found: 'x'"))).toBe(true);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path not found: 'x'", "[object Object]"
+        ]);
     });
 });
 
@@ -296,10 +325,11 @@ describe("kw_get_real", () => {
         expect(kw_get_real(null, {x: "1.5"}, "x", 2.5, 0)).toBe(2.5);
         expect(kw_get_real(null, {x: false}, "x", 2.5, 0)).toBe(2.5);
         expect(kw_get_real(null, {x: null}, "x", 2.5, 0)).toBe(2.5);
-        const errors = logged.filter((m) => m.includes("path MUST BE a json real"));
-        expect(errors.length).toBe(3);
-        expect(errors[0]).toContain("'x'");
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json real: 'x'", "[object Object]",
+            "path MUST BE a json real: 'x'", "[object Object]",
+            "path MUST BE a json real: 'x'", "[object Object]"
+        ]);
     });
 
     test("KW_EXTRACT takes out a number, and leaves a value it did not answer with", () => {
@@ -311,7 +341,9 @@ describe("kw_get_real", () => {
         kw = {x: "1.5"};
         expect(kw_get_real(null, kw, "x", 0, X)).toBe(0);
         expect(kw).toEqual({x: "1.5"});
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json real: 'x'", "[object Object]"
+        ]);
     });
 
     test("KW_WILD_NUMBER reads a boolean, a string or null as C does", () => {
@@ -326,8 +358,8 @@ describe("kw_get_real", () => {
     test("KW_WILD_NUMBER on a list or a dict: 0, and logged, as C does", () => {
         const W = kw_flag_t.KW_WILD_NUMBER;
         expect(kw_get_real(null, {x: [1]}, "x", 5, W)).toBe(0);
-        const errors = logged.filter((m) => m.includes("path MUST BE a simple json element"));
-        expect(errors.length).toBe(1);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a simple json element: 'x'", "[object Object]"
+        ]);
     });
 });

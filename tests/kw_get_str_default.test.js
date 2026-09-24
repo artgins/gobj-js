@@ -9,16 +9,23 @@
  *      and the ievent client named a service "null" or "0" instead of
  *      falling back to its wanted service.
  *
+ *      And it LOGS what C logs: a value that is there and is not a
+ *      string ("path MUST BE a json str", required or not), never a
+ *      null one, and with KW_REQUIRED a path that is not there. Before
+ *      gobj-js 7.25.5 a value of another type was silent unless
+ *      KW_REQUIRED was passed -- and then a null one was logged too,
+ *      behind a "gobj bad type" for a caller with no gobj.
+ *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
  ***********************************************************************/
 import {describe, test, expect, beforeAll, beforeEach, afterEach, afterAll} from "vitest";
 import {kw_get_str, kw_flag_t, kwid_get_ids, set_log_callback} from "../src/index.js";
 
-/*  What the reader logs is part of what it answers: a plain read (flag 0)
- *  of an absent or mistyped key says nothing, a KW_REQUIRED one says it.
- *  Every test ends by checking what was logged, and the sink is taken
- *  away again, so it does not listen to the next test file.  */
+/*  What the reader logs is part of what it answers, so every test that
+ *  expects a log compares the WHOLE list, and every test ends by checking
+ *  that nothing else was logged. The sink is taken away again, so it does
+ *  not listen to the next test file.  */
 const logged = [];
 
 beforeAll(() => {
@@ -49,11 +56,25 @@ describe("kw_get_str: the default comes back as given", () => {
         expect(kw_get_str(null, {a: {}}, "a`x", 0, 0)).toBe(0);
     });
 
-    test("a value that is not a string answers the default itself", () => {
+    test("a value that is not a string answers the default, and is logged", () => {
         expect(kw_get_str(null, {x: 5}, "x", "d", 0)).toBe("d");
-        expect(kw_get_str(null, {x: 5}, "x", 0, 0)).toBe(0);
-        expect(kw_get_str(null, {x: null}, "x", null, 0)).toBe(null);
+        expect(kw_get_str(null, {x: true}, "x", 0, 0)).toBe(0);
         expect(kw_get_str(null, {x: {}}, "x", "", 0)).toBe("");
+        expect(kw_get_str(null, {a: {x: [1]}}, "a`x", "", 0)).toBe("");
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json str: 'x'", "[object Object]",
+            "path MUST BE a json str: 'x'", "[object Object]",
+            "path MUST BE a json str: 'x'", "[object Object]",
+            "path MUST BE a json str: 'a`x'", "[object Object]"
+        ]);
+    });
+
+    test("a null value answers the default, and is not logged, required or not", () => {
+        const R = kw_flag_t.KW_REQUIRED;
+        expect(kw_get_str(null, {x: null}, "x", null, 0)).toBe(null);
+        expect(kw_get_str(null, {x: null}, "x", "d", R)).toBe("d");
+        expect(kw_get_str(null, {x: undefined}, "x", "d", R)).toBe("d");
+        expect(kw_get_str(null, {a: {x: null}}, "a`x", "d", R)).toBe("d");
     });
 
     test("a string found is answered as it is", () => {
@@ -74,12 +95,17 @@ describe("kw_get_str: the default comes back as given", () => {
 
     test("KW_REQUIRED logs an absent key and a value that is not a string", () => {
         expect(kw_get_str(null, {}, "x", "d", kw_flag_t.KW_REQUIRED)).toBe("d");
-        expect(logged.some((m) => m.includes("path not found: 'x'"))).toBe(true);
-        logged.length = 0;
+        expect(kw_get_str(null, {a: {}}, "a`x", "d", kw_flag_t.KW_REQUIRED)).toBe("d");
+        expect(logged.splice(0)).toEqual([
+            "path not found: 'x'", "[object Object]",
+            "path not found: 'a`x'", "[object Object]"
+        ]);
 
+        /*  With no gobj there is no name to give, and no "gobj bad type".  */
         expect(kw_get_str(null, {x: 5}, "x", "d", kw_flag_t.KW_REQUIRED)).toBe("d");
-        expect(logged.some((m) => m.includes("MUST BE a string"))).toBe(true);
-        logged.length = 0;
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json str: 'x'", "[object Object]"
+        ]);
     });
 
     /*  Before gobj-js 7.25.4 the key was deleted BEFORE its type was
@@ -93,6 +119,9 @@ describe("kw_get_str: the default comes back as given", () => {
         kw = {x: 5};
         expect(kw_get_str(null, kw, "x", "d", kw_flag_t.KW_EXTRACT)).toBe("d");
         expect(kw).toEqual({x: 5});
+        expect(logged.splice(0)).toEqual([
+            "path MUST BE a json str: 'x'", "[object Object]"
+        ]);
     });
 
     test("kwid_get_ids() takes no id from a record that has none", () => {
