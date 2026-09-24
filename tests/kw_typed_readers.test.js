@@ -1,9 +1,11 @@
 /***********************************************************************
  *          kw_typed_readers.test.js
  *
- *      kw_get_bool(), kw_get_dict() and kw_get_list() answer the way
- *      the C readers do: the value when it has the type of the reader,
- *      and otherwise the default AS GIVEN.
+ *      kw_get_bool(), kw_get_int(), kw_get_real(), kw_get_dict() and
+ *      kw_get_list() answer the way the C readers do: the value when it
+ *      has the type of the reader, and otherwise the default (AS GIVEN
+ *      for a dict or a list). KW_EXTRACT takes out only a value the
+ *      reader answers with.
  *
  *      Before gobj-js 7.25.2 they passed everything through a JS
  *      constructor:
@@ -15,12 +17,20 @@
  *        - kw_get_bool() answered Boolean(v), so the string "false"
  *          was TRUE.
  *
+ *      Before gobj-js 7.25.4 kw_get_int() and kw_get_real() deleted the
+ *      value with KW_EXTRACT BEFORE they looked at its type, so a value
+ *      that was not a number was lost and the default came back; they
+ *      logged it only with KW_REQUIRED, ignored KW_WILD_NUMBER, and
+ *      kw_get_int() truncated through parseInt(), which reads a number
+ *      as its string: 1e-7 gave 1 and 1e21 gave 1.
+ *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
  ***********************************************************************/
 import {describe, test, expect, beforeAll, beforeEach, afterEach, afterAll} from "vitest";
 import {
-    kw_get_bool, kw_get_dict, kw_get_list, kw_set_subdict_value,
+    kw_get_bool, kw_get_int, kw_get_real, kw_get_dict, kw_get_list,
+    kw_set_subdict_value,
     kw_flag_t, set_log_callback
 } from "../src/index.js";
 
@@ -186,6 +196,138 @@ describe("kw_get_bool", () => {
     test("KW_REQUIRED logs a value that is not a boolean", () => {
         expect(kw_get_bool(null, {x: "false"}, "x", true, kw_flag_t.KW_REQUIRED)).toBe(true);
         expect(logged.some((m) => m.includes("path MUST BE a json boolean"))).toBe(true);
+        logged.length = 0;
+    });
+});
+
+describe("kw_get_int", () => {
+    test("a number found comes back truncated toward zero, as C casts it", () => {
+        expect(kw_get_int(null, {x: 7}, "x", 0, 0)).toBe(7);
+        expect(kw_get_int(null, {x: 3.9}, "x", 0, 0)).toBe(3);
+        expect(kw_get_int(null, {x: -3.9}, "x", 0, 0)).toBe(-3);
+        expect(kw_get_int(null, {x: 1e-7}, "x", 5, 0)).toBe(0);
+        expect(kw_get_int(null, {x: 1e21}, "x", 5, 0)).toBe(1e21);
+    });
+
+    test("an absent key answers the default as an integer", () => {
+        expect(kw_get_int(null, {}, "x", 8080, 0)).toBe(8080);
+        expect(kw_get_int(null, {}, "x", "8080", 0)).toBe(8080);
+    });
+
+    /*  C logs "path MUST BE a json integer" required or not.  */
+    test("a value that is not a number answers the default, and is logged", () => {
+        expect(kw_get_int(null, {x: "12"}, "x", 5, 0)).toBe(5);
+        expect(kw_get_int(null, {x: true}, "x", 5, 0)).toBe(5);
+        expect(kw_get_int(null, {x: null}, "x", 5, 0)).toBe(5);
+        expect(kw_get_int(null, {x: [1]}, "x", 5, 0)).toBe(5);
+        const errors = logged.filter((m) => m.includes("path MUST BE a json integer"));
+        expect(errors.length).toBe(4);
+        expect(errors[0]).toContain("'x'");
+        logged.length = 0;
+    });
+
+    test("KW_EXTRACT takes out a number, and leaves a value it did not answer with", () => {
+        const X = kw_flag_t.KW_EXTRACT;
+        let kw = {x: 4, y: 1};
+        expect(kw_get_int(null, kw, "x", 0, X)).toBe(4);
+        expect(kw).toEqual({y: 1});
+
+        kw = {x: "4"};
+        expect(kw_get_int(null, kw, "x", 0, X)).toBe(0);
+        expect(kw).toEqual({x: "4"});
+        logged.length = 0;
+
+        kw = {x: {a: 1}};
+        expect(kw_get_int(null, kw, "x", 0, X | kw_flag_t.KW_WILD_NUMBER)).toBe(0);
+        expect(kw).toEqual({x: {a: 1}});
+        logged.length = 0;
+    });
+
+    test("KW_WILD_NUMBER reads a boolean, a string or null as C does", () => {
+        const W = kw_flag_t.KW_WILD_NUMBER;
+        expect(kw_get_int(null, {x: true}, "x", 5, W)).toBe(1);
+        expect(kw_get_int(null, {x: false}, "x", 5, W)).toBe(0);
+        expect(kw_get_int(null, {x: "12"}, "x", 5, W)).toBe(12);
+        expect(kw_get_int(null, {x: " -12abc"}, "x", 5, W)).toBe(-12);
+        expect(kw_get_int(null, {x: "0x1F"}, "x", 5, W)).toBe(31);
+        expect(kw_get_int(null, {x: "017"}, "x", 5, W)).toBe(15);
+        expect(kw_get_int(null, {x: "abc"}, "x", 5, W)).toBe(0);
+        expect(kw_get_int(null, {x: null}, "x", 5, W)).toBe(0);
+        const kw = {x: "3"};
+        expect(kw_get_int(null, kw, "x", 5, W | kw_flag_t.KW_EXTRACT)).toBe(3);
+        expect(kw).toEqual({});
+    });
+
+    test("KW_WILD_NUMBER on a list or a dict: 0, and logged, as C does", () => {
+        const W = kw_flag_t.KW_WILD_NUMBER;
+        expect(kw_get_int(null, {x: [1]}, "x", 5, W)).toBe(0);
+        expect(kw_get_int(null, {x: {a: 1}}, "x", 5, W)).toBe(0);
+        const errors = logged.filter((m) => m.includes("path MUST BE a simple json element"));
+        expect(errors.length).toBe(2);
+        logged.length = 0;
+    });
+
+    test("KW_CREATE stores the default when the key is absent", () => {
+        const kw = {};
+        expect(kw_get_int(null, kw, "a`x", 3, kw_flag_t.KW_CREATE)).toBe(3);
+        expect(kw).toEqual({a: {x: 3}});
+    });
+
+    test("KW_REQUIRED logs an absent key", () => {
+        expect(kw_get_int(null, {}, "x", 5, kw_flag_t.KW_REQUIRED)).toBe(5);
+        expect(logged.some((m) => m.includes("path not found: 'x'"))).toBe(true);
+        logged.length = 0;
+    });
+});
+
+describe("kw_get_real", () => {
+    test("a number found comes back as it is", () => {
+        expect(kw_get_real(null, {x: 2.5}, "x", 0, 0)).toBe(2.5);
+        expect(kw_get_real(null, {x: 3}, "x", 0, 0)).toBe(3);
+    });
+
+    test("an absent key answers the default as a number", () => {
+        expect(kw_get_real(null, {}, "x", 1.5, 0)).toBe(1.5);
+        expect(kw_get_real(null, {}, "x", "2.5", 0)).toBe(2.5);
+    });
+
+    /*  C logs "path MUST BE a json real" required or not.  */
+    test("a value that is not a number answers the default, and is logged", () => {
+        expect(kw_get_real(null, {x: "1.5"}, "x", 2.5, 0)).toBe(2.5);
+        expect(kw_get_real(null, {x: false}, "x", 2.5, 0)).toBe(2.5);
+        expect(kw_get_real(null, {x: null}, "x", 2.5, 0)).toBe(2.5);
+        const errors = logged.filter((m) => m.includes("path MUST BE a json real"));
+        expect(errors.length).toBe(3);
+        expect(errors[0]).toContain("'x'");
+        logged.length = 0;
+    });
+
+    test("KW_EXTRACT takes out a number, and leaves a value it did not answer with", () => {
+        const X = kw_flag_t.KW_EXTRACT;
+        let kw = {x: 1.5};
+        expect(kw_get_real(null, kw, "x", 0, X)).toBe(1.5);
+        expect(kw).toEqual({});
+
+        kw = {x: "1.5"};
+        expect(kw_get_real(null, kw, "x", 0, X)).toBe(0);
+        expect(kw).toEqual({x: "1.5"});
+        logged.length = 0;
+    });
+
+    test("KW_WILD_NUMBER reads a boolean, a string or null as C does", () => {
+        const W = kw_flag_t.KW_WILD_NUMBER;
+        expect(kw_get_real(null, {x: true}, "x", 5, W)).toBe(1);
+        expect(kw_get_real(null, {x: "1.5"}, "x", 5, W)).toBe(1.5);
+        expect(kw_get_real(null, {x: " -2.5e1xyz"}, "x", 5, W)).toBe(-25);
+        expect(kw_get_real(null, {x: "abc"}, "x", 5, W)).toBe(0);
+        expect(kw_get_real(null, {x: null}, "x", 5, W)).toBe(0);
+    });
+
+    test("KW_WILD_NUMBER on a list or a dict: 0, and logged, as C does", () => {
+        const W = kw_flag_t.KW_WILD_NUMBER;
+        expect(kw_get_real(null, {x: [1]}, "x", 5, W)).toBe(0);
+        const errors = logged.filter((m) => m.includes("path MUST BE a simple json element"));
+        expect(errors.length).toBe(1);
         logged.length = 0;
     });
 });

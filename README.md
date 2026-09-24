@@ -534,7 +534,14 @@ kw_get_dict_value(gobj, kw, path, default_value, flag)
 //   kw_get_bool(gobj, {x: "false"}, "x", true, 0) → true   (not a boolean: logged)
 //   kw_get_bool(gobj, {x: "false"}, "x", true, KW_WILD_NUMBER) → false
 // kw_get_bool() logs a value that is not a boolean even without
-// KW_REQUIRED ("path MUST BE a json boolean"), as the C reader does.
+// KW_REQUIRED ("path MUST BE a json boolean"), as the C reader does,
+// and so do kw_get_int() / kw_get_real() for a value that is not a
+// number ("path MUST BE a json integer" / "... a json real"):
+//   kw_get_int(gobj, {x: 3.9}, "x", 0, 0)               → 3  (truncated, as C)
+//   kw_get_int(gobj, {x: "12"}, "x", 5, 0)              → 5  (not a number: logged)
+//   kw_get_int(gobj, {x: "0x1F"}, "x", 5, KW_WILD_NUMBER) → 31 (strtoll base 0)
+// KW_EXTRACT takes out only a value the reader answers with: a value
+// of another type stays in the kw.
 
 kw_set_dict_value(gobj, kw, path, value)
 kw_set_subdict_value(gobj, kw, path, key, value)

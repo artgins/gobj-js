@@ -7,6 +7,40 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.4
+
+- **fix: `kw_get_int()` and `kw_get_real()` answer like the C readers.**
+  - `KW_EXTRACT` deleted the value BEFORE its type was looked at: a value
+    that was not a number was taken out of the kw and lost, and the caller
+    got the default. Now only a value the reader answers with is taken out,
+    as in C and as `kw_get_bool/dict/list` do since 7.25.2.
+  - A value that is not a number gave the default back with no word unless
+    the caller passed `KW_REQUIRED`. C logs *"path MUST BE a json integer"*
+    (or *"... a json real"*) in every case, and now so does JS, with the kw
+    dumped by `trace_json()`, still giving the default back.
+  - `KW_WILD_NUMBER` was ignored. Now it reads a boolean (`1`/`0`), a
+    string (`kw_get_int()` as `strtoll()` with base 0: `"0x1F"` is 31,
+    `"017"` is 15, `"12abc"` is 12, `"abc"` is 0; `kw_get_real()` as
+    `parseFloat()`, 0 when it does not start with a number) and `null`
+    (0); a list or a dict answers `0` and logs *"path MUST BE a simple json
+    element"*, as in C.
+  - `kw_get_int()` truncated a number through `parseInt()`, which reads it
+    as its string: `1e-7` gave `1` and `1e21` gave `1`. It truncates toward
+    zero now (`Math.trunc()`), as the C cast does.
+- **fix: `kw_get_str()` with `KW_EXTRACT` took out a value that was not a
+  string**, and answered the default. It takes out only a string now. (C
+  refuses to extract a string at all, because its answer would point into
+  the freed json; a JS string outlives the kw.)
+
+  No caller in gobj-js, gobj-ui, the yunetas yunos or the project SPAs
+  passes `KW_EXTRACT` or `KW_WILD_NUMBER` to these readers, and every
+  `kw_get_int()` of them reads a number that the code itself wrote
+  (`subs_flag`, `result`, a command's `round`/`write`/`form_write` tag, a
+  node's `x`/`y`).
+
+Tests: `tests/kw_typed_readers.test.js`, red on 9 of 32 against 7.25.3;
+`tests/kw_get_str_default.test.js`, red on 1 of 7.
+
 ## 7.25.3
 
 - **fix: `kw_get_bool()` logs a value that is not a boolean, as the C reader

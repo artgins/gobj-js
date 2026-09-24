@@ -1200,7 +1200,42 @@ function kw_get_bool(gobj, kw, path, default_value, flag)
 }
 
 /************************************************************
- *
+ *  The integer at the start of a string, as C's strtoll(s, 0, 0)
+ *  reads it: leading spaces, a sign, then "0x" for hex, "0" for
+ *  octal, else decimal, up to the first character that is not a
+ *  digit of that base. 0 when there is no digit.
+ ************************************************************/
+function strtoll_base0(s)
+{
+    const m = /^\s*([+-]?)(0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)/.exec(s);
+    if(!m) {
+        return 0;
+    }
+    let digits = m[2];
+    let value;
+    if(digits.length > 1 && (digits[1] === "x" || digits[1] === "X")) {
+        value = parseInt(digits.substring(2), 16);
+    } else if(digits[0] === "0") {
+        value = parseInt(digits, 8);
+    } else {
+        value = parseInt(digits, 10);
+    }
+    return (m[1] === "-")? -value : value;
+}
+
+/************************************************************
+ *  As the C kw_get_int(): a number found is the answer,
+ *  truncated toward zero as C casts a real, and anything else
+ *  gives the default back (as an integer), LOGGED ("path MUST BE
+ *  a json integer", required or not) -- unless KW_WILD_NUMBER
+ *  asks to read a boolean (1/0), a string (as strtoll() with base
+ *  0: "0x1F" is 31, "017" is 15, "12abc" is 12, "abc" is 0) or
+ *  null (0); a list or a dict is then 0, logged too. KW_EXTRACT
+ *  takes out only a value the reader answers with.
+ *  Before gobj-js 7.25.4 KW_EXTRACT deleted the value before its
+ *  type was looked at, a value of another type was logged only
+ *  with KW_REQUIRED, KW_WILD_NUMBER was ignored, and a number went
+ *  through parseInt(), which reads it as a string: 1e-7 gave 1.
  ************************************************************/
 function kw_get_int(gobj, kw, path, default_value, flag)
 {
@@ -1213,6 +1248,7 @@ function kw_get_int(gobj, kw, path, default_value, flag)
     const required = flag && (flag & kw_flag_t.KW_REQUIRED);
     const create = flag && (flag & kw_flag_t.KW_CREATE);
     const extract = flag && (flag & kw_flag_t.KW_EXTRACT);
+    const wild = flag && (flag & kw_flag_t.KW_WILD_NUMBER);
 
     if(v === undefined) {
         if(create) {
@@ -1227,23 +1263,44 @@ function kw_get_int(gobj, kw, path, default_value, flag)
         return parseInt(default_value);
     }
 
+    let value;
+    if(is_number(v)) {
+        value = Math.trunc(v);
+    } else if(!wild) {
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `path MUST BE a json integer: '${path}'`);
+        trace_json(kw);
+        return parseInt(default_value);
+    } else if(is_boolean(v)) {
+        value = v? 1 : 0;
+    } else if(is_string(v)) {
+        value = strtoll_base0(v);
+    } else if(v === null) {
+        value = 0;
+    } else {
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `path MUST BE a simple json element: '${path}'`);
+        trace_json(kw);
+        return 0;
+    }
+
     if(extract) {
         kw_delete(gobj, kw, path);
     }
-
-    if(!is_number(v)) {
-        if(required) {
-            log_error(`path value MUST BE a number: ${path}`);
-            trace_msg(kw);
-        }
-        return parseInt(default_value);
-    }
-
-    return parseInt(v);
+    return value;
 }
 
 /************************************************************
- *
+ *  As the C kw_get_real(): a number found is the answer, and
+ *  anything else gives the default back (as a number), LOGGED
+ *  ("path MUST BE a json real", required or not) -- unless
+ *  KW_WILD_NUMBER asks to read a boolean (1/0), a string (as
+ *  parseFloat() reads it, 0 when it does not start with a number)
+ *  or null (0); a list or a dict is then 0, logged too.
+ *  KW_EXTRACT takes out only a value the reader answers with.
+ *  Before gobj-js 7.25.4 KW_EXTRACT deleted the value before its
+ *  type was looked at, a value of another type was logged only
+ *  with KW_REQUIRED, and KW_WILD_NUMBER was ignored.
  ************************************************************/
 function kw_get_real(gobj, kw, path, default_value, flag)
 {
@@ -1256,6 +1313,7 @@ function kw_get_real(gobj, kw, path, default_value, flag)
     const required = flag && (flag & kw_flag_t.KW_REQUIRED);
     const create = flag && (flag & kw_flag_t.KW_CREATE);
     const extract = flag && (flag & kw_flag_t.KW_EXTRACT);
+    const wild = flag && (flag & kw_flag_t.KW_WILD_NUMBER);
 
     if(v === undefined) {
         if(create) {
@@ -1270,19 +1328,34 @@ function kw_get_real(gobj, kw, path, default_value, flag)
         return Number(default_value);
     }
 
+    let value;
+    if(is_number(v)) {
+        value = v;
+    } else if(!wild) {
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `path MUST BE a json real: '${path}'`);
+        trace_json(kw);
+        return Number(default_value);
+    } else if(is_boolean(v)) {
+        value = v? 1 : 0;
+    } else if(is_string(v)) {
+        value = parseFloat(v);
+        if(Number.isNaN(value)) {
+            value = 0;
+        }
+    } else if(v === null) {
+        value = 0;
+    } else {
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `path MUST BE a simple json element: '${path}'`);
+        trace_json(kw);
+        return 0;
+    }
+
     if(extract) {
         kw_delete(gobj, kw, path);
     }
-
-    if(!is_number(v)) {
-        if(required) {
-            log_error(`path value MUST BE a number: ${path}`);
-            trace_msg(kw);
-        }
-        return Number(default_value);
-    }
-
-    return Number(v);
+    return value;
 }
 
 /************************************************************
@@ -1292,6 +1365,11 @@ function kw_get_real(gobj, kw, path, default_value, flag)
  *  TRUE: an `if(value)` on the answer took an absent key for a
  *  present one. KW_CREATE stores a string default, and null for
  *  any other, as C stores json_null() for a NULL default.
+ *  KW_EXTRACT takes out only a string (before gobj-js 7.25.4 it
+ *  deleted any value, and a value that was not a string was lost).
+ *  C refuses to extract a string at all ("Cannot extract a
+ *  string": its answer would point into the freed json); a JS
+ *  string outlives the kw, so here it is taken out.
  ************************************************************/
 function kw_get_str(gobj, kw, path, default_value, flag)
 {
@@ -1318,16 +1396,16 @@ function kw_get_str(gobj, kw, path, default_value, flag)
         return default_value;
     }
 
-    if(extract) {
-        kw_delete(gobj, kw, path);
-    }
-
     if(!is_string(v)) {
         if(required) {
             log_error(`${gobj_short_name(gobj)}: path value MUST BE a string: ${path}`);
             trace_msg(kw);
         }
         return default_value;
+    }
+
+    if(extract) {
+        kw_delete(gobj, kw, path);
     }
 
     return v;

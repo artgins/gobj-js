@@ -82,6 +82,19 @@ describe("kw_get_str: the default comes back as given", () => {
         logged.length = 0;
     });
 
+    /*  Before gobj-js 7.25.4 the key was deleted BEFORE its type was
+     *  looked at: a value that was not a string was lost, and the
+     *  caller got the default.  */
+    test("KW_EXTRACT takes out a string, and leaves a value it did not answer with", () => {
+        let kw = {x: "abc", y: 1};
+        expect(kw_get_str(null, kw, "x", "d", kw_flag_t.KW_EXTRACT)).toBe("abc");
+        expect(kw).toEqual({y: 1});
+
+        kw = {x: 5};
+        expect(kw_get_str(null, kw, "x", "d", kw_flag_t.KW_EXTRACT)).toBe("d");
+        expect(kw).toEqual({x: 5});
+    });
+
     test("kwid_get_ids() takes no id from a record that has none", () => {
         expect(kwid_get_ids(null, [{id: "a"}, {name: "no id"}, {id: "b"}]))
             .toEqual(["a", "b"]);
