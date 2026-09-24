@@ -1133,10 +1133,13 @@ function kw_delete(gobj, kw, path)
 
 /************************************************************
  *  As the C kw_get_bool(): a boolean found is the answer, and
- *  anything else gives the default back -- unless KW_WILD_NUMBER
- *  asks to read a number (0 is false), a string ("true"/"false"
- *  in any case, else its integer) or null (false). Before gobj-js
- *  7.25.2 the value went through Boolean(), so "false" was TRUE.
+ *  anything else gives the default back, LOGGED ("path MUST BE a
+ *  json boolean", required or not) -- unless KW_WILD_NUMBER asks
+ *  to read a number (0 is false), a string ("true"/"false" in any
+ *  case, else its integer) or null (false); a list or a dict is
+ *  then false, logged too. Before gobj-js 7.25.2 the value went
+ *  through Boolean(), so "false" was TRUE; before 7.25.3 a value
+ *  of the wrong type gave the default back in silence.
  ************************************************************/
 function kw_get_bool(gobj, kw, path, default_value, flag)
 {
@@ -1178,11 +1181,15 @@ function kw_get_bool(gobj, kw, path, default_value, flag)
         }
     } else if(wild && b === null) {
         value = false;
+    } else if(wild) {
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `path MUST BE a simple json element: '${path}'`);
+        trace_json(kw);
+        return false;
     } else {
-        if(required) {
-            log_error(`${gobj_short_name(gobj)}: path value MUST BE a boolean: ${path}`);
-            trace_msg(kw);
-        }
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `path MUST BE a json boolean: '${path}'`);
+        trace_json(kw);
         return Boolean(default_value);
     }
 

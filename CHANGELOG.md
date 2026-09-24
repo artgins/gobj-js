@@ -7,6 +7,23 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.3
+
+- **fix: `kw_get_bool()` logs a value that is not a boolean, as the C reader
+  does.** Without `KW_WILD_NUMBER`, a value of another type (`1`, `"true"`,
+  `null`, a dict) gave the default back with no word unless the caller passed
+  `KW_REQUIRED`; a flag written as `1` was simply not set. C logs *"path MUST
+  BE a json boolean"* in every case, and now so does JS (with the kw dumped by
+  `trace_json()`), still giving the default back. With `KW_WILD_NUMBER`, a
+  list or a dict gave the default back; C answers `false` and logs *"path
+  MUST BE a simple json element"*, and now so does JS.
+
+  No caller in gobj-js, gobj-ui, the yunetas yunos or the project SPAs passes
+  anything but a boolean (`__hard_subscription__`, `__own_event__`,
+  `options.create`).
+
+Tests: `tests/kw_typed_readers.test.js`, red on 3 of 18 against 7.25.2.
+
 ## 7.25.2
 
 - **fix: `kw_get_list()`, `kw_get_dict()` and `kw_get_bool()` answer like

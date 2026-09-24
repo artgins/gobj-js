@@ -531,8 +531,10 @@ kw_get_dict_value(gobj, kw, path, default_value, flag)
 // the default AS GIVEN otherwise (absent key or other type), as in C:
 //   kw_get_list(gobj, {x: [1, 2]}, "x", [], 0)   → [1, 2]  (the same array)
 //   kw_get_dict(gobj, {}, "x", null, 0)          → null
-//   kw_get_bool(gobj, {x: "false"}, "x", true, 0) → true   (not a boolean)
+//   kw_get_bool(gobj, {x: "false"}, "x", true, 0) → true   (not a boolean: logged)
 //   kw_get_bool(gobj, {x: "false"}, "x", true, KW_WILD_NUMBER) → false
+// kw_get_bool() logs a value that is not a boolean even without
+// KW_REQUIRED ("path MUST BE a json boolean"), as the C reader does.
 
 kw_set_dict_value(gobj, kw, path, value)
 kw_set_subdict_value(gobj, kw, path, key, value)

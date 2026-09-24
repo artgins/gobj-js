@@ -145,11 +145,20 @@ describe("kw_get_bool", () => {
         expect(kw_get_bool(null, {}, "x", 0, 0)).toBe(false);
     });
 
-    test("a value that is not a boolean answers the default", () => {
+    /*  And SAYS so, required or not, as C's "path MUST BE a json
+     *  boolean": a flag written as 1 or "true" is a caller that
+     *  believes it set the flag, and the default it gets instead
+     *  was silent.  */
+    test("a value that is not a boolean answers the default, and is logged", () => {
         expect(kw_get_bool(null, {x: "false"}, "x", false, 0)).toBe(false);
         expect(kw_get_bool(null, {x: "true"}, "x", false, 0)).toBe(false);
         expect(kw_get_bool(null, {x: 1}, "x", false, 0)).toBe(false);
         expect(kw_get_bool(null, {x: {}}, "x", true, 0)).toBe(true);
+        expect(kw_get_bool(null, {x: null}, "x", true, 0)).toBe(true);
+        const errors = logged.filter((m) => m.includes("path MUST BE a json boolean"));
+        expect(errors.length).toBe(5);
+        expect(errors[0]).toContain("'x'");
+        logged.length = 0;
     });
 
     test("KW_WILD_NUMBER reads a number, a string or null as C does", () => {
@@ -163,12 +172,20 @@ describe("kw_get_bool", () => {
         expect(kw_get_bool(null, {x: 0}, "x", true, W)).toBe(false);
         expect(kw_get_bool(null, {x: 2.5}, "x", false, W)).toBe(true);
         expect(kw_get_bool(null, {x: null}, "x", true, W)).toBe(false);
-        expect(kw_get_bool(null, {x: [true]}, "x", true, W)).toBe(true);
+    });
+
+    test("KW_WILD_NUMBER on a list or a dict: false, and logged, as C does", () => {
+        const W = kw_flag_t.KW_WILD_NUMBER;
+        expect(kw_get_bool(null, {x: [true]}, "x", true, W)).toBe(false);
+        expect(kw_get_bool(null, {x: {a: 1}}, "x", true, W)).toBe(false);
+        const errors = logged.filter((m) => m.includes("path MUST BE a simple json element"));
+        expect(errors.length).toBe(2);
+        logged.length = 0;
     });
 
     test("KW_REQUIRED logs a value that is not a boolean", () => {
         expect(kw_get_bool(null, {x: "false"}, "x", true, kw_flag_t.KW_REQUIRED)).toBe(true);
-        expect(logged.some((m) => m.includes("MUST BE a boolean"))).toBe(true);
+        expect(logged.some((m) => m.includes("path MUST BE a json boolean"))).toBe(true);
         logged.length = 0;
     });
 });
