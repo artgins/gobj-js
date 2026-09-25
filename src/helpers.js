@@ -1654,6 +1654,13 @@ function kw_set_dict_value(gobj, kw, path, value)
             let seg = kw[key];
             if(seg === undefined) {
                 kw[key] = {};
+            } else if(!is_object(seg) && !is_array(seg)) {
+                /*  C stops here too (kwid.c, "long path"): nothing can be
+                 *  created inside a null or a scalar.  */
+                log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+                    `kw_set_dict_value(): segment '${key}' is not a dict ` +
+                    `or a list: '${path}'`);
+                return -1;
             }
             kw = kw[key];
         }

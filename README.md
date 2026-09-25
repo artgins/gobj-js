@@ -558,7 +558,11 @@ kw_get_dict_value(gobj, kw, path, default_value, flag)
 // KW_EXTRACT takes out only a value the reader answers with: a value
 // of another type stays in the kw.
 
-kw_set_dict_value(gobj, kw, path, value)
+kw_set_dict_value(gobj, kw, path, value)                 // 0, or -1 logged
+// A middle segment that is null or a scalar cannot hold the path:
+// kw_set_dict_value() logs and answers -1, the kw is left as it was,
+// and a reader with KW_CREATE answers its default (as C):
+//   kw_get_int(gobj, {a: null}, "a`b", 5, KW_CREATE) → 5, kw unchanged
 kw_set_subdict_value(gobj, kw, path, key, value)
 
 kw_match_simple(kw, filter)                              // → boolean

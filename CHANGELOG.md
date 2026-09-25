@@ -7,6 +7,27 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.7
+
+- **fix: `KW_CREATE` over a null or scalar middle segment answers the
+  default instead of throwing.** 7.25.6 said a null middle segment gives the
+  default as in C; that held only without `KW_CREATE`. With it, the reader
+  found nothing and asked `kw_set_dict_value()` to create the path, which
+  stepped into the null (or the scalar) and assigned a property on it:
+  `TypeError: Cannot set properties of null`. `kw_set_dict_value()` now logs
+  *"kw_set_dict_value(): segment '<key>' is not a dict or a list: '<path>'"*
+  and answers `-1`, leaving the kw as it was, and so every reader answers its
+  default, as C does (`kwid.c` stops at the scalar and logs "long path").
+
+  ```js
+  kw_get_int(null, {a: null}, "a`b", 5, kw_flag_t.KW_CREATE); // 5 (was a TypeError), logged
+  kw_get_str(null, {a: 5}, "a`b", "d", kw_flag_t.KW_CREATE);  // "d" (was a TypeError), logged
+  kw_set_dict_value(null, {a: null}, "a`b", 1);               // -1, logged
+  ```
+
+  Latent: the only `KW_CREATE` reader calls in gobj-ui, the yunetas yunos,
+  wattyzer and the yunovatios GUIs read single-segment paths.
+
 ## 7.25.6
 
 - **fix: `kw_find_path()` answers as the C one, and so every typed reader
