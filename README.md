@@ -300,6 +300,24 @@ gobj_subscribe_event(source_gobj, "EV_DATA_READY", {}, subscriber_gobj);
 gobj_unsubscribe_event(source_gobj, "EV_DATA_READY", {}, subscriber_gobj);
 ```
 
+**Which kw a subscriber gets** (since 7.25.8, the same rule as the C kernel):
+
+- A subscription with a non-empty `__local__` (keys removed) or `__global__`
+  (keys added) gets a **twin** of the published kw: a new top-level object,
+  with the nested values shared. `__global__` goes in as a copy. What one
+  subscription removes or adds reaches only its own subscriber.
+- Every other subscriber gets the **same** kw as the publisher. A receiver that
+  changes the kw it got must change a copy of its own (`C_IEVENT_CLI`'s
+  `mt_inject_event` does this before it writes its ievent stack).
+- `__filter__` and `mt_publication_filter` see the publisher's kw.
+
+```javascript
+gobj_subscribe_event(pub, "EV_X", {__global__: {tag: "a"}}, sub_a); // gets {v: 1, tag: "a"}
+gobj_subscribe_event(pub, "EV_X", {__local__: {secret: 0}}, sub_b); // gets {v: 1}
+gobj_subscribe_event(pub, "EV_X", {__filter__: {v: 1}}, sub_c);     // gets the publisher's kw
+gobj_publish_event(pub, "EV_X", {v: 1, secret: "s"});               // the kw stays {v: 1, secret: "s"}
+```
+
 ### GObject Tree (Yuno)
 
 GObjects form a parent-child tree. The root is the **Yuno**. Services live directly under the Yuno. Each GObject has exactly one parent (except the Yuno itself).

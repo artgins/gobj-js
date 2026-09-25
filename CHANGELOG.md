@@ -7,6 +7,40 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.8
+
+- **security: a subscription that rewrites the kw gets its own.**
+  `gobj_publish_event()` gave every subscriber the SAME kw and applied each
+  subscription's `__local__` (`kw_pop`) and `__global__`
+  (`json_object_update`) to it. So one subscription forged or stripped the
+  event of every subscriber after it, and of the publisher, and the
+  `__filter__` of a later subscription was evaluated on the altered kw (a
+  filtered subscriber lost events it should get, or got events it should
+  not). The C kernel had the same defect and fixed it after SDK 7.25.4; this is
+  the port. A subscription with a non-empty `__local__` or `__global__` now
+  gets a **twin**: a new top-level object with the nested values shared, and
+  `__global__` goes in as a copy, so a receiver that changes it does not
+  change the subscription. Every other subscriber still gets the publisher's
+  kw, with no copy. `__filter__` and `mt_publication_filter` see the
+  publisher's kw.
+
+  ```js
+  gobj_subscribe_event(pub, "EV_X", {__global__: {tag: "a"}}, sub_a); // {v: 1, secret: "s", tag: "a"}
+  gobj_subscribe_event(pub, "EV_X", {__local__: {secret: 0}}, sub_b); // {v: 1} (was: tag "a" too)
+  gobj_subscribe_event(pub, "EV_X", {__filter__: {v: 1}}, sub_c);     // {v: 1, secret: "s"}
+  gobj_publish_event(pub, "EV_X", {v: 1, secret: "s"});               // kw unchanged (was: {v: 1, tag: "a"})
+  ```
+
+- **fix: `C_IEVENT_CLI`'s `mt_inject_event()` changes a copy.** It pushed its
+  ievent stack into the kw it got, set `__md_iev__.__msg_type__` and deleted
+  `__service__`. A published kw is shared, so a local subscriber after the
+  transport received the transport's `__md_iev__`, and the publisher's kw
+  kept it. It now works on a shallow copy, with `__md_iev__` copied deep.
+
+  No JS consumer relies on the shared-kw mutation: gobj-ui, the yunetas
+  `yunos/js/*` yunos, wattyzer, the yunovatios GUIs, estadodelaire and
+  hidraulia set no `__global__` or `__local__` in a subscription.
+
 ## 7.25.7
 
 - **fix: `KW_CREATE` over a null or scalar middle segment answers the

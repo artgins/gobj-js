@@ -64,6 +64,7 @@ import {
     msg_iev_get_msg_type,
     trace_json,
     json_deep_copy,
+    is_object,
     json_object_del,
     set_remote_log_functions, kw_flag_t,
 } from "./helpers.js";
@@ -386,8 +387,17 @@ function mt_inject_event(gobj, event, kw, src)
         return -1;
     }
 
-    if(!kw) {
-        kw = {};
+    /*
+     *  Below, the kw is changed (the ievent stack, the message type, the
+     *  __service__ key): change a kw of our own. The kw may be a published
+     *  one, which gobj_publish_event() hands the SAME to every subscriber
+     *  that does not rewrite it: up to 7.25.7 what this gobj wrote in it
+     *  reached every subscriber after it, and the publisher. The copy is
+     *  shallow, except __md_iev__, whose stacks are pushed in place.
+     */
+    kw = Object.assign({}, is_object(kw) ? kw : {});
+    if(is_object(kw["__md_iev__"])) {
+        kw["__md_iev__"] = json_deep_copy(kw["__md_iev__"]);
     }
 
     /*

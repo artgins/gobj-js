@@ -4969,12 +4969,6 @@ function gobj_publish_event(
 //                event_name = event;
 //            }
 
-            /*
-             *  Duplicate the kw to publish if not shared
-             *  NOW always shared
-             */
-            let kw2publish = kw;
-
             /*-------------------------------------*
              *  User filter method or filter parameter
              *  Return:
@@ -4987,7 +4981,7 @@ function gobj_publish_event(
                 topublish = publisher.gclass.gmt.mt_publication_filter(
                     publisher,
                     event,
-                    kw2publish,  // not owned
+                    kw,  // not owned
                     subscriber
                 );
             } else if(json_size(__filter__)>0) {
@@ -4999,7 +4993,7 @@ function gobj_publish_event(
                  *  same. Normalize to the 1/0 the contract is written in
                  *  (-1 break, 0 skip, 1 publish), which is what the C side
                  *  passes around.  */
-                topublish = kw_match_simple(kw2publish , __filter__) ? 1 : 0;
+                topublish = kw_match_simple(kw, __filter__) ? 1 : 0;
                 if(tracea) {
                     trace_machine(sprintf(
                         "💜💜🔄%s publishing with filter, event '%s', subscriber'%s', publisher %s",
@@ -5040,9 +5034,28 @@ function gobj_publish_event(
             }
 
             /*
+             *  One kw for every subscriber, unless this subscription rewrites
+             *  it (__local__ removes keys, __global__ adds them): then it gets
+             *  a twin of its own, as the C kernel does, so what one
+             *  subscription removes or adds reaches no other subscriber, nor
+             *  the publisher, nor the __filter__ of the next subscription.
+             *  Up to gobj-js 7.25.7 the kw was shared always, and one
+             *  subscription forged or stripped the event of everybody after
+             *  it. The twin is SHALLOW (a new top-level object, the nested
+             *  values shared), and __global__ goes in as a copy, so the
+             *  receiver may change what it got without touching the
+             *  subscription. A receiver of the SHARED kw that changes it must
+             *  change a copy of its own (C_IEVENT_CLI's mt_inject_event does).
+             */
+            let kw2publish = kw;
+            if(json_size(__local__)>0 || json_size(__global__)>0) {
+                kw2publish = Object.assign({}, kw);
+            }
+
+            /*
              *  Remove local keys
              */
-            if(__local__) {
+            if(json_size(__local__)>0) {
                 kw_pop(kw2publish,
                     __local__ // not owned
                 );
@@ -5064,8 +5077,8 @@ function gobj_publish_event(
             /*
              *  Add global keys
              */
-            if(__global__) {
-                json_object_update(kw2publish, __global__);
+            if(json_size(__global__)>0) {
+                json_object_update(kw2publish, json_deep_copy(__global__));
             }
 
             /*
