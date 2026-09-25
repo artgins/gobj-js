@@ -519,6 +519,13 @@ kw_has_key(kw, key)                                      // → boolean
 kw_pop(kw1, kw2)                                         // delete from kw1 the keys listed in kw2
 kw_delete(gobj, kw, path)
 kw_find_path(gobj, kw, path, verbose)                    // back-tick path: "a`b`c"
+// kw_find_path() answers undefined for a path that is not there, as C
+// answers NULL. A kw that is not a dict or a list, or a scalar in the
+// middle of the path, is logged ("kw must be list or dict"); an absent
+// or null middle segment is logged only when verbose. So a typed reader
+// handed a bad kw answers its DEFAULT:
+//   kw_get_int(gobj, null, "x", 5, 0)            → 5  (logged: kw must be list or dict)
+//   kw_get_str(gobj, {a: null}, "a`b", "d", 0)   → "d" (not logged)
 
 kw_get_bool(gobj, kw, path, default_value, flag)
 kw_get_int (gobj, kw, path, default_value, flag)

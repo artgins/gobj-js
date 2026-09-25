@@ -7,6 +7,35 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.25.6
+
+- **fix: `kw_find_path()` answers as the C one, and so every typed reader
+  handed a bad kw answers its default.** A kw that is not a dict or a list
+  answered `0` where C answers NULL, and the readers took that `0` for a
+  value found: `kw_get_int()` and `kw_get_real()` answered `0` instead of
+  the default, and `kw_get_str()` / `kw_get_bool()` logged a second line
+  (*"path MUST BE a json str/boolean"*). It now answers `undefined`, logged
+  once as *"kw must be list or dict: '<path>'"*. That line also went through
+  `gobj_short_name(null)` with no gobj, which logged the *"gobj bad type"*
+  7.25.5 said was gone and printed *"null: ..."*; it now names the gobj only
+  when there is one.
+
+  A path whose MIDDLE segment is `null` threw a `TypeError` ("Cannot read
+  properties of null"); C answers the default. Now an absent or null middle
+  segment answers `undefined` (logged only when `verbose`), and a scalar one
+  is logged *"kw must be list or dict"*, as C's recursion does. `KW_CREATE`
+  in `kw_get_bool/int/real/str` no longer tries to write into a null kw, as
+  C guards it (`&& kw`).
+
+  ```js
+  kw_get_int(null, null, "x", 5, 0);          // 5 (was 0), one line logged
+  kw_get_str(null, {a: null}, "a`b", "d", 0); // "d" (was a TypeError), silent
+  kw_get_str(null, {a: 5}, "a`b", "d", 0);    // "d", logged: kw must be list or dict
+  ```
+
+  Latent: no caller in gobj-js, gobj-ui, the yunetas yunos, wattyzer or the
+  yunovatios GUIs passes a bad kw or reads through a null segment today.
+
 ## 7.25.5
 
 - **fix: `kw_get_str()` logs what the C reader logs.** A value that is there

@@ -1066,38 +1066,54 @@ function kw_has_key(kw, key)
 }
 
 /************************************************************
- *
+ *  The value at `path` (keys joined by a backtick), as the C
+ *  kw_find_path() finds it: undefined when it is not there.
+ *  A kw that is not a dict or a list is LOGGED ("kw must be list
+ *  or dict") and answers undefined, as C answers NULL; so does a
+ *  segment in the middle of the path whose value is a scalar. A
+ *  middle segment that is absent or null answers undefined, logged
+ *  only when `verbose`. Before gobj-js 7.25.6 a bad kw answered 0,
+ *  which the typed readers took for a value found (kw_get_int() and
+ *  kw_get_real() answered 0 instead of the default, kw_get_str() and
+ *  kw_get_bool() logged a second line), the log named no path and
+ *  called gobj_short_name() on a null gobj ("gobj bad type"), and a
+ *  null middle segment threw a TypeError.
  ************************************************************/
 function kw_find_path(gobj, kw, path, verbose)
 {
     if(gobj && !is_gobj(gobj)) {
         log_error(`GObj bad instanceof`);
     }
+    const prefix = gobj? `${gobj_short_name(gobj)}: ` : "";
 
     if(!(is_object(kw) || is_array(kw))) {
-        log_error(`${gobj_short_name(gobj)}: kw must be list or dict`);
-        return 0;
+        log_error(`${prefix}kw must be list or dict: '${String(path)}'`);
+        return undefined;
     }
     if(!is_string(path)) {
-        log_error(`${gobj_short_name(gobj)}: path must be a string: ${String(path)}`);
-        return 0;
+        log_error(`${prefix}path must be a string: ${String(path)}`);
+        return undefined;
     }
     let ss = path.split('`');
-    if(ss.length<=1) {
-        return kw[path];
-    }
     let len = ss.length;
-    for(let i=0; i<len; i++) {
-        let key = ss[i];
-        kw = kw[key];
-        if(kw === undefined) {
+    for(let i=0; i<len-1; i++) {
+        kw = kw[ss[i]];
+        if(kw === undefined || kw === null) {
             if(verbose) {
-                log_error(`${gobj_short_name(gobj)}: path not found: ${String(path)}`);
+                log_error(`${prefix}path not found: '${path}'`);
             }
             return undefined;
         }
+        if(!(is_object(kw) || is_array(kw))) {
+            log_error(`${prefix}kw must be list or dict: '${path}'`);
+            return undefined;
+        }
     }
-    return kw;
+    let value = kw[ss[len-1]];
+    if(value === undefined && verbose) {
+        log_error(`${prefix}path not found: '${path}'`);
+    }
+    return value;
 }
 
 /************************************************************
@@ -1157,7 +1173,7 @@ function kw_get_bool(gobj, kw, path, default_value, flag)
     const wild = flag && (flag & kw_flag_t.KW_WILD_NUMBER);
 
     if(b === undefined) {
-        if(create) {
+        if(create && kw) {
             let v = Boolean(default_value);
             kw_set_dict_value(gobj, kw, path, v);
             return v;
@@ -1254,7 +1270,7 @@ function kw_get_int(gobj, kw, path, default_value, flag)
     const wild = flag && (flag & kw_flag_t.KW_WILD_NUMBER);
 
     if(v === undefined) {
-        if(create) {
+        if(create && kw) {
             let v = parseInt(default_value);
             kw_set_dict_value(gobj, kw, path, v);
             return v;
@@ -1319,7 +1335,7 @@ function kw_get_real(gobj, kw, path, default_value, flag)
     const wild = flag && (flag & kw_flag_t.KW_WILD_NUMBER);
 
     if(v === undefined) {
-        if(create) {
+        if(create && kw) {
             let v = Number(default_value);
             kw_set_dict_value(gobj, kw, path, v);
             return v;
@@ -1414,7 +1430,7 @@ function kw_get_str(gobj, kw, path, default_value, flag)
     const extract = flag && (flag & kw_flag_t.KW_EXTRACT);
 
     if(v === undefined) {
-        if(create) {
+        if(create && kw) {
             kw_set_dict_value(gobj, kw, path,
                 is_string(default_value)? default_value : null);
             return default_value;
