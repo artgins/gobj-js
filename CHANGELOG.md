@@ -328,8 +328,7 @@ tells a consumer the wrong thing: the first two indices are the SDK's. 7.17
 to 7.20 are skipped on purpose -- the number does not count releases of this
 package, it names the SDK the package belongs to.
 
-The `kwid_*` id helpers, reviewed 2026-09-10 and carried in yunetas' `TODO.md`
-since. They serve one rule -- **the key of a data record is its `id`, and the
+The `kwid_*` id helpers. They serve one rule -- **the key of a data record is its `id`, and the
 rest of the record is value** -- and nothing covered them: `tests/kwid.test.js`
 is new, 19 cases.
 
