@@ -17,6 +17,11 @@
  *      subscription IS: this runtime does not rename events, so
  *      `__rename_event_name__` stays there, and two subscriptions that
  *      differ in it are two, as they are in C.
+ *
+ *      gobj_unsubscribe_list() removes the subscription OBJECT it is
+ *      given. Up to gobj-js 7.25.8 it removed the first entry whose fields
+ *      matched it, and a plain subscription matches every other of its
+ *      event and subscriber: a stale plain one removed a live one.
  ***********************************************************************/
 import { describe, test, expect, beforeAll } from "vitest";
 import {
@@ -33,6 +38,7 @@ import {
     gobj_unsubscribe_event,
     gobj_unsubscribe_list,
     gobj_find_subscriptions,
+    gobj_find_subscribings,
     gobj_publish_event,
     event_flag_t,
 } from "../src/index.js";
@@ -186,6 +192,38 @@ describe("a repeated subscription", () => {
 
         gobj_unsubscribe_event(pub, "EV_ON_MESSAGE", kw, sub);
         expect(count()).toBe(0);
+
+        gobj_destroy(sub);
+        gobj_destroy(pub);
+    });
+
+    test("gobj_unsubscribe_list() removes the subscription it is given", () => {
+        pub = gobj_create("pub6", "C_TEST_PUB_REPEAT", {}, yuno);
+        sub = gobj_create("sub6", "C_TEST_SUB_REPEAT", {}, yuno);
+        gobj_start(pub);
+        gobj_start(sub);
+
+        gobj_subscribe_event(pub, "EV_ON_MESSAGE", {}, sub);
+        const dl_stale = gobj_find_subscriptions(pub, "EV_ON_MESSAGE", {}, sub);
+        gobj_unsubscribe_event(pub, "EV_ON_MESSAGE", {}, sub);
+        expect(count()).toBe(0);
+
+        const subs_plain = gobj_subscribe_event(pub, "EV_ON_MESSAGE", {}, sub);
+        const subs_filter = gobj_subscribe_event(pub, "EV_ON_MESSAGE",
+            {__filter__: {wanted: true}}, sub);
+        expect(count()).toBe(2);
+
+        gobj_unsubscribe_list(pub, dl_stale, false);
+        expect(count()).toBe(2);
+        expect(gobj_find_subscribings(sub, "EV_ON_MESSAGE", {}, pub).length).toBe(2);
+
+        gobj_unsubscribe_list(pub, [subs_plain], false);
+        const left = gobj_find_subscriptions(pub, "EV_ON_MESSAGE", {}, sub);
+        expect(left.length).toBe(1);
+        expect(left[0]).toBe(subs_filter);
+        const left2 = gobj_find_subscribings(sub, "EV_ON_MESSAGE", {}, pub);
+        expect(left2.length).toBe(1);
+        expect(left2[0]).toBe(subs_filter);
 
         gobj_destroy(sub);
         gobj_destroy(pub);

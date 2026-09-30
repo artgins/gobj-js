@@ -4427,29 +4427,16 @@ function _find_subscriptions(
 }
 
 /***************************************************************************
- *  Find idx of subscription in dl_subs, -1 not found
+ *  Find idx of the subscription `subs` itself in dl_subs, -1 not found.
+ *  Up to gobj-js 7.25.8 it was the first entry whose fields matched `subs`:
+ *  a subscription already removed took a live one that matched it (a plain
+ *  one matches every other of its event and subscriber).
  ***************************************************************************/
 function _get_subs_idx(
     dl_subs,
-    publisher,
-    event,
-    kw,
-    subscriber
+    subs
 ) {
-    for(let i=0; i<dl_subs.length; i++) {
-        let subs = dl_subs[i];
-        if(_match_subscription(
-            subs,
-            publisher,
-            event,
-            kw, // NOT owned
-            subscriber
-        )) {
-            return i;
-        }
-    }
-
-    return -1;
+    return dl_subs.indexOf(subs);
 }
 
 /***************************************************************************
@@ -4474,6 +4461,14 @@ function _delete_subscription(
         if(!force) {
             return -1;
         }
+    }
+
+    /*-------------------------------------------------*
+     *  A subscription already removed is not informed
+     *-------------------------------------------------*/
+    if(_get_subs_idx(publisher.dl_subscriptions, subs) < 0) {
+        log_error(`${gobj_short_name(gobj)}: subscription in publisher not found (event: ${event}, subscriber: ${gobj_short_name(subscriber)})`);
+        return -1;
     }
 
     /*-----------------------------*
@@ -4507,13 +4502,7 @@ function _delete_subscription(
     /*--------------------------------*
      *      Delete subscription
      *--------------------------------*/
-    let idx = _get_subs_idx(
-        publisher.dl_subscriptions,
-        publisher,
-        event,
-        subs,
-        subscriber
-    );
+    let idx = _get_subs_idx(publisher.dl_subscriptions, subs);
 
     if(idx >= 0) {
         json_array_remove(publisher.dl_subscriptions, idx);
@@ -4522,13 +4511,7 @@ function _delete_subscription(
         trace_json(subs);
     }
 
-    idx = _get_subs_idx(
-        subscriber.dl_subscribings,
-        publisher,
-        event,
-        subs,
-        subscriber
-    );
+    idx = _get_subs_idx(subscriber.dl_subscribings, subs);
     if(idx >= 0) {
         json_array_remove(subscriber.dl_subscribings, idx);
     } else {
