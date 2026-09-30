@@ -7,6 +7,22 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## Unreleased
+
+- **A repeated `__own_event__` or hard subscription is found again.**
+  `_create_subscription()` takes these keys out of the stored `__config__`,
+  but the repeat check and `gobj_unsubscribe_event()` compared the kw with
+  them still in it: a repeat was made a second time (every event arrived
+  twice) and the same kw could not withdraw it. The kw is matched as it is
+  stored, as in the C kernel since SDK 7.25.5. A repeat of a hard
+  subscription returns the one there with a warning, and an unsubscribe that
+  leaves a hard subscription says so.
+- **`gobj_unsubscribe_list()` removes the subscription it is given.** Up to
+  7.25.8 the entry removed was the first one whose fields matched, so a stale
+  plain subscription took a live one with it (a filtered subscription of the
+  same event and subscriber). The object itself is looked up now, and one no
+  longer there is logged and not passed to `mt_subscription_deleted()`.
+
 ## 7.25.8
 
 - **security: a subscription that rewrites the kw gets its own.**
