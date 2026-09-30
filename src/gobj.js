@@ -4177,7 +4177,27 @@ function gobj_send_event(dst, event, kw, src)
 const subs_flag_t = Object.freeze({
 __hard_subscription__   : 0x00000001,
 __own_event__           : 0x00000002,   // If gobj_send_event return -1 don't continue publishing
+__rename_event_name__   : 0x00000004,   // delivered as `renamed_event` (the bits are this runtime's own)
 });
+
+/***************************************************************************
+ *  The event type of `event_name` in any registered gclass, null if none.
+ *  The C kernel's gobj_find_event_type(): any case, gclasses only.
+ ***************************************************************************/
+function _find_event_type_in_gclasses(event_name)
+{
+    let lower = String(event_name).toLowerCase();
+    for(let gclass_name in _gclass_register) {
+        let dl = _gclass_register[gclass_name].dl_events;
+        for(let i=0; i<dl.length; i++) {
+            let event_type = dl[i];
+            if(event_type.event_name && event_type.event_name.toLowerCase() === lower) {
+                return event_type;
+            }
+        }
+    }
+    return null;
+}
 
 /*
  *
@@ -4228,26 +4248,31 @@ function _create_subscription(
             let kw_clone = json_deep_copy(__config__);
             json_object_set_new(subs, "__config__", kw_clone);
 
-// TODO
-//            if(kw_has_key(kw_clone, "__rename_event_name__")) {
-//                const char *renamed_event = kw_get_str(gobj?, kw_clone, "__rename_event_name__", 0, 0);
-//                sdata_write_str(subs, "renamed_event", renamed_event);
-//                json_object_del(kw_clone, "__rename_event_name__");
-//                subs_flag |= __rename_event_name__;
-//
-//                // Get/Create __global__
-//                json_t *kw_global = sdata_read_json(subs, "__global__");
-//                if(!kw_global) {
-//                    kw_global = json_object();
-//                    sdata_write_json(subs, "__global__", kw_global);
-//                    kw_decref(kw_global); // Incref above
-//                }
-//                kw_set_dict_value(
-//                    kw_global,
-//                    "__original_event_name__",
-//                    json_string(event)
-//                );
-//            }
+            /*
+             *  A rename to an event that some gclass declares becomes the
+             *  subscription's `renamed_event`, as in C; one that no gclass
+             *  declares is logged and stays in the stored __config__.
+             *  Up to gobj-js 7.25.8 it always stayed there, and nothing
+             *  was renamed.
+             */
+            let renamed_event = kw_get_str(publisher, kw_clone, "__rename_event_name__", "");
+            if(!empty_string(renamed_event)) {
+                let event_type = _find_event_type_in_gclasses(renamed_event);
+                if(event_type) {
+                    json_object_set_new(subs, "renamed_event", event_type.event_name);
+                    delete kw_clone.__rename_event_name__;
+                    subs_flag |= subs_flag_t.__rename_event_name__;
+
+                    let kw_global = kw_get_dict(publisher, subs, "__global__", null);
+                    if(!is_object(kw_global)) {
+                        kw_global = {};
+                        json_object_set_new(subs, "__global__", kw_global);
+                    }
+                    kw_global.__original_event_name__ = event;
+                } else {
+                    log_error(`${gobj_short_name(publisher)}: EVENT NOT FOUND (__rename_event_name__: ${renamed_event})`);
+                }
+            }
 
             if(kw_has_key(kw_clone, "__hard_subscription__")) {
                 let hard_subscription = kw_get_bool(publisher,
@@ -4287,28 +4312,54 @@ function _create_subscription(
 
 /***************************************************************************
  *  The kw to find the subscriptions a (un)subscription `kw` names: `kw` as
- *  _create_subscription() stores it. `__hard_subscription__` and
- *  `__own_event__` become the subs_flag and are taken out of the stored
- *  `__config__`: with `kw` as it came, the same kw matched no subscription,
+ *  _create_subscription() stores it, as the C kernel's
+ *  _subscription_match_kw(). The three `__config__` keys the framework
+ *  reads (__hard_subscription__, __own_event__, __rename_event_name__)
+ *  become the subs_flag and are taken out of the stored `__config__`, and
+ *  a renamed event adds `__original_event_name__` to the stored
+ *  `__global__`: with `kw` as it came, the same kw matched no subscription,
  *  a repeat of it was made twice (the subscriber got each event twice) and
- *  its withdrawal found nothing. `__rename_event_name__` is not read by this
- *  runtime, so it stays in the stored `__config__` and in this one: two
- *  renames of an event are two subscriptions, as in C. Up to gobj-js 7.25.8
- *  the kw was compared as it came.
+ *  its withdrawal found nothing. A known renamed event is returned in
+ *  `renamed_event`, which _match_subscription() compares: a plain and a
+ *  renamed subscription, or two renames of one event, are two. A rename
+ *  that no gclass declares stays in the stored `__config__`, and in this
+ *  one. Up to gobj-js 7.25.8 the kw was compared as it came, and
+ *  `__rename_event_name__` always stayed in the stored `__config__`: a
+ *  plain kw with the rest of that __config__ found no repeat (two
+ *  subscriptions where C has one).
+ *  Return {kw, renamed_event}; renamed_event is "" when kw does not rename.
  ***************************************************************************/
-function _subscription_match_kw(kw)
+function _subscription_match_kw(kw, event)
 {
     let __config__ = kw ? kw.__config__ : null;
     if(!is_object(__config__) ||
         (!kw_has_key(__config__, "__hard_subscription__") &&
-         !kw_has_key(__config__, "__own_event__"))) {
-        return kw;
+         !kw_has_key(__config__, "__own_event__") &&
+         !kw_has_key(__config__, "__rename_event_name__"))) {
+        return {kw: kw, renamed_event: ""};
     }
 
+    let kw_match = Object.assign({}, kw);
     let config_match = Object.assign({}, __config__);
+    kw_match.__config__ = config_match;
+    let renamed_event = "";
+
+    let rename = config_match.__rename_event_name__;
+    let event_type = (typeof rename === "string" && !empty_string(rename)) ?
+        _find_event_type_in_gclasses(rename) : null;
+    if(event_type) {
+        renamed_event = event_type.event_name;
+        delete config_match.__rename_event_name__;
+        if(event && json_size(kw_match.__global__) > 0) {
+            kw_match.__global__ = Object.assign(
+                {}, kw_match.__global__, {__original_event_name__: event}
+            );
+        }
+    }
+
     delete config_match.__hard_subscription__;
     delete config_match.__own_event__;
-    return Object.assign({}, kw, {__config__: config_match});
+    return {kw: kw_match, renamed_event: renamed_event};
 }
 
 /***************************************************************************
@@ -4318,6 +4369,7 @@ function _match_subscription(
     subs,
     publisher,
     event,
+    renamed_event,  // "" or null: any
     kw,
     subscriber
 ) {
@@ -4345,6 +4397,13 @@ function _match_subscription(
     if(event) {
         let event_ = kw_get_str(null, subs, "event", "");
         if(event !== event_) {
+            match = false;
+        }
+    }
+
+    if(renamed_event) {
+        let renamed_event_ = kw_get_str(null, subs, "renamed_event", "");
+        if(renamed_event !== renamed_event_) {
             match = false;
         }
     }
@@ -4405,6 +4464,7 @@ function _find_subscriptions(
     dl_subs,
     publisher,
     event,
+    renamed_event,  // "" or null: any
     kw,
     subscriber
 ) {
@@ -4416,6 +4476,7 @@ function _find_subscriptions(
             subs,
             publisher,
             event,
+            renamed_event,
             kw, // NOT owned
             subscriber
         )) {
@@ -4440,7 +4501,11 @@ function _get_subs_idx(
 }
 
 /***************************************************************************
- *  Delete subscription in publisher and subscriber
+ *  Delete subscription in publisher and subscriber.
+ *  Return 0 removed, -1 a hard one kept (only `force` removes it), 1 it
+ *  was not there any more: already removed, as a stale reference is, or by
+ *  the mt_subscription_deleted() of an earlier entry of the same list. The
+ *  caller says which is an error. As in C.
  ***************************************************************************/
 function _delete_subscription(
     gobj,
@@ -4463,18 +4528,26 @@ function _delete_subscription(
         }
     }
 
+    let tracea = __trace_gobj_subscriptions__(subscriber) || __trace_gobj_subscriptions__(publisher);
+
     /*-------------------------------------------------*
      *  A subscription already removed is not informed
      *-------------------------------------------------*/
     if(_get_subs_idx(publisher.dl_subscriptions, subs) < 0) {
-        log_error(`${gobj_short_name(gobj)}: subscription in publisher not found (event: ${event}, subscriber: ${gobj_short_name(subscriber)})`);
-        return -1;
+        if(tracea) {
+            trace_machine(sprintf(
+                "💜💜👎 unsubscribing event '%s': publisher %s, subscriber'%s', ALREADY REMOVED",
+                event?event:"",
+                gobj_short_name(publisher),
+                gobj_short_name(subscriber)
+            ));
+        }
+        return 1;
     }
 
     /*-----------------------------*
      *          Trace
      *-----------------------------*/
-    let tracea = __trace_gobj_subscriptions__(subscriber) || __trace_gobj_subscriptions__(publisher);
     if(tracea) {
         trace_machine(sprintf(
             "💜💜👎 unsubscribing event '%s': publisher %s, subscriber'%s'",
@@ -4582,11 +4655,13 @@ function gobj_subscribe_event(
     /*------------------------------*
      *  Find repeated subscription
      *------------------------------*/
+    let match = _subscription_match_kw(kw, event);
     let dl_subs = _find_subscriptions(
         publisher.dl_subscriptions,
         publisher,
         event,
-        _subscription_match_kw(kw),
+        match.renamed_event,
+        match.kw,
         subscriber
     );
 
@@ -4719,28 +4794,38 @@ function gobj_unsubscribe_event(
     /*-----------------------------*
      *      Find subscription
      *-----------------------------*/
+    let match = _subscription_match_kw(kw, event);
     let dl_subs = _find_subscriptions(
         publisher.dl_subscriptions,
         publisher,
         event,
-        _subscription_match_kw(kw),
+        match.renamed_event,
+        match.kw,
         subscriber
     );
 
     let deleted = 0;
     let kept_hard = 0;
+    let already_removed = 0;
     for(let i=0; i<dl_subs.length; i++) {
         let subs = dl_subs[i];
-        if(_delete_subscription(publisher, subs, false, false) === 0) {
+        let ret = _delete_subscription(publisher, subs, false, false);
+        if(ret === 0) {
             deleted++;
-        } else {
+        } else if(ret < 0) {
             kept_hard++;    // a hard subscription goes only with force
+        } else {
+            /*
+             *  Withdrawn meanwhile, by the mt_subscription_deleted() of an
+             *  entry before it: gone, as asked, and no hard one kept
+             */
+            already_removed++;
         }
     }
 
     if(kept_hard) {
         log_warning(`${gobj_short_name(publisher)}: Hard subscription not removed, only gobj_unsubscribe_list() with force removes it (event: ${event}, hard: ${kept_hard})`);
-    } else if(!deleted) {
+    } else if(!deleted && !already_removed) {
         log_warning(`${gobj_short_name(publisher)}: No subscription found`);
         trace_json(kw, "No subscription found");
     }
@@ -4758,9 +4843,20 @@ function gobj_unsubscribe_list(
 )
 {
     let dl = [...dl_subs];
+    let already_removed = 0;
     for(let i=0; i<dl.length; i++) {
         let subs = dl[i];
-        _delete_subscription(gobj, subs, force, false);
+        if(_delete_subscription(gobj, subs, force, false) > 0) {
+            already_removed++;
+        }
+    }
+    if(already_removed) {
+        /*
+         *  A stale reference, or one the mt_subscription_deleted() of an
+         *  entry before it withdrew: nothing to remove, and no live
+         *  subscription is taken in its place
+         */
+        log_warning(`${gobj_short_name(gobj)}: Subscription(s) already removed, nothing to remove (count: ${already_removed})`);
     }
     return 0;
 }
@@ -4785,6 +4881,7 @@ function gobj_find_subscriptions(
         publisher.dl_subscriptions,
         publisher,
         event,
+        null,
         kw,
         subscriber
     );
@@ -4855,6 +4952,7 @@ function gobj_find_subscribings(
         subscriber.dl_subscribings,
         publisher,
         event,
+        null,
         kw,
         subscriber
     );
@@ -4997,12 +5095,12 @@ function gobj_publish_event(
             let __filter__ = kw_get_dict_value(publisher, subs, "__filter__", null, 0);
 
             /*
-             *  Check renamed_event
+             *  Check renamed_event: what the subscriber is sent
              */
-//   TODO review        const char *event_name = sdata_read_str(subs, "renamed_event");
-//            if(empty_string(event_name)) {
-//                event_name = event;
-//            }
+            let event_name = kw_get_str(publisher, subs, "renamed_event", "", 0);
+            if(empty_string(event_name)) {
+                event_name = event;
+            }
 
             /*-------------------------------------*
              *  User filter method or filter parameter
@@ -5127,16 +5225,17 @@ function gobj_publish_event(
                      *  the only place the rename is visible. */
                     trace_machine(sprintf("🔝🔄 %s (%s) %s%s",
                         event?event:"",
-                        event?event:"",
+                        event_name?event_name:"",
                         (!subscriber.running)?"!!":"",
                         gobj_short_name(subscriber)
                     ));
                 } else {
-                    trace_machine(sprintf("🔝🔄 mach(%s%s), st: %s, ev: %s, from(%s%s)",
+                    trace_machine(sprintf("🔝🔄 mach(%s%s), st: %s, ev: %s (%s), from(%s%s)",
                         (!subscriber.running)?"!!":"",
                         gobj_short_name(subscriber),
                         gobj_current_state(subscriber),
                         event?event:"",
+                        event_name?event_name:"",
                         (publisher && !publisher.running)?"!!":"",
                         gobj_short_name(publisher)
                     ));
@@ -5148,7 +5247,7 @@ function gobj_publish_event(
 
             let ret_ = gobj_send_event(
                 subscriber,
-                event,
+                event_name,
                 kw2publish,
                 publisher
             );

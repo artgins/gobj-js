@@ -318,6 +318,23 @@ gobj_subscribe_event(pub, "EV_X", {__filter__: {v: 1}}, sub_c);     // gets the 
 gobj_publish_event(pub, "EV_X", {v: 1, secret: "s"});               // the kw stays {v: 1, secret: "s"}
 ```
 
+**A renamed event** (since 7.25.9, the same rule as the C kernel):
+`{__config__: {__rename_event_name__: "EV_A"}}` sends the subscriber `EV_A`
+instead of the published event, with `__original_event_name__` in the kw, when
+some gclass declares `EV_A` (a rename nobody declares is logged and ignored).
+The rename is part of what the subscription IS: a renamed subscription over a
+plain one is a second one, while a plain kw is a wildcard, so a plain
+subscription over a renamed one replaces it and a plain unsubscribe removes
+both.
+
+```javascript
+gobj_subscribe_event(pub, "EV_ON_MESSAGE", {}, sub);                        // one
+gobj_subscribe_event(pub, "EV_ON_MESSAGE",
+    {__config__: {__rename_event_name__: "EV_A"}}, sub);                    // two
+gobj_publish_event(pub, "EV_ON_MESSAGE", {});   // sub gets EV_ON_MESSAGE, and EV_A
+gobj_unsubscribe_event(pub, "EV_ON_MESSAGE", {}, sub);                      // none
+```
+
 ### GObject Tree (Yuno)
 
 GObjects form a parent-child tree. The root is the **Yuno**. Services live directly under the Yuno. Each GObject has exactly one parent (except the Yuno itself).

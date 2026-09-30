@@ -7,8 +7,36 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
-## Unreleased
+## 7.25.9
 
+- **`__rename_event_name__` renames, as in C.** A subscription whose
+  `__config__` renames the event to one that some gclass declares stores it
+  as its `renamed_event`, takes the key out of the stored `__config__`, adds
+  `__original_event_name__` to its `__global__`, and the subscriber is SENT
+  the renamed event. Up to 7.25.8 the rename was a TODO: the key stayed in the
+  stored `__config__`, nothing was renamed, and the matching of repeats and
+  withdrawals differed from C (a plain kw with the rest of that `__config__`
+  made a second subscription where C has one). The renamed event is compared
+  on its own: a renamed subscription over a plain one, and two renames of one
+  event, are two; a plain kw is a wildcard, so a plain subscription over a
+  renamed one replaces it, and a plain unsubscribe removes both. A rename to
+  an event no gclass declares is logged (*"EVENT NOT FOUND"*) and stays in the
+  `__config__`, as in C. No JS consumer sets `__rename_event_name__`.
+
+  ```js
+  gobj_subscribe_event(pub, "EV_ON_MESSAGE",
+      {__config__: {__rename_event_name__: "EV_A"}}, sub);    // sub declares EV_A
+  gobj_publish_event(pub, "EV_ON_MESSAGE", {});               // sub gets EV_A,
+                                                              // {__original_event_name__: "EV_ON_MESSAGE"}
+  ```
+
+- **A subscription withdrawn meanwhile is not a hard one kept.** When the
+  publisher's `mt_subscription_deleted()` withdraws a later entry of the same
+  unsubscribe, `gobj_unsubscribe_event()` counted it as a hard subscription
+  kept and warned *"Hard subscription not removed"*. It is gone, as asked, and
+  nothing is logged; `gobj_unsubscribe_list()` logs a stale entry once per
+  call, as a warning (*"Subscription(s) already removed, nothing to remove"*).
+  Same as the C kernel.
 - **A repeated `__own_event__` or hard subscription is found again.**
   `_create_subscription()` takes these keys out of the stored `__config__`,
   but the repeat check and `gobj_unsubscribe_event()` compared the kw with
@@ -21,7 +49,8 @@ about which SDK it was built against.
   7.25.8 the entry removed was the first one whose fields matched, so a stale
   plain subscription took a live one with it (a filtered subscription of the
   same event and subscriber). The object itself is looked up now, and one no
-  longer there is logged and not passed to `mt_subscription_deleted()`.
+  longer there is logged (a warning) and not passed to
+  `mt_subscription_deleted()`.
 
 ## 7.25.8
 
