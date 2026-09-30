@@ -63,6 +63,7 @@ import {
     msg_iev_set_msg_type,
     msg_iev_get_msg_type,
     trace_json,
+    trace_json_masked,
     json_deep_copy,
     is_object,
     json_object_del,
@@ -643,7 +644,7 @@ function trace_inter_event(gobj, prefix, iev)
     try {
         log_debug("\n" + hora + " " + prefix + "\n");
         //trace_msg(JSON.stringify(iev,  null, 4));
-        trace_json(iev);
+        trace_json_masked(iev);     // a command's password is not shown (up to 7.25.9 it was)
     } catch (e) {
         log_debug("ERROR in trace_inter_event: " + e);
     }

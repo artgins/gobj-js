@@ -331,6 +331,166 @@ function trace_json(jn, msg)
 }
 
 /************************************************************
+ *  The names of the secrets (is_secret_name()). The same lists
+ *  as the C kernel's helpers.c: a name that holds one of these
+ *  (any case) is a secret.
+ ************************************************************/
+const SECRET_NAME_PARTS = [
+    "passw", "pwd", "passphrase", "secret", "token", "jwt", "bearer",
+    "authorization", "cookie", "credential", "salt"
+];
+/*
+ *  ... or one of these, once '_', '-', '.' and blanks are taken out
+ */
+const SECRET_NAME_JOINED = ["apikey", "sessionid", "sessionkey", "authdata"];
+
+/************************************************************
+ *  TRUE if `name` is the name of a secret: a password, a token,
+ *  a key... Any case. As the C kernel's is_secret_name().
+ ************************************************************/
+function is_secret_name(name)
+{
+    if(typeof name !== "string" || !name) {
+        return false;
+    }
+    let lower = name.toLowerCase();
+    for(const part of SECRET_NAME_PARTS) {
+        if(lower.indexOf(part) >= 0) {
+            return true;
+        }
+    }
+    let joined = lower.replace(/[_\-. \t]/g, "");
+    for(const part of SECRET_NAME_JOINED) {
+        if(joined.indexOf(part) >= 0) {
+            return true;
+        }
+    }
+    return (lower.indexOf("priv") >= 0 && lower.indexOf("key") >= 0);
+}
+
+/************************************************************
+ *  A text (a command line) with the value of every "name=value"
+ *  whose name is a secret's written as "********", quoted or not
+ *  (and the "value" of a write-attr whose attribute names a
+ *  secret). The rest as it is. Return null when there was nothing
+ *  to mask. As the C kernel's mask_secrets_inline().
+ ************************************************************/
+function mask_secrets_inline(str)
+{
+    if(typeof str !== "string" || str.indexOf("=") < 0) {
+        return null;
+    }
+    let value_is_secret = false;
+    let re_attr = /(^|[ \t])attribute=["']?([^ \t"']*)/g;
+    let m;
+    while((m = re_attr.exec(str)) !== null) {
+        if(is_secret_name(m[2])) {
+            value_is_secret = true;
+        }
+    }
+
+    let out = "";
+    let changed = false;
+    let name_start = 0;
+    let p = 0;
+    while(p < str.length) {
+        let c = str[p];
+        if(c === " " || c === "\t") {
+            out += c;
+            p++;
+            name_start = p;
+            continue;
+        }
+        let name = str.substring(name_start, p);
+        if(c !== "=" || !(is_secret_name(name) ||
+                (value_is_secret && name.toLowerCase() === "value"))) {
+            out += c;
+            p++;
+            continue;
+        }
+        out += "=";
+        p++;
+        let quote = (str[p] === '"' || str[p] === "'")? str[p] : "";
+        let end = quote? p + 1 : p;
+        while(end < str.length &&
+                (quote? str[end] !== quote : (str[end] !== " " && str[end] !== "\t"))) {
+            end++;
+        }
+        if(quote && str[end] === quote) {
+            end++;
+        }
+        if(end > p) {
+            out += "********";
+            changed = true;
+        }
+        p = end;
+        name_start = p;
+    }
+    return changed? out : null;
+}
+
+/************************************************************
+ *  A json as a log or a trace may show it: at any depth, the
+ *  value of a key with a secret's name is "********", whatever
+ *  its type (not an absent one, a null or an empty string); so is
+ *  the "value" of a dict whose "attribute" names a secret; and a
+ *  string is masked as mask_secrets_inline(). Return a masked
+ *  copy, or `jn` itself when there was nothing to mask. As the C
+ *  kernel's json_mask_secrets().
+ ************************************************************/
+function json_mask_secrets(jn)
+{
+    if(Array.isArray(jn)) {
+        let masked = null;
+        for(let i=0; i<jn.length; i++) {
+            let shown = json_mask_secrets(jn[i]);
+            if(shown !== jn[i]) {
+                if(!masked) {
+                    masked = jn.slice();
+                }
+                masked[i] = shown;
+            }
+        }
+        return masked? masked : jn;
+    }
+    if(jn !== null && typeof jn === "object") {
+        let value_is_secret = typeof jn.attribute === "string" && is_secret_name(jn.attribute);
+        let masked = null;
+        for(const key of Object.keys(jn)) {
+            let value = jn[key];
+            let shown;
+            let secret = is_secret_name(key) || (value_is_secret && key === "value");
+            if(secret && value !== undefined && value !== null && value !== "") {
+                shown = "********";
+            } else {
+                shown = json_mask_secrets(value);
+            }
+            if(shown !== value) {
+                if(!masked) {
+                    masked = Object.assign({}, jn);
+                }
+                masked[key] = shown;
+            }
+        }
+        return masked? masked : jn;
+    }
+    if(typeof jn === "string") {
+        let masked = mask_secrets_inline(jn);
+        return masked !== null? masked : jn;
+    }
+    return jn;
+}
+
+/************************************************************
+ *  trace_json() of a json that can hold a credential: what
+ *  json_mask_secrets() masks is shown masked
+ ************************************************************/
+function trace_json_masked(jn, msg)
+{
+    trace_json(json_mask_secrets(jn), msg);
+}
+
+/************************************************************
  *  Duplicate an object (new references)
  *  using the modern structuredClone (Deep copy of a single object)
  ************************************************************/
@@ -1180,7 +1340,7 @@ function kw_get_bool(gobj, kw, path, default_value, flag)
 
         } else if(required) {
             log_error(`path not found: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return Boolean(default_value);
     }
@@ -1203,12 +1363,12 @@ function kw_get_bool(gobj, kw, path, default_value, flag)
     } else if(wild) {
         log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
             `path MUST BE a simple json element: '${path}'`);
-        trace_json(kw);
+        trace_json_masked(kw);
         return false;
     } else {
         log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
             `path MUST BE a json boolean: '${path}'`);
-        trace_json(kw);
+        trace_json_masked(kw);
         return Boolean(default_value);
     }
 
@@ -1277,7 +1437,7 @@ function kw_get_int(gobj, kw, path, default_value, flag)
 
         } else if(required) {
             log_error(`path not found: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return parseInt(default_value);
     }
@@ -1288,7 +1448,7 @@ function kw_get_int(gobj, kw, path, default_value, flag)
     } else if(!wild) {
         log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
             `path MUST BE a json integer: '${path}'`);
-        trace_json(kw);
+        trace_json_masked(kw);
         return parseInt(default_value);
     } else if(is_boolean(v)) {
         value = v? 1 : 0;
@@ -1299,7 +1459,7 @@ function kw_get_int(gobj, kw, path, default_value, flag)
     } else {
         log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
             `path MUST BE a simple json element: '${path}'`);
-        trace_json(kw);
+        trace_json_masked(kw);
         return 0;
     }
 
@@ -1342,7 +1502,7 @@ function kw_get_real(gobj, kw, path, default_value, flag)
 
         } else if(required) {
             log_error(`path not found: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return Number(default_value);
     }
@@ -1353,7 +1513,7 @@ function kw_get_real(gobj, kw, path, default_value, flag)
     } else if(!wild) {
         log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
             `path MUST BE a json real: '${path}'`);
-        trace_json(kw);
+        trace_json_masked(kw);
         return Number(default_value);
     } else if(is_boolean(v)) {
         value = v? 1 : 0;
@@ -1367,7 +1527,7 @@ function kw_get_real(gobj, kw, path, default_value, flag)
     } else {
         log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
             `path MUST BE a simple json element: '${path}'`);
-        trace_json(kw);
+        trace_json_masked(kw);
         return 0;
     }
 
@@ -1437,7 +1597,7 @@ function kw_get_str(gobj, kw, path, default_value, flag)
 
         } else if(required && !kw_path_holds_key(kw, path)) {
             log_error(`path not found: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return default_value;
     }
@@ -1446,7 +1606,7 @@ function kw_get_str(gobj, kw, path, default_value, flag)
         if(v !== null) {
             log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
                 `path MUST BE a json str: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return default_value;
     }
@@ -1481,7 +1641,7 @@ function kw_get_pointer(gobj, kw, path, default_value, flag)
 
         } else if(required) {
             log_error(`path not found: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return default_value;
     }
@@ -1519,7 +1679,7 @@ function kw_get_dict(gobj, kw, path, default_value, flag)
         }
         if(required) {
             log_error(`path not found: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return default_value;
     }
@@ -1528,7 +1688,7 @@ function kw_get_dict(gobj, kw, path, default_value, flag)
         if(required) {
             log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
                 `path MUST BE a json dict: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return default_value;
     }
@@ -1563,7 +1723,7 @@ function kw_get_dict_value(gobj, kw, path, default_value, flag)
 
         } else if(required) {
             log_error(`path not found: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return default_value;
     }
@@ -1602,7 +1762,7 @@ function kw_get_list(gobj, kw, path, default_value, flag)
         }
         if(required) {
             log_error(`path not found: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return default_value;
     }
@@ -1611,7 +1771,7 @@ function kw_get_list(gobj, kw, path, default_value, flag)
         if(required) {
             log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
                 `path MUST BE a json list: '${path}'`);
-            trace_json(kw);
+            trace_json_masked(kw);
         }
         return default_value;
     }
@@ -4187,6 +4347,10 @@ function flat_apply(flat, diff)
 
 export {
     kw_flag_t,
+    is_secret_name,
+    mask_secrets_inline,
+    json_mask_secrets,
+    trace_json_masked,
     json_deep_copy,
     duplicate_objects,
     json_is_identical,

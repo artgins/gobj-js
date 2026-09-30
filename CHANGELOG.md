@@ -9,6 +9,26 @@ about which SDK it was built against.
 
 ## 7.25.9
 
+- **security: traces and logs do not show credentials.** New
+  `is_secret_name()`, `mask_secrets_inline()`, `json_mask_secrets()` and
+  `trace_json_masked()` (helpers.js), with the C kernel's rule and lists: a
+  key whose name is a secret's (`password`, `token`, `api_key`,
+  `private_key`...) is shown `"********"` at any depth, whatever its type; so
+  is a `name=value` inside a string (a command line) and the `value` of a
+  write-attr whose `attribute` names a secret. The commands trace of
+  `gobj_command()` (line and kw), the machine trace with `ev_kw` (an event
+  sent, executed, published, a subscription), the kw a `kw_get_*()` error
+  dumps and `C_IEVENT_CLI`'s ievents trace print that way. Up to 7.25.8 they
+  printed a command's password in clear.
+
+  ```js
+  gobj_command(gobj, "set-user-pwd username=bob password=hunter2", {}, gobj);
+  // 🌀🌀 mach(...), cmd: set-user-pwd username=bob password=********
+  ```
+
+- **`subs_flag` carries the C kernel's bits** (`__rename_event_name__` 0x1,
+  `__hard_subscription__` 0x2, `__own_event__` 0x4; hard was 0x1 and own 0x2).
+  Nothing reads the number across the wire or from a store.
 - **`__rename_event_name__` renames, as in C.** A subscription whose
   `__config__` renames the event to one that some gclass declares stores it
   as its `renamed_event`, takes the key out of the stored `__config__`, adds

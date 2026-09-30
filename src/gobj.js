@@ -32,6 +32,8 @@ import {
     json_array_append,
     kw_get_dict_value,
     trace_json,
+    trace_json_masked,
+    mask_secrets_inline,
     json_array_remove,
     kw_get_str,
     kw_has_key,
@@ -1876,7 +1878,7 @@ function write_json_parameters(gobj, kw, jn_global)
     );
     if(ret < 0) {
         log_error(`${gobj_short_name(gobj)} json2data() FAILED`);
-        trace_json(new_kw);
+        trace_json_masked(new_kw);
     }
 }
 
@@ -4064,7 +4066,7 @@ function gobj_send_event(dst, event, kw, src)
                 if(kw) {
                     if(__trace_gobj_ev_kw__(dst)) {
                         if(json_object_size(kw)) {
-                            trace_json(kw);
+                            trace_json_masked(kw);
                         }
                     }
                 }
@@ -4130,7 +4132,7 @@ function gobj_send_event(dst, event, kw, src)
         if(kw) {
             if(__trace_gobj_ev_kw__(dst)) {
                 if(json_object_size(kw)) {
-                    trace_json(kw);
+                    trace_json_masked(kw);
                 }
             }
         }
@@ -4174,10 +4176,16 @@ function gobj_send_event(dst, event, kw, src)
     return ret;
 }
 
+/*
+ *  The same bits as the C kernel's subs_flag_t. Up to gobj-js 7.25.9 hard
+ *  was 0x1 and own 0x2; nothing reads the number across the wire or from
+ *  a store (a subscription is local to its runtime), but a trace of it
+ *  said another thing than C's.
+ */
 const subs_flag_t = Object.freeze({
-__hard_subscription__   : 0x00000001,
-__own_event__           : 0x00000002,   // If gobj_send_event return -1 don't continue publishing
-__rename_event_name__   : 0x00000004,   // delivered as `renamed_event` (the bits are this runtime's own)
+__rename_event_name__   : 0x00000001,   // delivered as `renamed_event`
+__hard_subscription__   : 0x00000002,
+__own_event__           : 0x00000004,   // If gobj_send_event return -1 don't continue publishing
 });
 
 /***************************************************************************
@@ -4719,7 +4727,7 @@ function gobj_subscribe_event(
             gobj_short_name(subscriber)
         ));
         if(kw && (__trace_gobj_ev_kw__(subscriber) || __trace_gobj_ev_kw__(publisher))) {
-            trace_json(kw);
+            trace_json_masked(kw);
         }
     }
 
@@ -4827,7 +4835,7 @@ function gobj_unsubscribe_event(
         log_warning(`${gobj_short_name(publisher)}: Hard subscription not removed, only gobj_unsubscribe_list() with force removes it (event: ${event}, hard: ${kept_hard})`);
     } else if(!deleted && !already_removed) {
         log_warning(`${gobj_short_name(publisher)}: No subscription found`);
-        trace_json(kw, "No subscription found");
+        trace_json_masked(kw, "No subscription found");
     }
 
     return 0;
@@ -5022,7 +5030,7 @@ function gobj_publish_event(
          *  C kernel: the `machine` trace alone printed the payload of every
          *  publication, in the console and in any monitor. */
         if(__trace_gobj_ev_kw__(publisher) && json_object_size(kw)) {
-            trace_json(kw);
+            trace_json_masked(kw);
         }
     }
 
@@ -5097,7 +5105,7 @@ function gobj_publish_event(
             /*
              *  Check renamed_event: what the subscriber is sent
              */
-            let event_name = kw_get_str(publisher, subs, "renamed_event", "", 0);
+            let event_name = subs.renamed_event;   // a field read: this is the hot path
             if(empty_string(event_name)) {
                 event_name = event;
             }
@@ -5241,7 +5249,7 @@ function gobj_publish_event(
                     ));
                 }
                 if(__trace_gobj_ev_kw__(publisher) && json_object_size(kw2publish)) {
-                    trace_json(kw2publish);
+                    trace_json_masked(kw2publish);
                 }
             }
 
@@ -5297,14 +5305,17 @@ function gobj_command(gobj, command, kw, src)
     let tracea = is_commands_tracing(gobj) ||
         (is_machine_tracing(gobj, null) && !is_machine_not_tracing(src, null));
     if(tracea) {
+        /*  The command line and its kw with the secrets masked by name,
+         *  as the C kernel does for what its table cannot tell  */
+        let command_shown = mask_secrets_inline(command);
         trace_machine(sprintf("🌀🌀 mach(%s%s), cmd: %s, src: %s",
             (!gobj_is_running(gobj))?"!!":"",
             gobj_short_name(gobj),
-            command,
+            command_shown !== null? command_shown : command,
             gobj_short_name(src)
         ));
         if(__trace_gobj_ev_kw__(gobj)) {
-            trace_json(kw);
+            trace_json_masked(kw);
         }
     }
 
