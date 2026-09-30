@@ -4286,6 +4286,32 @@ function _create_subscription(
 }
 
 /***************************************************************************
+ *  The kw to find the subscriptions a (un)subscription `kw` names: `kw` as
+ *  _create_subscription() stores it. `__hard_subscription__` and
+ *  `__own_event__` become the subs_flag and are taken out of the stored
+ *  `__config__`: with `kw` as it came, the same kw matched no subscription,
+ *  a repeat of it was made twice (the subscriber got each event twice) and
+ *  its withdrawal found nothing. `__rename_event_name__` is not read by this
+ *  runtime, so it stays in the stored `__config__` and in this one: two
+ *  renames of an event are two subscriptions, as in C. Up to gobj-js 7.25.8
+ *  the kw was compared as it came.
+ ***************************************************************************/
+function _subscription_match_kw(kw)
+{
+    let __config__ = kw ? kw.__config__ : null;
+    if(!is_object(__config__) ||
+        (!kw_has_key(__config__, "__hard_subscription__") &&
+         !kw_has_key(__config__, "__own_event__"))) {
+        return kw;
+    }
+
+    let config_match = Object.assign({}, __config__);
+    delete config_match.__hard_subscription__;
+    delete config_match.__own_event__;
+    return Object.assign({}, kw, {__config__: config_match});
+}
+
+/***************************************************************************
  *  Match subscription
  ***************************************************************************/
 function _match_subscription(
@@ -4577,9 +4603,29 @@ function gobj_subscribe_event(
         publisher.dl_subscriptions,
         publisher,
         event,
-        kw,
+        _subscription_match_kw(kw),
         subscriber
     );
+
+    /*
+     *  A HARD subscription that matches stays, and it is the answer: only
+     *  gobj_unsubscribe_list() with force removes it, so it cannot be
+     *  overridden. Up to gobj-js 7.25.8 the override below left it in place
+     *  silently and made a second one.
+     */
+    let subs_hard = null;
+    for(let i=0; i<dl_subs.length; i++) {
+        let subs_flag_ = kw_get_int(publisher, dl_subs[i], "subs_flag", 0, kw_flag_t.KW_REQUIRED);
+        if(subs_flag_ & subs_flag_t.__hard_subscription__) {
+            subs_hard = dl_subs[i];
+            break;
+        }
+    }
+    if(subs_hard) {
+        log_warning(`${gobj_short_name(publisher)}: Hard subscription REPEATED, the one there is kept and returned (event: ${event}, subscriber: ${gobj_short_name(subscriber)})`);
+        return subs_hard;
+    }
+
     if(json_array_size(dl_subs) > 0) {
         log_error(`${gobj_short_name(publisher)}: ${json_array_size(dl_subs)} subscription(s) REPEATED, will be deleted and override`);
         trace_json(dl_subs, "subscription REPEATED");
@@ -4694,18 +4740,24 @@ function gobj_unsubscribe_event(
         publisher.dl_subscriptions,
         publisher,
         event,
-        kw,
+        _subscription_match_kw(kw),
         subscriber
     );
 
     let deleted = 0;
+    let kept_hard = 0;
     for(let i=0; i<dl_subs.length; i++) {
         let subs = dl_subs[i];
-        _delete_subscription(publisher, subs, false, false);
-        deleted++;
+        if(_delete_subscription(publisher, subs, false, false) === 0) {
+            deleted++;
+        } else {
+            kept_hard++;    // a hard subscription goes only with force
+        }
     }
 
-    if(!deleted) {
+    if(kept_hard) {
+        log_warning(`${gobj_short_name(publisher)}: Hard subscription not removed, only gobj_unsubscribe_list() with force removes it (event: ${event}, hard: ${kept_hard})`);
+    } else if(!deleted) {
         log_warning(`${gobj_short_name(publisher)}: No subscription found`);
         trace_json(kw, "No subscription found");
     }
