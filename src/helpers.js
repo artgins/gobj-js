@@ -351,7 +351,7 @@ const SECRET_NAME_JOINED = ["apikey", "sessionid", "sessionkey", "authdata"];
 const NOT_SECRET_SEGMENTS = new Set([
     "endpoint", "url", "uri", "domain", "path", "file", "public", "pub",
     "count", "counts", "type", "name", "len", "length", "size", "max", "min",
-    "ttl", "timeout", "expiry", "expires", "header", "mode"
+    "ttl", "timeout", "expiry", "expires", "mode"
 ]);
 
 /************************************************************
@@ -407,7 +407,9 @@ function mask_secrets_inline(str)
     let out = "";
     let changed = false;
     let name_start = 0;
+    let outer = "";     // the quote of an outer value open (command='...')
     let p = 0;
+    const is_blank_or_end = (i) => (i >= str.length || str[i] === " " || str[i] === "\t");
     while(p < str.length) {
         let c = str[p];
         if(c === " " || c === "\t") {
@@ -415,6 +417,13 @@ function mask_secrets_inline(str)
             p++;
             name_start = p;
             continue;
+        }
+        if(c === '"' || c === "'") {
+            if(!outer && (p === 0 || str[p-1] === " " || str[p-1] === "\t" || str[p-1] === "=")) {
+                outer = c;      // opens a value
+            } else if(c === outer && is_blank_or_end(p+1)) {
+                outer = "";     // closes it
+            }
         }
         let name = str.substring(name_start, p);
         if(c !== "=" || !(is_secret_name(name) ||
@@ -428,9 +437,11 @@ function mask_secrets_inline(str)
         let quote = (str[p] === '"' || str[p] === "'")? str[p] : "";
         let end = quote? p + 1 : p;
         while(end < str.length &&
-                (quote? str[end] !== quote :
-                    (str[end] !== " " && str[end] !== "\t" && str[end] !== '"' && str[end] !== "'"))) {
-            end++;      // an unquoted value ends at a quote: the one that closes an outer value
+                (quote? str[end] !== quote : (str[end] !== " " && str[end] !== "\t"))) {
+            if(!quote && outer && str[end] === outer && is_blank_or_end(end+1)) {
+                break;  // the quote that closes the outer value is not part of this one
+            }
+            end++;
         }
         if(quote && str[end] === quote) {
             end++;
@@ -458,9 +469,10 @@ function mask_secrets_inline(str)
  *  Object.prototype or null) and arrays. Anything else -- a gobj,
  *  a DOM node, a class instance, a typed array, a function -- is
  *  passed as it is, never walked, as trace_json() always showed it
- *  (a kw may carry a gobj: its parent and children make a cycle);
- *  a plain object seen already on the way (a cycle) is passed as
- *  it is too, and below MASK_MAX_DEPTH levels nothing is shown.
+ *  (a kw may carry a gobj: its parent and children make a cycle).
+ *  A plain object met twice is masked once, the same everywhere; a
+ *  cycle back to one is "<cycle>"; below MASK_MAX_DEPTH levels
+ *  (64, as in C) nothing is shown.
  *  It never throws: a failure is the placeholder below.
  ************************************************************/
 const MASK_MAX_DEPTH = 64;
@@ -475,7 +487,9 @@ function is_plain_object(value)
     return proto === Object.prototype || proto === null;
 }
 
-function _json_mask_secrets(jn, visited, depth)
+const MASK_IN_PROGRESS = Symbol("mask-in-progress");
+
+function _json_mask_secrets(jn, memo, depth)
 {
     if(typeof jn === "string") {
         let masked = mask_secrets_inline(jn);
@@ -485,18 +499,23 @@ function _json_mask_secrets(jn, visited, depth)
     if(!is_array && !is_plain_object(jn)) {
         return jn;      // not json: shown as it is, never walked
     }
-    if(visited.has(jn)) {
-        return jn;      // a cycle: not walked again
+    if(memo.has(jn)) {
+        /*
+         *  Seen: a shared object is masked once, the same everywhere; one
+         *  still in progress is a cycle back to it
+         */
+        let seen = memo.get(jn);
+        return seen === MASK_IN_PROGRESS? "<cycle>" : seen;
     }
     if(depth >= MASK_MAX_DEPTH) {
         return "<deeper not shown>";
     }
-    visited.add(jn);
+    memo.set(jn, MASK_IN_PROGRESS);
 
+    let masked = null;
     if(is_array) {
-        let masked = null;
         for(let i=0; i<jn.length; i++) {
-            let shown = _json_mask_secrets(jn[i], visited, depth+1);
+            let shown = _json_mask_secrets(jn[i], memo, depth+1);
             if(shown !== jn[i]) {
                 if(!masked) {
                     masked = jn.slice();
@@ -504,34 +523,34 @@ function _json_mask_secrets(jn, visited, depth)
                 masked[i] = shown;
             }
         }
-        return masked? masked : jn;
-    }
-
-    let value_is_secret = typeof jn.attribute === "string" && is_secret_name(jn.attribute);
-    let masked = null;
-    for(const key of Object.keys(jn)) {
-        let value = jn[key];
-        let shown;
-        let secret = is_secret_name(key) || (value_is_secret && key === "value");
-        if(secret && value !== undefined && value !== null && value !== "") {
-            shown = "********";
-        } else {
-            shown = _json_mask_secrets(value, visited, depth+1);
-        }
-        if(shown !== value) {
-            if(!masked) {
-                masked = Object.assign(Object.create(Object.getPrototypeOf(jn)), jn);
+    } else {
+        let value_is_secret = typeof jn.attribute === "string" && is_secret_name(jn.attribute);
+        for(const key of Object.keys(jn)) {
+            let value = jn[key];
+            let shown;
+            let secret = is_secret_name(key) || (value_is_secret && key === "value");
+            if(secret && value !== undefined && value !== null && value !== "") {
+                shown = "********";
+            } else {
+                shown = _json_mask_secrets(value, memo, depth+1);
             }
-            masked[key] = shown;
+            if(shown !== value) {
+                if(!masked) {
+                    masked = Object.assign(Object.create(Object.getPrototypeOf(jn)), jn);
+                }
+                masked[key] = shown;
+            }
         }
     }
-    return masked? masked : jn;
+    let result = masked? masked : jn;
+    memo.set(jn, result);
+    return result;
 }
 
 function json_mask_secrets(jn)
 {
     try {
-        return _json_mask_secrets(jn, new WeakSet(), 0);
+        return _json_mask_secrets(jn, new WeakMap(), 0);
     } catch(e) {
         return MASK_FAILED;     // a trace or a log never throws for its masking
     }

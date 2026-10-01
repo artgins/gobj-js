@@ -109,6 +109,14 @@ describe("the names of the secrets", () => {
         expect(mask_secrets_inline("list-yunos id=1")).toBe(null);
         expect(mask_secrets_inline("command='set-user-pwd password=hunter2'"))
             .toBe("command='set-user-pwd password=********'");
+        // a quote inside an unquoted value is part of it
+        expect(mask_secrets_inline("write-attr attribute=password value=ab'cd"))
+            .toBe("write-attr attribute=password value=********");
+        expect(mask_secrets_inline('command="set-user password=p\'q"'))
+            .toBe('command="set-user password=********"');
+        expect(mask_secrets_inline('token=abc"def"ghi x=1'))
+            .toBe("token=******** x=1");
+        expect(is_secret_name("authorization_header")).toBe(true);
     });
 
     test("json_mask_secrets() masks at any depth, any type, and leaves the kw", () => {
@@ -137,13 +145,23 @@ describe("the names of the secrets", () => {
 });
 
 describe("only json is walked, and masking never throws", () => {
-    test("a cyclic object", () => {
+    test("a cyclic object: the back-edge is <cycle>, never the original", () => {
         const kw = {password: "x", note: "n"};
         kw.self = kw;
         let shown;
         expect(() => { shown = json_mask_secrets(kw); }).not.toThrow();
         expect(shown.password).toBe("********");
         expect(shown.note).toBe("n");
+        expect(shown.self).toBe("<cycle>");
+    });
+
+    test("an object met twice is masked both times", () => {
+        const creds = {password: "x"};
+        const shown = json_mask_secrets({first: creds, second: creds, list: [creds, creds]});
+        expect(shown.first.password).toBe("********");
+        expect(shown.second.password).toBe("********");
+        expect(shown.list[0].password).toBe("********");
+        expect(shown.list[1].password).toBe("********");
     });
 
     test("a gobj in the kw is passed as it is, not walked", () => {
