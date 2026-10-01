@@ -449,7 +449,6 @@ function inline_secret_value_end(str, p, outer)
 const MASK_MAX_NAME = 128;
 const MASK_MAX_BYTES = 4*1024*1024;
 const MASK_TOO_LARGE = "<not shown: too large to mask>";
-const NAME_CHAR = /[A-Za-z0-9_.\-]/;
 
 function mask_secrets_inline(str)
 {
@@ -463,7 +462,7 @@ function mask_secrets_inline(str)
     let re_attr = /(^|[ \t])attribute=["']?([^ \t"']*)/g;
     let m;
     while((m = re_attr.exec(str)) !== null) {
-        if(is_secret_name(m[2].slice(0, MASK_MAX_NAME))) {
+        if(is_secret_name(m[2].slice(-MASK_MAX_NAME))) {
             value_is_secret = true;
         }
     }
@@ -472,10 +471,16 @@ function mask_secrets_inline(str)
     let copied = 0;     // str is copied up to here
     let changed = false;
     let outer = "";     // the quote of an outer value open (command='...')
+    let word = 0;       // where the current word begins
     let p = 0;
     const is_blank_or_end = (i) => (i >= str.length || str[i] === " " || str[i] === "\t");
     while(p < str.length) {
         let c = str[p];
+        if(c === " " || c === "\t") {
+            p++;
+            word = p;
+            continue;
+        }
         if(c === '"' || c === "'") {
             if(!outer && (p === 0 || str[p-1] === " " || str[p-1] === "\t" || str[p-1] === "=")) {
                 outer = c;      // opens a value
@@ -488,14 +493,14 @@ function mask_secrets_inline(str)
             continue;
         }
         /*
-         *  The name is the run of name characters just before the '=' (not
-         *  the whole word: "a=a=a=..." asked about all of it at each '=')
+         *  The name is the word before the '=' (since the last blank, or
+         *  the last '=' of the word -- a '=' is never part of a name):
+         *  'password'=x and user[password]=x are names too. No more than
+         *  its LAST MASK_MAX_NAME characters: each '=' looks back a bounded
+         *  way. As the C kernel.
          */
-        let n = p;
-        while(n > 0 && p - n < MASK_MAX_NAME && NAME_CHAR.test(str[n-1])) {
-            n--;
-        }
-        let name = str.substring(n, p);
+        let name = str.substring(Math.max(word, p - MASK_MAX_NAME), p);
+        word = p + 1;
         if(!(is_secret_name(name) ||
                 (value_is_secret && name.toLowerCase() === "value"))) {
             p++;
@@ -522,6 +527,7 @@ function mask_secrets_inline(str)
             changed = true;
         }
         p = end;
+        word = p;
     }
     if(!changed) {
         return null;
@@ -578,6 +584,9 @@ function _json_mask_secrets(jn, memo, depth, budget)
     if(!is_array && !is_plain_object(jn)) {
         return jn;      // not json: shown as it is, never walked
     }
+    if(budget.left <= 0) {
+        return MASK_TOO_LARGE;
+    }
     if(memo.has(jn)) {
         /*
          *  Seen: a shared object is masked once, the same everywhere; one
@@ -589,29 +598,49 @@ function _json_mask_secrets(jn, memo, depth, budget)
     if(depth >= MASK_MAX_DEPTH) {
         return "<deeper not shown>";
     }
-    if(budget.left <= 0) {
-        return MASK_TOO_LARGE;
-    }
+    budget.left -= 1;   // every node costs one, and its key or string bytes
     memo.set(jn, MASK_IN_PROGRESS);
 
-    let masked = null;
+    /*
+     *  The result is built as the children are walked: once the budget is
+     *  spent the walk STOPS, and one placeholder stands for the rest
+     */
+    let changed = false;
+    let truncated = false;
+    let result;
     if(is_array) {
+        result = [];
         for(let i=0; i<jn.length; i++) {
+            if(budget.left <= 0) {
+                truncated = true;
+                break;
+            }
+            budget.left -= 1;
             let shown = _json_mask_secrets(jn[i], memo, depth+1, budget);
             if(shown !== jn[i]) {
-                if(!masked) {
-                    masked = jn.slice();
-                }
-                masked[i] = shown;
+                changed = true;
             }
+            result.push(shown);
+        }
+        if(truncated) {
+            result.push(MASK_TOO_LARGE);
         }
     } else {
-        let value_is_secret = typeof jn.attribute === "string" && is_secret_name(jn.attribute.slice(0, MASK_MAX_NAME));
-        for(const key of Object.keys(jn)) {
+        result = Object.create(Object.getPrototypeOf(jn));
+        let value_is_secret = typeof jn.attribute === "string" &&
+            is_secret_name(jn.attribute.slice(-MASK_MAX_NAME));
+        for(const key in jn) {
+            if(!Object.prototype.hasOwnProperty.call(jn, key)) {
+                continue;
+            }
+            if(budget.left <= 0) {
+                truncated = true;
+                break;
+            }
+            budget.left -= 1 + key.length;
             let value = jn[key];
             let shown;
-            budget.left = Math.max(0, budget.left - key.length);
-            let secret = is_secret_name(key.slice(0, MASK_MAX_NAME)) ||
+            let secret = is_secret_name(key.slice(-MASK_MAX_NAME)) ||
                 (value_is_secret && key === "value");
             if(secret && value !== undefined && value !== null && value !== "") {
                 shown = "********";
@@ -619,14 +648,17 @@ function _json_mask_secrets(jn, memo, depth, budget)
                 shown = _json_mask_secrets(value, memo, depth+1, budget);
             }
             if(shown !== value) {
-                if(!masked) {
-                    masked = Object.assign(Object.create(Object.getPrototypeOf(jn)), jn);
-                }
-                masked[key] = shown;
+                changed = true;
             }
+            result[key] = shown;
+        }
+        if(truncated) {
+            result["<more>"] = MASK_TOO_LARGE;
         }
     }
-    let result = masked? masked : jn;
+    if(!changed && !truncated) {
+        result = jn;
+    }
     memo.set(jn, result);
     return result;
 }

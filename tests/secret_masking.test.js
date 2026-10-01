@@ -124,6 +124,16 @@ describe("the names of the secrets", () => {
         expect(mask_secrets_inline("set-password password= note=x")).toBe(null);
         expect(mask_secrets_inline("x password=a b c user=bob"))
             .toBe("x password=******** user=bob");
+        // the name is the word before the '=', as in C
+        for(const name of ["'password'", "password'", '"password"', "user[password]",
+                           'kw["password"]', "password[0]"]) {
+            expect(mask_secrets_inline(name + "=x")).toBe(name + "=********");
+        }
+        // a long name is judged by its last characters
+        const long_name = "x".repeat(130) + "_password";
+        expect(mask_secrets_inline("attribute=" + long_name + " value=v"))
+            .toBe("attribute=" + long_name + " value=********");
+        expect(json_mask_secrets({[long_name]: "hunter2"})[long_name]).toBe("********");
         expect(is_secret_name("authorization_header")).toBe(true);
     });
 
@@ -261,7 +271,8 @@ describe("masking is linear and bounded", () => {
         expect(mask_secrets_inline(huge)).toBe("<not shown: too large to mask>");
         const shown = json_mask_secrets({big: "y".repeat(5*1024*1024), after: "z"});
         expect(shown.big).toBe("<not shown: too large to mask>");
-        expect(shown.after).toBe("<not shown: too large to mask>");
+        expect(shown.after).toBe(undefined);    // the walk stopped:
+        expect(shown["<more>"]).toBe("<not shown: too large to mask>");  // one placeholder
     }, 10000);
 });
 
