@@ -92,6 +92,11 @@ describe("the names of the secrets", () => {
         expect(is_secret_name("__session_id__")).toBe(true);
         expect(is_secret_name("ssl_certificate_key")).toBe(false);
         expect(is_secret_name("username")).toBe(false);
+        expect(is_secret_name("token_endpoint")).toBe(false);
+        expect(is_secret_name("cookie_domain")).toBe(false);
+        expect(is_secret_name("jwt_public_keys")).toBe(false);
+        expect(is_secret_name("refresh_token_count")).toBe(false);
+        expect(is_secret_name("access_token")).toBe(true);
     });
 
     test("mask_secrets_inline() masks a name=value, and keeps the rest", () => {
@@ -102,6 +107,8 @@ describe("the names of the secrets", () => {
         expect(mask_secrets_inline("write-attr attribute=password value=hunter2"))
             .toBe("write-attr attribute=password value=********");
         expect(mask_secrets_inline("list-yunos id=1")).toBe(null);
+        expect(mask_secrets_inline("command='set-user-pwd password=hunter2'"))
+            .toBe("command='set-user-pwd password=********'");
     });
 
     test("json_mask_secrets() masks at any depth, any type, and leaves the kw", () => {
@@ -126,6 +133,76 @@ describe("the names of the secrets", () => {
         expect(kw.auth.access_token).toBe("eyJ.x.y");
         const plain = {a: 1};
         expect(json_mask_secrets(plain)).toBe(plain);
+    });
+});
+
+describe("only json is walked, and masking never throws", () => {
+    test("a cyclic object", () => {
+        const kw = {password: "x", note: "n"};
+        kw.self = kw;
+        let shown;
+        expect(() => { shown = json_mask_secrets(kw); }).not.toThrow();
+        expect(shown.password).toBe("********");
+        expect(shown.note).toBe("n");
+    });
+
+    test("a gobj in the kw is passed as it is, not walked", () => {
+        const kw = {window: gobj, password: "x"};
+        let shown;
+        expect(() => { shown = json_mask_secrets(kw); }).not.toThrow();
+        expect(shown.window).toBe(gobj);
+        expect(shown.password).toBe("********");
+    });
+
+    test("a DOM-like node (a class instance with a cycle) is not walked", () => {
+        class FakeNode {
+            constructor() {
+                this.parentNode = null;
+                this.childNodes = [];
+                this.password = "inside-a-node";
+            }
+        }
+        const parent = new FakeNode();
+        const child = new FakeNode();
+        child.parentNode = parent;
+        parent.childNodes.push(child);
+        const kw = {$container: parent, token: "t"};
+        let shown;
+        expect(() => { shown = json_mask_secrets(kw); }).not.toThrow();
+        expect(shown.$container).toBe(parent);
+        expect(shown.token).toBe("********");
+    });
+
+    test("a typed array and a function are passed as they are", () => {
+        const bytes = new Uint8Array([1, 2, 3]);
+        const fn = () => 1;
+        const shown = json_mask_secrets({bytes: bytes, fn: fn, api_key: 1});
+        expect(shown.bytes).toBe(bytes);
+        expect(shown.fn).toBe(fn);
+        expect(shown.api_key).toBe("********");
+    });
+
+    test("a trace of a kw holding a gobj does not throw", () => {
+        gobj_set_global_trace("machine", true);
+        gobj_set_global_trace("ev_kw", true);
+        expect(() => {
+            gobj_send_event(gobj, "EV_NOTE", {window: gobj, password: "p"}, gobj);
+        }).not.toThrow();
+        gobj_set_global_trace("ev_kw", false);
+        gobj_set_global_trace("machine", false);
+        expect(() => {
+            kw_get_str(gobj, {window: gobj, password: 1}, "password", "", 0);
+        }).not.toThrow();
+    });
+
+    test("a nesting deeper than the limit is not shown, and does not throw", () => {
+        let deep = {};
+        let p = deep;
+        for(let i=0; i<10000; i++) {
+            p.next = {};
+            p = p.next;
+        }
+        expect(() => json_mask_secrets(deep)).not.toThrow();
     });
 });
 

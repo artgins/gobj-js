@@ -19,12 +19,25 @@ about which SDK it was built against.
   `gobj_command()` (line and kw), the machine trace with `ev_kw` (an event
   sent, executed, published, a subscription), the kw a `kw_get_*()` error
   dumps and `C_IEVENT_CLI`'s ievents trace print that way. Up to 7.25.8 they
-  printed a command's password in clear.
+  printed a command's password in clear. Only JSON is walked (plain objects
+  and arrays): a gobj, a widget, a DOM node, a class instance or a typed
+  array in a kw is written as it is, never walked; a cycle is not walked
+  twice, a nesting deeper than 64 levels is `"<deeper not shown>"`, and the
+  masking never throws (a failure is `"<not shown: the masking failed>"`). A
+  name that names something ABOUT a credential (`token_endpoint`,
+  `cookie_domain`, `jwt_public_keys`, `*_count`) is not masked, as in C. An
+  unquoted value ends at a quote, so `command='... password=x'` keeps its
+  closing quote.
 
   ```js
   gobj_command(gobj, "set-user-pwd username=bob password=hunter2", {}, gobj);
   // 🌀🌀 mach(...), cmd: set-user-pwd username=bob password=********
   ```
+
+  Publishing costs the same as before the rename and the masking: 701
+  against 703 ns per delivery (100 subscribers, 20000 publications, the
+  mean of 8 alternated runs). The rename is read as a field
+  (`subs.renamed_event`); with `kw_get_str()` it cost ~8-12% more.
 
 - **`subs_flag` carries the C kernel's bits** (`__rename_event_name__` 0x1,
   `__hard_subscription__` 0x2, `__own_event__` 0x4; hard was 0x1 and own 0x2).
