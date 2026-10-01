@@ -360,27 +360,38 @@ const NOT_SECRET_SEGMENTS = new Set([
  ************************************************************/
 function is_secret_name(name)
 {
-    if(typeof name !== "string" || !name) {
-        return false;
+    if(typeof name !== "string" || name.length < 3) {
+        return false;   // the shortest part is three letters ("pwd", "jwt")
     }
     let lower = name.toLowerCase();
-    for(const segment of lower.split(/[_\-. \t]/)) {
-        if(NOT_SECRET_SEGMENTS.has(segment)) {
-            return false;
-        }
-    }
+    let hit = false;
     for(const part of SECRET_NAME_PARTS) {
         if(lower.indexOf(part) >= 0) {
-            return true;
+            hit = true;
+            break;
         }
     }
-    let joined = lower.replace(/[_\-. \t]/g, "");
-    for(const part of SECRET_NAME_JOINED) {
-        if(joined.indexOf(part) >= 0) {
-            return true;
+    if(!hit) {
+        let joined = lower.replace(/[_\-. \t]/g, "");
+        for(const part of SECRET_NAME_JOINED) {
+            if(joined.indexOf(part) >= 0) {
+                hit = true;
+                break;
+            }
         }
     }
-    return (lower.indexOf("priv") >= 0 && lower.indexOf("key") >= 0);
+    if(!hit) {
+        hit = (lower.indexOf("priv") >= 0 && lower.indexOf("key") >= 0);
+    }
+    if(!hit) {
+        return false;
+    }
+    for(const segment of lower.split(/[_\-. \t]/)) {
+        if(NOT_SECRET_SEGMENTS.has(segment)) {
+            return false;   // a name ABOUT a credential
+        }
+    }
+    return true;
 }
 
 /************************************************************
@@ -429,34 +440,42 @@ function inline_secret_value_end(str, p, outer)
  *  secret). The rest as it is. Return null when there was nothing
  *  to mask. As the C kernel's mask_secrets_inline().
  ************************************************************/
+/*
+ *  As the C kernel: masking is reachable from a peer, so it is linear and
+ *  bounded. No more than MASK_MAX_NAME characters of a name are asked
+ *  about; a text, or the strings of one json_mask_secrets() call, longer
+ *  than MASK_MAX_BYTES are not shown at all (they fail safe).
+ */
+const MASK_MAX_NAME = 128;
+const MASK_MAX_BYTES = 4*1024*1024;
+const MASK_TOO_LARGE = "<not shown: too large to mask>";
+const NAME_CHAR = /[A-Za-z0-9_.\-]/;
+
 function mask_secrets_inline(str)
 {
     if(typeof str !== "string" || str.indexOf("=") < 0) {
         return null;
     }
+    if(str.length > MASK_MAX_BYTES) {
+        return MASK_TOO_LARGE;
+    }
     let value_is_secret = false;
     let re_attr = /(^|[ \t])attribute=["']?([^ \t"']*)/g;
     let m;
     while((m = re_attr.exec(str)) !== null) {
-        if(is_secret_name(m[2])) {
+        if(is_secret_name(m[2].slice(0, MASK_MAX_NAME))) {
             value_is_secret = true;
         }
     }
 
-    let out = "";
+    let parts = [];
+    let copied = 0;     // str is copied up to here
     let changed = false;
-    let name_start = 0;
     let outer = "";     // the quote of an outer value open (command='...')
     let p = 0;
     const is_blank_or_end = (i) => (i >= str.length || str[i] === " " || str[i] === "\t");
     while(p < str.length) {
         let c = str[p];
-        if(c === " " || c === "\t") {
-            out += c;
-            p++;
-            name_start = p;
-            continue;
-        }
         if(c === '"' || c === "'") {
             if(!outer && (p === 0 || str[p-1] === " " || str[p-1] === "\t" || str[p-1] === "=")) {
                 outer = c;      // opens a value
@@ -464,15 +483,25 @@ function mask_secrets_inline(str)
                 outer = "";     // closes it
             }
         }
-        let name = str.substring(name_start, p);
-        if(c !== "=" || !(is_secret_name(name) ||
-                (value_is_secret && name.toLowerCase() === "value"))) {
-            out += c;
+        if(c !== "=") {
             p++;
             continue;
         }
-        out += "=";
-        p++;
+        /*
+         *  The name is the run of name characters just before the '=' (not
+         *  the whole word: "a=a=a=..." asked about all of it at each '=')
+         */
+        let n = p;
+        while(n > 0 && p - n < MASK_MAX_NAME && NAME_CHAR.test(str[n-1])) {
+            n--;
+        }
+        let name = str.substring(n, p);
+        if(!(is_secret_name(name) ||
+                (value_is_secret && name.toLowerCase() === "value"))) {
+            p++;
+            continue;
+        }
+        p++;    // the '='
         let quote = (str[p] === '"' || str[p] === "'")? str[p] : "";
         let end;
         if(quote) {
@@ -487,13 +516,18 @@ function mask_secrets_inline(str)
             end = inline_secret_value_end(str, p, outer);
         }
         if(end > p) {
-            out += "********";
+            parts.push(str.substring(copied, p));
+            parts.push("********");
+            copied = end;
             changed = true;
         }
         p = end;
-        name_start = p;
     }
-    return changed? out : null;
+    if(!changed) {
+        return null;
+    }
+    parts.push(str.substring(copied));
+    return parts.join("");
 }
 
 /************************************************************
@@ -529,9 +563,14 @@ function is_plain_object(value)
 
 const MASK_IN_PROGRESS = Symbol("mask-in-progress");
 
-function _json_mask_secrets(jn, memo, depth)
+function _json_mask_secrets(jn, memo, depth, budget)
 {
     if(typeof jn === "string") {
+        if(jn.length > budget.left) {
+            budget.left = 0;
+            return MASK_TOO_LARGE;      // fails safe: not shown, never in clear
+        }
+        budget.left -= jn.length;
         let masked = mask_secrets_inline(jn);
         return masked !== null? masked : jn;
     }
@@ -550,12 +589,15 @@ function _json_mask_secrets(jn, memo, depth)
     if(depth >= MASK_MAX_DEPTH) {
         return "<deeper not shown>";
     }
+    if(budget.left <= 0) {
+        return MASK_TOO_LARGE;
+    }
     memo.set(jn, MASK_IN_PROGRESS);
 
     let masked = null;
     if(is_array) {
         for(let i=0; i<jn.length; i++) {
-            let shown = _json_mask_secrets(jn[i], memo, depth+1);
+            let shown = _json_mask_secrets(jn[i], memo, depth+1, budget);
             if(shown !== jn[i]) {
                 if(!masked) {
                     masked = jn.slice();
@@ -564,15 +606,17 @@ function _json_mask_secrets(jn, memo, depth)
             }
         }
     } else {
-        let value_is_secret = typeof jn.attribute === "string" && is_secret_name(jn.attribute);
+        let value_is_secret = typeof jn.attribute === "string" && is_secret_name(jn.attribute.slice(0, MASK_MAX_NAME));
         for(const key of Object.keys(jn)) {
             let value = jn[key];
             let shown;
-            let secret = is_secret_name(key) || (value_is_secret && key === "value");
+            budget.left = Math.max(0, budget.left - key.length);
+            let secret = is_secret_name(key.slice(0, MASK_MAX_NAME)) ||
+                (value_is_secret && key === "value");
             if(secret && value !== undefined && value !== null && value !== "") {
                 shown = "********";
             } else {
-                shown = _json_mask_secrets(value, memo, depth+1);
+                shown = _json_mask_secrets(value, memo, depth+1, budget);
             }
             if(shown !== value) {
                 if(!masked) {
@@ -590,7 +634,7 @@ function _json_mask_secrets(jn, memo, depth)
 function json_mask_secrets(jn)
 {
     try {
-        return _json_mask_secrets(jn, new WeakMap(), 0);
+        return _json_mask_secrets(jn, new WeakMap(), 0, {left: MASK_MAX_BYTES});
     } catch(e) {
         return MASK_FAILED;     // a trace or a log never throws for its masking
     }

@@ -232,6 +232,39 @@ describe("only json is walked, and masking never throws", () => {
     });
 });
 
+describe("masking is linear and bounded", () => {
+    /*
+     *  Linear, these take ~20-50 ms; quadratic, tens of seconds. The bound
+     *  (500 ms) leaves room for a loaded machine, not for a quadratic walk.
+     */
+    test("a 1 MB a=a=... word and a 1 MB secret value take milliseconds", () => {
+        for(const word of ["a=".repeat(512*1024), "abcd=".repeat(210*1024)]) {
+            let t0 = performance.now();
+            expect(mask_secrets_inline(word)).toBe(null);
+            let t1 = performance.now();
+            expect(t1 - t0).toBeLessThan(500);
+            t0 = performance.now();
+            json_mask_secrets({anything: word});
+            t1 = performance.now();
+            expect(t1 - t0).toBeLessThan(500);
+        }
+
+        const value = "password=" + "x".repeat(1024*1024);
+        let t0 = performance.now();
+        expect(mask_secrets_inline(value)).toBe("password=********");
+        let t1 = performance.now();
+        expect(t1 - t0).toBeLessThan(500);
+    }, 10000);
+
+    test("a text over 4 MB is not shown, and nothing is shown past the cap", () => {
+        const huge = "a=b " + "x".repeat(5*1024*1024);
+        expect(mask_secrets_inline(huge)).toBe("<not shown: too large to mask>");
+        const shown = json_mask_secrets({big: "y".repeat(5*1024*1024), after: "z"});
+        expect(shown.big).toBe("<not shown: too large to mask>");
+        expect(shown.after).toBe("<not shown: too large to mask>");
+    }, 10000);
+});
+
 describe("what the traces and logs show", () => {
     test("the commands trace of gobj_command()", () => {
         gobj_set_global_trace("commands", true);
