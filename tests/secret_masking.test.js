@@ -116,6 +116,14 @@ describe("the names of the secrets", () => {
             .toBe('command="set-user password=********"');
         expect(mask_secrets_inline('token=abc"def"ghi x=1'))
             .toBe("token=******** x=1");
+        // the words of a secret written with blanks are the secret
+        expect(mask_secrets_inline("command='set-email-user password=correct horse battery'"))
+            .toBe("command='set-email-user password=********'");
+        expect(mask_secrets_inline('command="set-user-pwd password= hunter2"'))
+            .toBe('command="set-user-pwd password=********"');
+        expect(mask_secrets_inline("set-password password= note=x")).toBe(null);
+        expect(mask_secrets_inline("x password=a b c user=bob"))
+            .toBe("x password=******** user=bob");
         expect(is_secret_name("authorization_header")).toBe(true);
     });
 

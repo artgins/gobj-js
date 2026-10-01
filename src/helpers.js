@@ -384,6 +384,45 @@ function is_secret_name(name)
 }
 
 /************************************************************
+ *  Where an unquoted secret value that begins at `p` ends: at
+ *  the end, at the quote that closes an outer quoted value, or
+ *  before the next "word=" -- a plain word after a blank is still
+ *  part of it ("password=correct horse battery", "password=
+ *  hunter2"). As the C kernel's inline_secret_value_end().
+ ************************************************************/
+function inline_secret_value_end(str, p, outer)
+{
+    const blank = (c) => (c === " " || c === "\t");
+    const closes_outer = (i) => (outer && str[i] === outer &&
+        (i+1 >= str.length || blank(str[i+1])));
+    let end = p;
+    while(true) {
+        while(end < str.length && !blank(str[end])) {
+            if(closes_outer(end)) {
+                return end;
+            }
+            end++;
+        }
+        if(end >= str.length) {
+            return end;
+        }
+        let w = end;
+        while(w < str.length && blank(str[w])) {
+            w++;
+        }
+        if(w >= str.length || closes_outer(w)) {
+            return end;
+        }
+        for(let e = w; e < str.length && !blank(str[e]) && !closes_outer(e); e++) {
+            if(str[e] === "=" && e > w) {
+                return end;     // the next parameter
+            }
+        }
+        end = w;                // a plain word: part of this value
+    }
+}
+
+/************************************************************
  *  A text (a command line) with the value of every "name=value"
  *  whose name is a secret's written as "********", quoted or not
  *  (and the "value" of a write-attr whose attribute names a
@@ -435,16 +474,17 @@ function mask_secrets_inline(str)
         out += "=";
         p++;
         let quote = (str[p] === '"' || str[p] === "'")? str[p] : "";
-        let end = quote? p + 1 : p;
-        while(end < str.length &&
-                (quote? str[end] !== quote : (str[end] !== " " && str[end] !== "\t"))) {
-            if(!quote && outer && str[end] === outer && is_blank_or_end(end+1)) {
-                break;  // the quote that closes the outer value is not part of this one
+        let end;
+        if(quote) {
+            end = p + 1;
+            while(end < str.length && str[end] !== quote) {
+                end++;
             }
-            end++;
-        }
-        if(quote && str[end] === quote) {
-            end++;
+            if(str[end] === quote) {
+                end++;
+            }
+        } else {
+            end = inline_secret_value_end(str, p, outer);
         }
         if(end > p) {
             out += "********";
