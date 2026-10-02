@@ -26,8 +26,9 @@ about which SDK it was built against.
   masking never throws (a failure is `"<not shown: the masking failed>"`). A
   name that names something ABOUT a credential (`token_endpoint`,
   `cookie_domain`, `jwt_public_keys`, `*_count`) is not masked, as in C. An
-  unquoted value ends at a quote, so `command='... password=x'` keeps its
-  closing quote.
+  unquoted value ends at the end, at the quote that closes an outer quoted
+  value, or before the next `name=` -- not at any quote -- so
+  `command='... password=x'` keeps its closing quote.
 
   ```js
   gobj_command(gobj, "set-user-pwd username=bob password=hunter2", {}, gobj);
