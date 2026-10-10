@@ -30,7 +30,7 @@ function build_command_response(
 ) {
     return {
         result: result,
-        comment: comment || {},
+        comment: comment || "",
         schema: schema || {},
         data: data || []
     };

@@ -171,6 +171,7 @@ function mt_create(gobj)
      *  Create children
      */
     priv.gobj_timer = gobj_create_pure_child(gobj_name(gobj), "C_TIMER", {}, gobj);
+    priv.ws_seq = 0;    // identity of the current socket, see setup_websocket()
 
     priv.url = gobj_read_str_attr(gobj, "url");
     priv.remote_yuno_name = gobj_read_str_attr(gobj, "remote_yuno_name");
@@ -223,6 +224,26 @@ function mt_start(gobj)
     /*  Starting is a deliberate act (the operator pressed connect): it must
      *  not inherit the backoff a previous run had escalated to.  */
     priv.retry_ms = 0;
+
+    if(gobj_current_state(gobj) !== "ST_DISCONNECTED") {
+        /*
+         *  A stop and a start in the same turn: the close of the old
+         *  socket has not arrived yet, and it will now be ignored as
+         *  stale (it carries an older ws_seq). Deliver that close here,
+         *  so the old session ends (EV_ON_CLOSE published, FSM back in
+         *  ST_DISCONNECTED) before the new socket can open.
+         */
+        gobj_send_event(
+            gobj,
+            "EV_ON_CLOSE",
+            {
+                url: priv.url, ws_seq: priv.ws_seq,
+                code: 1000, reason: "restarted", was_clean: true
+            },
+            gobj
+        );
+        clear_timeout(priv.gobj_timer);
+    }
 
     priv.websocket = setup_websocket(gobj);
     return 0;
@@ -564,13 +585,27 @@ function setup_websocket(gobj)
         return null;
     }
 
+    /*
+     *  Every socket carries its sequence number into the kw of its
+     *  events. A socket that is no longer the current one (a stop and a
+     *  start in the same turn) is stale: its open, its frames and its
+     *  close belong to a session that already ended, and letting them
+     *  in put an EV_ON_OPEN into ST_SESSION (injected to the backend as
+     *  a message) and a close that unwired the NEW socket.
+     */
+    const ws_seq = ++gobj.priv.ws_seq;
+
     websocket.onopen = () => {
-        // log_debug(`${gobj_short_name(gobj)}: WebSocket connection opened.`);
-        gobj_send_event(gobj, "EV_ON_OPEN", { url }, gobj);
+        if(ws_seq !== gobj.priv.ws_seq || gobj_is_destroying(gobj)) {
+            return;
+        }
+        gobj_send_event(gobj, "EV_ON_OPEN", { url, ws_seq }, gobj);
     };
 
     websocket.onmessage = (e) => {
-        // log_debug(`${gobj_short_name(gobj)}: Received message: ${event.data}`);
+        if(ws_seq !== gobj.priv.ws_seq || gobj_is_destroying(gobj)) {
+            return;
+        }
         gobj_send_event(gobj, "EV_ON_MESSAGE", { url, data: e.data }, gobj);
     };
 
@@ -591,12 +626,17 @@ function setup_websocket(gobj)
         if(gobj_is_destroying(gobj)) {
             return;
         }
+        if(ws_seq !== gobj.priv.ws_seq) {
+            return;     // stale, its close was delivered by mt_start()
+        }
         if(!gobj_read_bool_attr(gobj_yuno(), "browser_beforeunload")) {
+            /*  Plain json in the kw, not the DOM CloseEvent.  */
             gobj_send_event(
                 gobj,
                 "EV_ON_CLOSE",
                 {
-                    url, e: e
+                    url, ws_seq,
+                    code: e.code, reason: e.reason, was_clean: e.wasClean
                 },
                 gobj
             );
@@ -631,7 +671,7 @@ function close_websocket(gobj, code = 1000, reason = "")
     try {
         websocket.close(code, reason);
     } catch (e) {
-        log_error("Error closing WebSocket:", e.message);
+        log_error(`${gobj_short_name(gobj)}: Error closing WebSocket: ${e.message}`);
     }
 }
 
@@ -823,31 +863,31 @@ function iev_create_from_json(gobj, data)
     try {
         x = JSON.parse(data);
     } catch (e) {
-        log_error("parsing inter_event json: " + e);
+        log_warning(`${gobj_short_name(gobj)}: parsing inter_event json: ${e}`);
         return null;
     }
 
     if(!(x instanceof Object)) {
-        log_error("parsing inter_event: websocket data not a json object");
+        log_warning(`${gobj_short_name(gobj)}: parsing inter_event: websocket data not a json object`);
         return null;
     }
     let event = x['event'];
     if(!event) {
-        log_error("parsing inter_event: no event");
+        log_warning(`${gobj_short_name(gobj)}: parsing inter_event: no event`);
         return null;
     }
     if(typeof event !== 'string') {
-        log_error("parsing inter_event: event not a string");
+        log_warning(`${gobj_short_name(gobj)}: parsing inter_event: event not a string`);
         return null;
     }
 
     let kw = x['kw'];
     if(!kw) {
-        log_error("parsing inter_kw: no kw");
+        log_warning(`${gobj_short_name(gobj)}: parsing inter_kw: no kw`);
         return null;
     }
     if(!(kw instanceof Object)) {
-        log_error("parsing inter_event: kw not a json object");
+        log_warning(`${gobj_short_name(gobj)}: parsing inter_event: kw not a json object`);
         return null;
     }
 
@@ -961,12 +1001,11 @@ function ac_on_open(gobj, event, kw, src)
 function ac_on_close(gobj, event, kw, src)
 {
     let priv = gobj.priv;
-    let e = kw.e;
     let url = kw.url;
 
     set_remote_log_functions(); // clean remote log
 
-    log_warning(`${gobj_short_name(gobj)}: WebSocket closed ${url} (Code: ${e.code}, Reason: "${e.reason}", Clean: ${e.wasClean})`);
+    log_warning(`${gobj_short_name(gobj)}: WebSocket closed ${url} (Code: ${kw.code}, Reason: "${kw.reason}", Clean: ${kw.was_clean})`);
 
     // Cleanup WebSocket event handlers
     if(priv.websocket) {
@@ -1023,8 +1062,8 @@ function ac_on_close(gobj, event, kw, src)
          */
         log_warning(
             `${gobj_short_name(gobj)}: EV_ON_OPEN_ERROR cannot open ` +
-            `${url} (Code: ${e.code}, Reason: "${e.reason}", ` +
-            `Clean: ${e.wasClean})`
+            `${url} (Code: ${kw.code}, Reason: "${kw.reason}", ` +
+            `Clean: ${kw.was_clean})`
         );
         gobj_publish_event(
             gobj,
@@ -1034,9 +1073,9 @@ function ac_on_close(gobj, event, kw, src)
                 remote_yuno_name:       priv.remote_yuno_name,
                 remote_yuno_role:       priv.remote_yuno_role,
                 remote_yuno_service:    priv.remote_yuno_service,
-                code:                   e.code,
-                reason:                 e.reason,
-                was_clean:              e.wasClean
+                code:                   kw.code,
+                reason:                 kw.reason,
+                was_clean:              kw.was_clean
             }
         );
     }
@@ -1204,6 +1243,15 @@ function ac_on_message(gobj, event, kw, src)
      *  Create inter_event from received data
      *------------------------------------------*/
     let iev_msg = iev_create_from_json(gobj, kw.data);
+    if(!iev_msg) {
+        /*  Bad bytes from the peer: a warning (already logged by the
+         *  parser), a capped dump, and the frame is dropped.  */
+        log_warning(
+            `${gobj_short_name(gobj)}: frame dropped from ${url}: ` +
+            `${String(kw.data).substring(0, 256)}`
+        );
+        return -1;
+    }
 
     /*---------------------------------------*
      *          trace inter_event
@@ -1283,7 +1331,10 @@ function ac_on_message(gobj, event, kw, src)
         /*
          *  it's a external subscription
          */
-        // TODO subscription
+        log_warning(
+            `${gobj_short_name(gobj)}: subscription event ignored, I'm client ` +
+            `(service: ${iev_dst_service}, event: ${iev_event})`
+        );
         return -1;
     }
 
@@ -1294,7 +1345,10 @@ function ac_on_message(gobj, event, kw, src)
         /*
          *  it's a external unsubscription
          */
-        // TODO unsubscription
+        log_warning(
+            `${gobj_short_name(gobj)}: unsubscription event ignored, I'm client ` +
+            `(service: ${iev_dst_service}, event: ${iev_event})`
+        );
         return -1;
     }
 

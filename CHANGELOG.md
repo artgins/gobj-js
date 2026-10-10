@@ -7,6 +7,76 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.0
+
+The minor follows the SDK (7.26.x); no API was removed. Findings of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §1), each
+pinned by a test (`tests/review_2026_10.test.js`, `tests/ievent_restart.test.js`).
+
+- **fix: `log_error()` / `log_warning()` / `log_info()` / `log_debug()` /
+  `trace_msg()` dropped their arguments.** They took `format` alone, so
+  `log_error("Command not found: %s", command)` printed `... undefined`, against
+  the printf contract of the README and the docs. They pass `...args` now; a
+  message with no arguments (a template literal) is printed as it is, `%s` in
+  its data included, and a circular argument no longer makes the log throw.
+- **fix: a filter on a false value never matched.** `_kw_match_simple()`
+  tested the record value with the C `if(!ptr)`, so `{online: false}`,
+  `{channel: 0}` and `{name: ""}` matched nothing — in a subscription
+  `__filter__`, `kw_select()`, `kw_collect()`, `kwid_collect()`. It tests
+  `undefined` now. And `cmp_two_simple_json()` reads a non-numeric string as 0
+  against a number, as `jn2integer()` does in C: NaN compared "equal" to every
+  number, so `{n: 5}` matched `{n: "abc"}`.
+- **security: a path through `__proto__` wrote `Object.prototype`.**
+  `flat2json({"__proto__`polluted": "yes"})` and
+  `kw_set_dict_value(null, {}, "__proto__`isAdmin", true)` set a key on every
+  object of the page, and `kw_get_dict(null, {}, "__proto__")` answered
+  `Object.prototype`. `__proto__`, `constructor` and `prototype` are keys like
+  any other now, as in C: read only when the kw holds them, written as its own
+  key. The services registry has no prototype either.
+- **fix: `C_IEVENT_CLI` stopped and started in the same turn broke the
+  link.** The late close of the old socket ran as the current one: it unwired
+  the NEW socket and left it open for ever; and the new socket's open, arriving
+  while the FSM was still in `ST_SESSION`, was sent to the backend as a message
+  called `EV_ON_OPEN`. Every socket carries its sequence number now, a stale
+  one is ignored, and `mt_start()` ends the old session itself (its
+  `EV_ON_CLOSE` is published at the start). The `EV_ON_CLOSE` kw is plain json
+  (`code`, `reason`, `was_clean`), not the DOM `CloseEvent`.
+- **fix: a malformed frame from the peer threw a TypeError** in
+  `ac_on_message`. It is dropped with a warning and a capped dump; the parser's
+  own lines are warnings too (bad bytes from a peer, not a broken invariant).
+  A `__subscribing__` / `__unsubscribing__` from the peer is logged, as in C.
+- **fix: an action that throws lost the rest of the posted events**, and the
+  trace's depth grew for ever. The exception still goes on (a test must fail
+  on it), logged once with its stack; the events posted after it go out on the
+  next turn.
+- **fix: `mt_writing`, `mt_child_added`, `mt_child_removed` were looked up on
+  the gobj instead of its gclass** in `gobj_write_attr()` with a path and in
+  `gobj_change_parent()`, so they never ran.
+- **fix: `priv` mirrored the wrong value.** `sdata_write_default_values()`
+  (`gobj_reset_volatil_attrs()`) stored `set_default()`'s return, always 0;
+  `gobj_write_bool/integer/str_attr()` stored the raw value while the attr held
+  the coerced one.
+- **fix: `DTP_JSON` takes any json, as in C** — `null`, a scalar, a string that
+  is not json — and an empty default is a json null (it logged *"default_value
+  WRONG"*). A NaN for `DTP_INTEGER`/`DTP_REAL` is logged and NOT stored.
+- **fix: a destroyed default service could not be built again**
+  (*"default service ALREADY registered"*, and `__default_service__` resolved
+  to the dead gobj).
+- **fix, small:** `kw_clone_by_not_keys()` drops a key saved as `false` and
+  answers `{}` for an absent kw (`gobj_remove_persistent_attrs()` with nothing
+  saved threw); `gobj_set_bottom_gobj(gobj, null)` no longer warns *"already
+  set"*; *"parent service not found"* names the service, not `null`;
+  `gobj_find_service()` checks the type of the name; `c_yuno` plays and pauses
+  no default service when there is none; `build_command_response()` keeps an
+  empty comment a string; the vitest block of `vite.config.js` was nested in
+  `build` and never read.
+- **docs:** README — logging with arguments, `gobj_yuno_name/role/id()` take
+  no argument, the optional parameters of `gclass_find_by_name()`,
+  `debounce()`, `jwt2json()`, the flat json and the secret-masking API, the
+  GClass example (attrs ARE loaded in `mt_create`, which holds the
+  subscription block), the version rule in *Publish*, the source layout.
+  `createElement2()` says that a string starting with `<` is markup, and that
+  data goes in as a Text node. The 7.16.0 entry of this file is in English.
+
 ## 7.25.9
 
 - **security: traces and logs do not show credentials.** New
@@ -535,35 +605,35 @@ is new, 19 cases.
 
 ## 7.16.0
 
-**Alineada con el SDK de C, que va por 7.16.2.** Desde ahora `gobj-js` **no
-adelanta** al C salvo en el tercer índice: los dos primeros son los del SDK y el
-tercero es la vida propia del paquete entre releases. Se saltan las 7.14 y 7.15
-a propósito: el número no cuenta releases del paquete, dice **contra qué SDK
-está**, que es lo que un consumidor necesita saber.
+**Aligned with the C SDK, which is at 7.16.2.** From now on `gobj-js` is **never
+ahead** of C except in the third index: the first two are the SDK's, and the
+third is the package's own life between releases. 7.14 and 7.15 are skipped on
+purpose: the number does not count releases of the package, it says **which
+SDK it goes with**, which is what a consumer needs to know.
 
 
-- **feat: el json plano — `json2flat`, `flat2json`, `flat_key_join`,
-  `flat_key_split`, `flat_diff`, `flat_apply`.** Un json visto como tabla: una
-  fila por hoja, el id es la ruta del item. Para guardar, comparar y hacer diff
-  es mejor forma que la nativa, y es la única que se lee cuando dos
-  configuraciones no coinciden.
+- **feat: the flat json — `json2flat`, `flat2json`, `flat_key_join`,
+  `flat_key_split`, `flat_diff`, `flat_apply`.** A json seen as a table: one
+  row per leaf, the id is the path of the item. To store, to compare and to
+  diff it is a better form than the native one, and it is the only one a
+  person reads when two configurations disagree.
 
-  **La gramática es la misma que la del lado C** (`kwid.c`), y ése es el punto:
-  un json plano lo escribe uno y lo lee el otro. Separador `` ` ``; un `` ` ``
-  dentro de una clave se duplica, así que **no hay claves prohibidas**; un
-  índice de array es `[N]` canónico; una clave que empieza por `[` duplica el
-  corchete; y **un contenedor vacío es una hoja**, porque `{}` y `[]` no tienen
-  hojas propias y `"properties": {}` está por todas partes en nuestras configs.
+  **The grammar is the same as the C side's** (`kwid.c`), and that is the
+  point: a flat json is written by one side and read by the other. Separator
+  `` ` ``; a `` ` `` inside a key is doubled, so **no key is forbidden**; an
+  array index is the canonical `[N]`; a key that starts with `[` doubles the
+  bracket; and **an empty container is a leaf**, because `{}` and `[]` have no
+  leaves of their own and `"properties": {}` is everywhere in our configs.
 
-  `flat2json()` **lanza en vez de adivinar** cuando un id es hoja y contenedor a
-  la vez —el resultado dependería del orden de las claves—, cuando un índice se
-  pasa del tope o cuando la ruta es demasiado profunda.
+  `flat2json()` **throws instead of guessing** when an id is a leaf and a
+  container at once (the result would depend on the order of the keys), when
+  an index is over the limit, or when the path is too deep.
 
-  Índice y clave son **dos tipos**: `flat_key_split()` devuelve el índice como
-  número y la clave como cadena. Como cadenas, la clave `"[0]"` y el índice `0`
-  serían la misma cosa, que es la ambigüedad que el `[N]` viene a quitar.
+  Index and key are **two types**: `flat_key_split()` answers the index as a
+  number and the key as a string. As strings, the key `"[0]"` and the index `0`
+  would be the same thing, which is the ambiguity `[N]` is there to remove.
 
-  36 tests en `tests/json_flat.test.js`, fijando los mismos ids que el test de C.
+  36 tests in `tests/json_flat.test.js`, pinning the same ids as the C test.
 
 ## 7.13.8
 

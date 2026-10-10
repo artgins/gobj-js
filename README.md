@@ -159,8 +159,10 @@ To publish a new version of `@yuneta/gobj-js` to [npmjs.com](https://www.npmjs.c
 # 1. Configure your npm token (only once)
 echo "//registry.npmjs.org/:_authToken=<your-token>" > ~/.npmrc
 
-# 2. Update the version in package.json
-npm version patch   # or minor / major
+# 2. Update the version in package.json. The first two numbers are those
+#    of the SDK (YUNETA_VERSION) the package belongs to; only the third
+#    moves between SDK releases.
+npm version patch
 
 # 3. Publish (build runs automatically via prepublishOnly)
 npm publish --access public
@@ -372,7 +374,7 @@ gclass_create(name, event_types, states, gmt, lmt, attrs_table,
               private_data, authz_table, command_table,
               s_user_trace_level, gclass_flag)
 
-gclass_find_by_name(name)        // → GClass or null
+gclass_find_by_name(name, verbose)   // → GClass or null
 gclass_check_fsm(gclass)         // validate FSM (returns error count)
 gclass_add_event_type(gclass, event_name, flag)
 gclass_add_state(gclass, state_name)
@@ -479,9 +481,9 @@ gobj_name(gobj)
 gobj_short_name(gobj)
 gobj_full_name(gobj)
 gobj_gclass_name(gobj)
-gobj_yuno_name(gobj)
-gobj_yuno_role(gobj)
-gobj_yuno_id(gobj)
+gobj_yuno_name()                   // no argument: there is one yuno
+gobj_yuno_role()
+gobj_yuno_id()
 
 gobj_find_child(gobj, kw_filter)
 gobj_find_service(name, verbose)
@@ -605,6 +607,12 @@ kw_select (gobj, kw, jn_filter, match_fn)                // filter list
 kw_collect(gobj, kw, jn_filter, match_fn)                // extract subset
 kw_clone_by_keys    (gobj, kw, keys, verbose)
 kw_clone_by_not_keys(gobj, kw, keys, verbose)
+// A filter value is compared as a value: {online: false}, {channel: 0}
+// and {name: ""} match (up to 7.25.9 a false value never did):
+//   kw_select(null, [{id: "a", online: false}], {online: false})  → [{id: "a", ...}]
+// A key that names the prototype ("__proto__", "constructor",
+// "prototype") is a key like any other, as in C: it is read only when the
+// kw holds it, and written as the kw's own key, never into Object.prototype.
 
 // Flags: KW_REQUIRED, KW_CREATE, KW_EXTRACT, KW_RECURSIVE, KW_WILD_NUMBER
 
@@ -623,8 +631,8 @@ str_in_list(list, str, ci)   // case-insensitive optional
 index_in_list(list, value)
 delete_from_list(list, value)
 jwtDecode(token)             // → header/payload/signature
-jwt2json(token)              // → payload JSON
-debounce(fn, delay)
+jwt2json(token, what)        // → payload JSON (what: optional part)
+debounce(fn, wait, immediate)
 timeTracker()
 
 // Inter-event message stack
@@ -636,11 +644,53 @@ msg_iev_write_key(kw, key, value)                 // no gobj
 msg_iev_read_key (kw, key)                        // no gobj
 ```
 
+### A json as a table: `json2flat` / `flat2json`
+
+The same grammar as the C kernel (`kwid.h`): one row per leaf, the id being
+the path joined by `` ` ``, an array index written `[N]`, an empty container
+a leaf of its own.
+
+```javascript
+json2flat({a: {b: 1, c: [true]}, d: {}})
+// → {"a`b": 1, "a`c`[0]": true, "d": {}}
+flat2json({"a`b": 1, "a`c`[0]": true, "d": {}})
+// → {a: {b: 1, c: [true]}, d: {}}
+
+flat_diff({a: 1, b: 2}, {a: 1, b: 3, c: 4})
+// → {added: {c: 4}, removed: {}, changed: {b: {from: 2, to: 3}}}
+flat_apply(flat, diff)      // → flat with that diff applied
+```
+
+`flat2json()` throws on the first id that does not fit (a leaf and a
+container at once) instead of guessing.
+
+### Secrets in traces and logs
+
+```javascript
+is_secret_name("password")                // → true ("token", "jwt", "apikey"...)
+is_secret_name("token_endpoint")          // → false (names something ABOUT one)
+mask_secrets_inline("login user=a passw=x")  // → "login user=a passw=********"
+json_mask_secrets({user: "a", password: "x"})  // → {user: "a", password: "********"}
+trace_json_masked(kw, "sent")            // trace_json() of the masked copy
+```
+
+As the C kernel's: linear and bounded (a text over 4 MB is not shown at all).
+
 ### Logging
 
-All log functions take a single `format` argument and use `printf`-style
-substitution (`%s`, `%d`, `%i`, `%f`, `%o`/`%O`). There is no `gobj` or
-error-code argument (that's the C API — the JS runtime is simpler).
+All log functions take a `format` and its arguments, with `printf`-style
+substitution (`%s`, `%d`, `%i`, `%f`, `%o`/`%O`); arguments left over are
+appended. A message with no arguments (a template literal, the usual case)
+is printed as it is, so a `%s` in its data is not touched. There is no
+`gobj` or error-code argument (that's the C API — the JS runtime is simpler).
+
+```javascript
+log_error("Command not found: %s", command);    // → "Command not found: open"
+log_error(`Command not found: ${command}`);     // the same line
+```
+
+(Up to 7.25.9 the arguments were dropped: the first line printed
+`Command not found: undefined`.)
 
 ```javascript
 log_error(format, ...args)       // red, prefixed "ERROR"
@@ -904,7 +954,8 @@ import {
     SDATA, SDATA_END,
     data_type_t, sdata_flag_t,
     gclass_create,
-    gobj_subscribe_event, gobj_yuno,
+    gobj_subscribe_event, gobj_yuno, gobj_parent,
+    gobj_read_pointer_attr,
     trace_msg,
 } from "@yuneta/gobj-js";
 
@@ -912,8 +963,9 @@ const GCLASS_NAME = "C_MY_CLASS";
 
 // 1. Attribute schema
 const attrs_table = [
-    SDATA(data_type_t.DTP_STRING,  "url",      sdata_flag_t.SDF_RD, "", "Remote URL"),
-    SDATA(data_type_t.DTP_INTEGER, "retries",  sdata_flag_t.SDF_RD,  3, "Max retries"),
+    SDATA(data_type_t.DTP_STRING,  "url",        sdata_flag_t.SDF_RD, "", "Remote URL"),
+    SDATA(data_type_t.DTP_INTEGER, "retries",    sdata_flag_t.SDF_RD,  3, "Max retries"),
+    SDATA(data_type_t.DTP_POINTER, "subscriber", 0, null, "Subscriber of the output events"),
     SDATA_END()
 ];
 
@@ -924,10 +976,20 @@ const PRIVATE_DATA = {
 
 // 3. Lifecycle methods
 function mt_create(gobj) {
-    // instance created, attrs not yet populated
+    // The attrs already hold their values: defaults + the kw of the create.
+
+    /*
+     *  CHILD subscription model (a SERVICE uses the other one, see the
+     *  skeletons of yuno-skeleton)
+     */
+    let subscriber = gobj_read_pointer_attr(gobj, "subscriber");
+    if(!subscriber) {
+        subscriber = gobj_parent(gobj);
+    }
+    gobj_subscribe_event(gobj, null, {}, subscriber);
 }
 function mt_start(gobj) {
-    // subscribe to events from other gobjs here
+    // subscribe to events OF OTHER gobjs here
     gobj_subscribe_event(gobj_yuno(), "EV_TIMEOUT_PERIODIC", {}, gobj);
 }
 function mt_stop(gobj) { }
@@ -984,16 +1046,15 @@ kernel/js/gobj-js/
 ├── package.json
 ├── vite.config.js
 ├── dist/                              ← compiled outputs (ES, CJS, UMD, IIFE)
-├── tests/
-│   └── kw_delete.test.js
+├── tests/                             ← vitest suite, one file per contract (npm test)
 └── src/
     ├── index.js                       ← public API entry point (barrel export)
-    ├── gobj.js                        ← GObject/FSM runtime      (~4 500 LOC)
-    ├── helpers.js                     ← utilities, JSON, logging (~3 300 LOC)
-    ├── c_ievent_cli.js                ← remote service proxy     (~1 350 LOC)
-    ├── lib_treedb.js                  ← TreeDB helpers           (~  540 LOC)
-    ├── c_timer.js                     ← Timer GClass             (~  330 LOC)
-    ├── c_yuno.js                      ← Yuno GClass              (~  290 LOC)
+    ├── gobj.js                        ← GObject/FSM runtime      (~5 600 LOC)
+    ├── helpers.js                     ← utilities, JSON, logging (~4 700 LOC)
+    ├── c_ievent_cli.js                ← remote service proxy     (~1 600 LOC)
+    ├── lib_treedb.js                  ← TreeDB helpers           (~  580 LOC)
+    ├── c_timer.js                     ← Timer GClass             (~  390 LOC)
+    ├── c_yuno.js                      ← Yuno GClass              (~  530 LOC)
     ├── dbsimple.js                    ← localStorage persistence (~  140 LOC)
     ├── sprintf.js                     ← printf-style formatting  (~  210 LOC)
     ├── command_parser.js              ← command parsing

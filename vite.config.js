@@ -2,17 +2,19 @@ import { defineConfig } from "vite";
 import terser from "@rollup/plugin-terser";
 
 export default defineConfig({
+    /*  At the top level: nested in `build` (where it was) vitest never
+     *  read it.  */
+    test: {
+        globals: true,  // Use global `describe` and `test` like Jest
+        environment: "node",  // Use Node.js or browser as test environment
+        coverage: {
+            reporter: ["text", "json", "html"],  // Test coverage output
+        },
+    },
     build: {
         lib: {
             entry: "src/index.js",
             name: "gobjJs"
-        },
-        test: {
-            globals: true,  // Use global `describe` and `test` like Jest
-            environment: "node",  // Use Node.js or browser as test environment
-            coverage: {
-                reporter: ["text", "json", "html"],  // Test coverage output
-            },
         },
         rollupOptions: {
             checks: {

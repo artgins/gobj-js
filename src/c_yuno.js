@@ -170,6 +170,9 @@ function mt_stop(gobj)
 function mt_play(gobj)
 {
     let default_service = gobj_default_service();
+    if(!default_service) {
+        return 0;   // a yuno without a default service has nothing to play
+    }
     if(!gobj_is_running(default_service)) {
         gobj_start(default_service);
     }
@@ -184,7 +187,10 @@ function mt_play(gobj)
  ***************************************************************/
 function mt_pause(gobj)
 {
-    gobj_pause(gobj_default_service());
+    let default_service = gobj_default_service();
+    if(default_service && gobj_is_playing(default_service)) {
+        gobj_pause(default_service);
+    }
     return 0;
 }
 

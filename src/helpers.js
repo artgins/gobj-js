@@ -198,12 +198,30 @@ function set_remote_log_functions(remote_log_fn)
     }
 }
 
+/************************************************************
+ *  JSON.stringify for a log line: a circular object (a gobj,
+ *  a DOM node) must not make the log call itself throw.
+ ************************************************************/
+function log_stringify(v)
+{
+    try {
+        return JSON.stringify(v);
+    } catch(e) {
+        return String(v);
+    }
+}
+
 function format_log(format)
 {
     const args = Array.prototype.slice.call(arguments);
     let output = "";
 
     if (typeof format === 'string') {
+        if(args.length === 1) {
+            /*  A message already composed (a template literal, the usual
+             *  case) is not a format: a '%s' in its data stays as it is. */
+            return format;
+        }
         let i = 1;
         output = format.replace(/%[sdifoO]/g, match => {
             const val = args[i++];
@@ -214,14 +232,14 @@ function format_log(format)
                 case '%f': return parseFloat(val);
                 case '%o':
                 case '%O':
-                    return typeof val === 'object' ? JSON.stringify(val) : String(val);
+                    return typeof val === 'object' ? log_stringify(val) : String(val);
                 default: return match;
             }
         });
 
         // Append any remaining arguments (e.g. raw objects or extra messages)
         const rest = args.slice(i).map(arg =>
-            typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+            typeof arg === 'object' ? log_stringify(arg) : String(arg)
         );
 
         if (rest.length > 0) {
@@ -230,16 +248,16 @@ function format_log(format)
     } else {
         // If no format string, join all args
         output = args.map(arg =>
-            typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+            typeof arg === 'object' ? log_stringify(arg) : String(arg)
         ).join(" ");
     }
 
     return output;
 }
 
-function log_error(format)
+function log_error(format, ...args)
 {
-    let msg = format_log(format);
+    let msg = format_log(format, ...args);
     let hora = current_timestamp();
 
     if(f_error) {
@@ -257,9 +275,9 @@ function log_error(format)
     emit_log_callback("error", msg, hora);
 }
 
-function log_warning(format)
+function log_warning(format, ...args)
 {
-    let msg = format_log(format);
+    let msg = format_log(format, ...args);
     let hora = current_timestamp();
 
     if(f_warning) {
@@ -277,9 +295,9 @@ function log_warning(format)
     emit_log_callback("warning", msg, hora);
 }
 
-function log_info(format)
+function log_info(format, ...args)
 {
-    let msg = format_log(format);
+    let msg = format_log(format, ...args);
     let hora = current_timestamp();
 
     if(f_info) {
@@ -290,9 +308,9 @@ function log_info(format)
     emit_log_callback("info", msg, hora);
 }
 
-function log_debug(format)
+function log_debug(format, ...args)
 {
-    let msg = format_log(format);
+    let msg = format_log(format, ...args);
     let hora = current_timestamp();
 
     if(f_debug) {
@@ -303,9 +321,9 @@ function log_debug(format)
     emit_log_callback("debug", msg, hora);
 }
 
-function trace_msg(format)
+function trace_msg(format, ...args)
 {
-    let msg = format_log(format);
+    let msg = format_log(format, ...args);
     let hora = current_timestamp();
 
     if(f_debug) {
@@ -1272,8 +1290,17 @@ function cmp_two_simple_json(jn_var1, jn_var2)
      *  First try number
      */
     if(is_number(jn_var1) || is_number(jn_var2)) {
+        /*  A string that is not a number reads 0, as jn2integer()/jn2real()
+         *  do in C: NaN compares neither lower nor higher, so it was "equal"
+         *  to every number and {n: 5} matched {n: "abc"}. */
         let val1 = Number(jn_var1);
         let val2 = Number(jn_var2);
+        if(Number.isNaN(val1)) {
+            val1 = 0;
+        }
+        if(Number.isNaN(val2)) {
+            val2 = 0;
+        }
         if(val1 > val2) {
             return 1;
         } else if(val1 < val2) {
@@ -1417,6 +1444,34 @@ function kw_has_key(kw, key)
 }
 
 /************************************************************
+ *  A key that reaches the prototype chain instead of the data:
+ *  "__proto__", "constructor" or "prototype" when the object
+ *  does not hold it as its OWN key. A walk through one of them
+ *  read, or WROTE, Object.prototype: the flat id
+ *  "__proto__`polluted" set a key on every object of the page.
+ *  In C they are keys like any other, so here too: read them
+ *  only as own keys, and write "__proto__" as an own key.
+ ************************************************************/
+function is_prototype_segment(obj, key)
+{
+    if(key === "__proto__" || key === "constructor" || key === "prototype") {
+        return !Object.prototype.hasOwnProperty.call(obj, key);
+    }
+    return false;
+}
+
+function set_own_key(obj, key, value)
+{
+    if(key === "__proto__") {
+        Object.defineProperty(obj, key, {
+            value: value, writable: true, enumerable: true, configurable: true
+        });
+    } else {
+        obj[key] = value;
+    }
+}
+
+/************************************************************
  *  The value at `path` (keys joined by a backtick), as the C
  *  kw_find_path() finds it: undefined when it is not there.
  *  A kw that is not a dict or a list is LOGGED ("kw must be list
@@ -1447,7 +1502,16 @@ function kw_find_path(gobj, kw, path, verbose)
     }
     let ss = path.split('`');
     let len = ss.length;
-    for(let i=0; i<len-1; i++) {
+    for(let i=0; i<len; i++) {
+        if(is_prototype_segment(kw, ss[i])) {
+            if(verbose) {
+                log_error(`${prefix}path not found: '${path}'`);
+            }
+            return undefined;
+        }
+        if(i === len-1) {
+            break;
+        }
         kw = kw[ss[i]];
         if(kw === undefined || kw === null) {
             if(verbose) {
@@ -1989,22 +2053,17 @@ function kw_set_dict_value(gobj, kw, path, value)
     }
 
     let ss = path.split('`');
-    if(ss.length<=1) {
-        kw[path] = value;
-        return 0;
-    }
-
     let len = ss.length;
     for(let i=0; i<len; i++) {
         let key = ss[i];
         if(i === len-1) {
             /* last segment */
-            kw[key] = value;
+            set_own_key(kw, key, value);
 
         } else {
-            let seg = kw[key];
+            let seg = is_prototype_segment(kw, key)? undefined : kw[key];
             if(seg === undefined) {
-                kw[key] = {};
+                set_own_key(kw, key, {});
             } else if(!is_object(seg) && !is_array(seg)) {
                 /*  C stops here too (kwid.c, "long path"): nothing can be
                  *  created inside a null or a scalar.  */
@@ -2111,12 +2170,14 @@ function _kw_match_simple(
              *  Get the record value, firstly by path else by name
              */
             // Firstly try the key as pointers
-            let jn_record_value = kw_get_dict_value(0, kw, path, 0, 0);
-            if(!jn_record_value) {
+            /*  undefined, not falsy: 0, false and "" are values to compare
+             *  (C tests a NULL pointer; a json false is not one). */
+            let jn_record_value = kw_get_dict_value(0, kw, path, undefined, 0);
+            if(jn_record_value === undefined) {
                 // Secondly try the key with points (.) as full key
                 jn_record_value = json_object_get(kw, path);
             }
-            if(!jn_record_value) {
+            if(jn_record_value === undefined) {
                 matched = false;
                 break;
             }
@@ -2326,12 +2387,14 @@ function kw_clone_by_not_keys(
 )
 {
     let kw_clone = {};
+    if(!is_object(kw)) {
+        return kw_clone;    // nothing to clone (a store with nothing saved)
+    }
     json_object_update(kw_clone, kw);
 
     if(is_string(keys) && !empty_string(keys)) {
         let key = keys;
-        let jn_value = kw_get_dict_value(gobj, kw, key, 0, 0);
-        if(jn_value) {
+        if(kw.hasOwnProperty(key)) {      // a saved false/0/"" is a key too
             json_object_del(kw_clone, key);
         } else {
             if(verbose) {
@@ -3691,9 +3754,15 @@ function createOneHtml(htmlString)
  *                      will be 'data-i18n' attr
  *
  *      content -> string | [createElement2() or parameters of createElement2]
+ *                  | HTMLElement | SVGElement | Text
  *                  if string begins with '<' then
  *                      it will be converted to HTMLElement
  *                          content = createOneHtml(string)
+ *                  ⚠️ So a string is MARKUP when it starts with '<': never
+ *                  pass DATA (a value from a backend, a name a user typed)
+ *                  as a bare string, or "<img src=x onerror=...>" runs.
+ *                  Pass it as a Text node, which is always text:
+ *                      ['span', {}, document.createTextNode(value)]
  *                  if attrs['i18n'] is not empty then (or 'data-i18n' or 'data_i18next')
 *                          it will be overridden with the translation
  *                          content = translate(attrs['i18n']));
@@ -4417,7 +4486,7 @@ function flat2json(flat)
                             `value and once as a container`
                         );
                     }
-                    current[seg] = flat[key];
+                    set_own_key(current, seg, flat[key]);
                 }
                 break;
             }
@@ -4433,10 +4502,10 @@ function flat2json(flat)
                     current[seg] = child;
                 }
             } else {
-                child = current[seg];
+                child = is_prototype_segment(current, seg)? undefined : current[seg];
                 if(child === undefined) {
                     child = next_is_index? []: {};
-                    current[seg] = child;
+                    set_own_key(current, seg, child);
                 }
             }
 

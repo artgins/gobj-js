@@ -1,0 +1,278 @@
+/***********************************************************************
+ *          review_2026_10.test.js
+ *
+ *      What the review of 2026-10-10 found in the runtime, pinned:
+ *
+ *        - log_*() drop their arguments (printf promised, not done)
+ *        - a filter on a false value (0, false, "") never matches
+ *        - a number against a non-numeric string compared "equal"
+ *        - a path or a flat id through "__proto__" wrote Object.prototype
+ *        - DTP_JSON refused what C takes (null, a scalar)
+ *        - a destroyed default service could not be built again
+ *        - an action that throws lost the rest of the posted events
+ *        - priv mirrored the raw value, not the one the attr holds
+ *        - mt_writing / mt_child_* were looked up on the gobj, not the gclass
+ *
+ *          Copyright (c) 2026, ArtGins.
+ *          All Rights Reserved.
+ ***********************************************************************/
+import { describe, test, expect, beforeAll, beforeEach } from "vitest";
+import {
+    SDATA,
+    SDATA_END,
+    data_type_t,
+    sdata_flag_t,
+    gclass_create,
+    gobj_start_up,
+    gobj_create_yuno,
+    gobj_create,
+    gobj_create_default_service,
+    gobj_default_service,
+    gobj_find_gobj,
+    gobj_destroy,
+    gobj_post_event,
+    gobj_posted_events_size,
+    gobj_read_attr,
+    gobj_write_attr,
+    gobj_write_str_attr,
+    gobj_write_integer_attr,
+    gobj_change_parent,
+    gobj_reset_volatil_attrs,
+    set_log_callback,
+    log_error,
+    log_warning,
+    kw_match_simple,
+    kw_select,
+    kw_set_dict_value,
+    kw_get_dict,
+    kw_get_dict_value,
+    kw_clone_by_not_keys,
+    flat2json,
+} from "../src/index.js";
+
+let logged = [];
+set_log_callback((level, msg) => {
+    logged.push({level, msg: String(msg)});
+});
+
+const turn = () => new Promise(resolve => setTimeout(resolve, 0));
+
+const arrivals = [];
+const writings = [];
+const children = [];
+
+function ac_note(gobj, event, kw, src)
+{
+    arrivals.push(kw.n);
+    return 0;
+}
+
+function ac_throw(gobj, event, kw, src)
+{
+    throw new Error("boom");
+}
+
+let yuno = null;
+
+beforeAll(() => {
+    gobj_start_up(null, null, null, null, null, null, null);
+    gclass_create("C_REV_YUNO", [], [["ST_IDLE", []]], {}, null,
+        [SDATA_END()], {}, null, null, null, 0);
+
+    gclass_create(
+        "C_REV_PROBE",
+        [["EV_NOTE", 0], ["EV_THROW", 0]],
+        [["ST_IDLE", [
+            ["EV_NOTE",  ac_note,  0],
+            ["EV_THROW", ac_throw, 0],
+        ]]],
+        {
+            mt_create: (gobj) => {
+                gobj.priv = {label: null, count: null, cfg: null};
+            },
+            mt_writing: (gobj, path) => {
+                writings.push(path);
+            },
+            mt_child_added: (gobj, child) => {
+                children.push(["added", child.gobj_name]);
+            },
+            mt_child_removed: (gobj, child) => {
+                children.push(["removed", child.gobj_name]);
+            },
+        },
+        null,
+        [
+            SDATA(data_type_t.DTP_STRING,  "label", 0, "", "a string"),
+            SDATA(data_type_t.DTP_INTEGER, "count", sdata_flag_t.SDF_VOLATIL, 7, "an integer"),
+            SDATA(data_type_t.DTP_JSON,    "cfg",   0, "", "any json"),
+            SDATA_END()
+        ],
+        {}, null, null, null, 0
+    );
+
+    yuno = gobj_create_yuno("rev_yuno", "C_REV_YUNO", {});
+});
+
+beforeEach(() => {
+    logged = [];
+});
+
+describe("log_*()", () => {
+    test("substitute their arguments, printf style", () => {
+        log_error("value %s here", "X");
+        log_warning("n=%d", 42);
+        expect(logged[0].msg).toBe("value X here");
+        expect(logged[1].msg).toBe("n=42");
+    });
+
+    test("leave a composed message as it is, '%s' in its data included", () => {
+        log_error(`a 50%s discount`);
+        expect(logged[0].msg).toBe("a 50%s discount");
+    });
+
+    test("do not throw on a circular argument", () => {
+        const a = {};
+        a.self = a;
+        expect(() => log_error("obj %o", a)).not.toThrow();
+        expect(logged.length).toBe(1);
+    });
+});
+
+describe("kw_match_simple()", () => {
+    test("matches a false value: 0, false and the empty string", () => {
+        expect(kw_match_simple({n: 0}, {n: 0})).toBe(true);
+        expect(kw_match_simple({on: false}, {on: false})).toBe(true);
+        expect(kw_match_simple({s: ""}, {s: ""})).toBe(true);
+        expect(kw_match_simple({on: true}, {on: false})).toBe(false);
+        expect(kw_match_simple({}, {n: 0})).toBe(false);
+    });
+
+    test("selects the records with a false value", () => {
+        const rows = [{id: "a", online: false}, {id: "b", online: true}];
+        expect(kw_select(null, rows, {online: false}).map(r => r.id)).toEqual(["a"]);
+    });
+
+    test("does not take a non-numeric string for every number", () => {
+        expect(kw_match_simple({n: "abc"}, {n: 5})).toBe(false);
+        expect(kw_match_simple({n: "5"}, {n: 5})).toBe(true);
+    });
+});
+
+describe("a path through the prototype", () => {
+    test("flat2json writes __proto__ as a key, not into Object.prototype", () => {
+        const jn = flat2json(JSON.parse('{"__proto__`polluted": "yes"}'));
+        expect(({}).polluted).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(jn, "__proto__")).toBe(true);
+        expect(jn["__proto__"].polluted).toBe("yes");
+    });
+
+    test("kw_set_dict_value() does the same", () => {
+        const kw = {};
+        expect(kw_set_dict_value(null, kw, "__proto__`isAdmin", true)).toBe(0);
+        expect(({}).isAdmin).toBeUndefined();
+        kw_set_dict_value(null, kw, "constructor`x", 1);
+        expect(kw.constructor).toEqual({x: 1});
+    });
+
+    test("a reader does not answer the prototype for a key the kw has not", () => {
+        expect(kw_get_dict(null, {}, "__proto__", null, 0)).toBe(null);
+        expect(kw_get_dict_value(null, {}, "constructor", undefined, 0)).toBeUndefined();
+        expect(kw_get_dict_value(null, {constructor: 3}, "constructor", undefined, 0)).toBe(3);
+    });
+});
+
+describe("kw_clone_by_not_keys()", () => {
+    test("drops a key saved as false", () => {
+        expect(kw_clone_by_not_keys(null, {dark: false, x: 1}, "dark")).toEqual({x: 1});
+    });
+
+    test("answers {} for a kw that is not there", () => {
+        expect(kw_clone_by_not_keys(null, null, ["dark"])).toEqual({});
+    });
+});
+
+describe("attrs", () => {
+    test("DTP_JSON takes any json, as in C", () => {
+        const g = gobj_create("p_json", "C_REV_PROBE", {cfg: null}, yuno);
+        expect(logged.filter(l => l.level === "error")).toEqual([]);
+        expect(gobj_read_attr(g, "cfg")).toBe(null);
+        gobj_destroy(g);
+
+        const g2 = gobj_create("p_json2", "C_REV_PROBE", {cfg: "hello"}, yuno);
+        expect(gobj_read_attr(g2, "cfg")).toBe("hello");
+        gobj_destroy(g2);
+
+        const g3 = gobj_create("p_json3", "C_REV_PROBE", {cfg: '{"a":1}'}, yuno);
+        expect(gobj_read_attr(g3, "cfg")).toEqual({a: 1});
+        gobj_destroy(g3);
+    });
+
+    test("priv mirrors the value the attr holds", () => {
+        const g = gobj_create("p_priv", "C_REV_PROBE", {}, yuno);
+        gobj_write_integer_attr(g, "count", "12");
+        expect(g.priv.count).toBe(12);
+        gobj_reset_volatil_attrs(g);
+        expect(g.priv.count).toBe(7);
+        gobj_write_str_attr(g, "label", 5);
+        expect(g.priv.label).toBe("5");
+        gobj_destroy(g);
+    });
+
+    test("a write through a path reaches the gclass's mt_writing", () => {
+        const parent = gobj_create("p_parent", "C_REV_PROBE", {}, yuno);
+        gobj_create("p_kid", "C_REV_PROBE", {}, parent);
+        writings.length = 0;
+        expect(gobj_write_attr(parent, "p_kid`label", "z")).toBe(0);
+        expect(writings).toEqual(["label"]);
+        gobj_destroy(parent);
+    });
+
+    test("gobj_change_parent() tells both parents", () => {
+        const a = gobj_create("p_a", "C_REV_PROBE", {}, yuno);
+        const b = gobj_create("p_b", "C_REV_PROBE", {}, yuno);
+        const kid = gobj_create("p_moved", "C_REV_PROBE", {}, a);
+        children.length = 0;
+        gobj_change_parent(kid, b);
+        expect(children).toEqual([["removed", "p_moved"], ["added", "p_moved"]]);
+        gobj_destroy(a);
+        gobj_destroy(b);
+    });
+});
+
+describe("the default service", () => {
+    test("can be built again once destroyed", () => {
+        const s1 = gobj_create_default_service("svc1", "C_REV_PROBE", {}, yuno);
+        expect(gobj_default_service()).toBe(s1);
+        gobj_destroy(s1);
+        expect(gobj_find_gobj(null, "__default_service__")).toBe(null);
+
+        const s2 = gobj_create_default_service("svc2", "C_REV_PROBE", {}, yuno);
+        expect(s2).not.toBe(null);
+        expect(gobj_default_service()).toBe(s2);
+        gobj_destroy(s2);
+    });
+});
+
+describe("an action that throws", () => {
+    test("loses none of the events posted after it", async () => {
+        const g = gobj_create("p_post", "C_REV_PROBE", {}, yuno);
+        arrivals.length = 0;
+        gobj_post_event(g, "EV_NOTE", {n: 1}, g);
+        gobj_post_event(g, "EV_THROW", {}, g);
+        gobj_post_event(g, "EV_NOTE", {n: 2}, g);
+        gobj_post_event(g, "EV_NOTE", {n: 3}, g);
+
+        /*  The drain runs from a setTimeout: its throw would be an
+         *  uncaught exception of the test run, so drain it by hand.  */
+        const { gobj_deliver_posted_events } = await import("../src/index.js");
+        expect(() => gobj_deliver_posted_events()).toThrow("boom");
+        expect(arrivals).toEqual([1]);
+        expect(gobj_posted_events_size()).toBe(2);
+        expect(logged.some(l => l.level === "error" && l.msg.includes("THREW"))).toBe(true);
+
+        gobj_deliver_posted_events();
+        expect(arrivals).toEqual([1, 2, 3]);
+        await turn();
+        gobj_destroy(g);
+    });
+});

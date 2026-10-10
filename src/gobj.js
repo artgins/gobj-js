@@ -75,7 +75,7 @@ let __global_stats_parser_fn__ = null;
 let dl_global_event_types = [];
 
 let _gclass_register = Object.create(null);
-let __jn_services__ = {};
+let __jn_services__ = Object.create(null);    // no prototype: a service named "constructor" is a name like any other
 
 let __yuno__ = null;
 let __default_service__ = null;
@@ -987,7 +987,9 @@ function set_default(gobj, sdata, it)
             }
             break;
         case data_type_t.DTP_JSON:
-            if(is_string(svalue)) {
+            if(svalue === "" || svalue === undefined) {
+                jn_value = null;    // an empty default is a json null, as in C
+            } else if(is_string(svalue)) {
                 try {
                     jn_value = JSON.parse(svalue);
                 } catch (error) {
@@ -1046,12 +1048,14 @@ function json2item(gobj, sdata, it, jn_value_)
             jn_value2 = parseInt(jn_value_);
             if(isNaN(jn_value2)) {
                 log_error(`${gobj_short_name(gobj)}: attr NaN: ${it.name}`);
+                return -1;      // the attr keeps its value, NaN is not one
             }
             break;
         case data_type_t.DTP_REAL:
             jn_value2 = Number(jn_value_);
             if(isNaN(jn_value2)) {
                 log_error(`${gobj_short_name(gobj)}: attr NaN: ${it.name}`);
+                return -1;      // the attr keeps its value, NaN is not one
             }
             break;
         case data_type_t.DTP_LIST:
@@ -1087,18 +1091,17 @@ function json2item(gobj, sdata, it, jn_value_)
             break;
 
         case data_type_t.DTP_JSON:
+            /*  ANY json, as in C: null, a scalar, a dict or a list. A string
+             *  that parses as json is taken as the json it encodes (the
+             *  form a config read from a url or a form arrives in); one
+             *  that does not is a json string, and stays one. */
+            jn_value2 = jn_value_;
             if(is_string(jn_value_)) {
                 try {
                     jn_value2 = JSON.parse(jn_value_);
                 } catch (error) {
-                    log_error(`JSON parse error: ${error.message}`);
+                    jn_value2 = jn_value_;
                 }
-            } else {
-                jn_value2 = jn_value_;
-            }
-            if(!is_array(jn_value2) && !is_object(jn_value2)) {
-                log_error(`attr must be a json dict/list: ${it.name}`);
-                return -1;
             }
             break;
 
@@ -1617,6 +1620,10 @@ function gobj_find_service(
     verbose
 )
 {
+    if(!is_string(service_name)) {
+        log_error(`gobj_find_service(): service name must be a string: ${service_name}`);
+        return null;
+    }
     service_name = service_name.toLowerCase();
     let service_gobj = __jn_services__[service_name];
     if(!service_gobj) {
@@ -1915,9 +1922,10 @@ function gobj_create2(
 
         if(is_string(parent)) {
             // find the named gobj
-            parent = gobj_find_service(parent);
-            if (!parent) {
-                log_warning(`parent service not found: ${parent}`);
+            const parent_name = parent;
+            parent = gobj_find_service(parent_name);
+            if(!parent) {
+                log_warning(`parent service not found: ${parent_name}`);
                 return null;
             }
         }
@@ -2223,6 +2231,12 @@ function gobj_destroy(gobj)
      *--------------------------------*/
     if(gobj.gobj_flag & gobj_flag_t.gobj_flag_service) {
         _deregister_service(gobj);
+    }
+    if(gobj === __default_service__) {
+        /*  A page may build its default service again (C never does): a
+         *  destroyed one kept the slot, so the next create was refused
+         *  and "__default_service__" resolved to the dead gobj. */
+        __default_service__ = null;
     }
 
     /*--------------------------------*
@@ -2801,7 +2815,9 @@ function gobj_set_bottom_gobj(gobj, bottom_gobj)
         return null;
     }
 
-    if(gobj.bottom_gobj) {
+    if(gobj.bottom_gobj && bottom_gobj) {
+        /*  As in C: only setting a second one is worth a warning; clearing
+         *  it (a volatile bottom being destroyed) is not. */
         log_warning(`${gobj_short_name(gobj)}: bottom_gobj already set`);
     }
     gobj.bottom_gobj = bottom_gobj;
@@ -3508,8 +3524,8 @@ function gobj_write_attr(
                 // Avoid call to mt_writing before mt_create or destroyed!
                 if((gobj.obflag & obflag_t.obflag_created) && !(gobj.obflag & obflag_t.obflag_destroyed)) {
                     // Now mt_writing is only informative, not needed to update priv
-                    if(gobj.mt_writing) {
-                        gobj.mt_writing(gobj, key);
+                    if(gobj.gclass.gmt.mt_writing) {
+                        gobj.gclass.gmt.mt_writing(gobj, key);
                     }
                 }
                 return 0;
@@ -3548,11 +3564,12 @@ function sdata_write_default_values(
             continue;
         }
         if(include_flag === -1 || (it.flag & include_flag)) {
-            const value = set_default(gobj, gobj.jn_attrs, it);
+            set_default(gobj, gobj.jn_attrs, it);
 
             // New, write automatically the defined private data, in JS is possible do it
+            // (the value set, not set_default()'s return, which is always 0)
             if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(it.name)) {
-                gobj.priv[it.name] = value;
+                gobj.priv[it.name] = gobj.jn_attrs[it.name];
             }
 
             // Now mt_writing is only informative, not needed to update priv
@@ -3613,7 +3630,7 @@ function gobj_write_bool_attr(gobj, name, value)
 
         // New, write automatically the defined private data, in JS is possible do it
         if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(name)) {
-            gobj.priv[name] = value;
+            gobj.priv[name] = hs[name];     // the coerced value, as the attr holds it
         }
 
         // Avoid call to mt_writing before mt_create or destroyed!
@@ -3641,7 +3658,7 @@ function gobj_write_integer_attr(gobj, name, value)
 
         // New, write automatically the defined private data, in JS is possible do it
         if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(name)) {
-            gobj.priv[name] = value;
+            gobj.priv[name] = hs[name];     // the coerced value, as the attr holds it
         }
 
         // Avoid call to mt_writing before mt_create or destroyed!
@@ -3669,7 +3686,7 @@ function gobj_write_str_attr(gobj, name, value)
 
         // New, write automatically the defined private data, in JS is possible do it
         if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(name)) {
-            gobj.priv[name] = value;
+            gobj.priv[name] = hs[name];     // the coerced value, as the attr holds it
         }
 
         // Avoid call to mt_writing before mt_create or destroyed!
@@ -3775,8 +3792,8 @@ function gobj_change_parent(gobj, parent)
     /*--------------------------------------*
      *      Remove from current parent
      *--------------------------------------*/
-    if (gobj.parent && gobj.parent.mt_child_removed) {
-        gobj.parent.mt_child_removed(gobj.parent, gobj);
+    if(gobj.parent && gobj.parent.gclass.gmt.mt_child_removed) {
+        gobj.parent.gclass.gmt.mt_child_removed(gobj.parent, gobj);
     }
     if (gobj.parent) {
         _remove_child(gobj.parent, gobj);
@@ -3791,12 +3808,12 @@ function gobj_change_parent(gobj, parent)
     /*--------------------------------------*
      *  Inform to parent
      *-------------------------------------*/
-    if(parent.mt_child_added) {
+    if(parent.gclass.gmt.mt_child_added) {
         let trace_creation = __trace_gobj_create_delete__(gobj);
         if(trace_creation) {
             log_debug(sprintf("👦👦🔵 child_added(%s): %s", gobj_full_name(parent), gobj_short_name(gobj)));
         }
-        parent.mt_child_added(parent, gobj);
+        parent.gclass.gmt.mt_child_added(parent, gobj);
     }
 
     return 0;
@@ -3973,11 +3990,24 @@ function gobj_deliver_posted_events()
     __dl_posted_events__ = [];
 
     let delivered = 0;
-    for(let msg of snapshot) {
+    for(let i = 0; i < snapshot.length; i++) {
+        const msg = snapshot[i];
         if(msg.dst.obflag & (obflag_t.obflag_destroyed|obflag_t.obflag_destroying)) {
             continue;   // destroyed after it was queued, in this same snapshot
         }
-        gobj_send_event(msg.dst, msg.event, msg.kw, msg.src);
+        try {
+            gobj_send_event(msg.dst, msg.event, msg.kw, msg.src);
+        } catch(e) {
+            /*  An action threw (already logged): the rest of the snapshot
+             *  is put back, ahead of what was posted meanwhile, and goes
+             *  out on the next turn instead of being lost. */
+            __dl_posted_events__ = snapshot.slice(i + 1).concat(__dl_posted_events__);
+            if(__dl_posted_events__.length > 0 && !__posted_events_scheduled__) {
+                __posted_events_scheduled__ = true;
+                setTimeout(gobj_deliver_posted_events, 0);
+            }
+            throw e;
+        }
         delivered++;
     }
 
@@ -4158,7 +4188,23 @@ function gobj_send_event(dst, event, kw, src)
         } else {
             // No action, there is nothing amiss!.
         }
-    } finally {
+    } catch(e) {
+        /*  The exception goes on (a test must still fail on it), but it
+         *  is logged once, where it happened, and the depth of the trace
+         *  is put back: it grew for ever after the first throw. */
+        __inside__ --;
+        if(!(e && e.__gobj_logged__)) {
+            log_error(
+                `${gobj_short_name(dst)}: action of ${event} in ` +
+                `${dst.current_state.state_name} THREW: ${e && e.stack? e.stack: e}`
+            );
+            try {
+                e.__gobj_logged__ = true;
+            } catch(e2) {
+                // a thrown primitive cannot carry the mark
+            }
+        }
+        throw e;
     }
 
     if(tracea && __trace_machine_format__ !== 1 && !(dst.obflag & obflag_t.obflag_destroyed)) {
