@@ -668,7 +668,7 @@ function _json_mask_secrets(jn, memo, depth, budget)
             if(shown !== value) {
                 changed = true;
             }
-            result[key] = shown;
+            set_own_key(result, key, shown);
         }
         if(truncated) {
             result["<more>"] = MASK_TOO_LARGE;
@@ -779,7 +779,7 @@ function json_object_update(destination, source) // old __extend_dict__
         return destination;
     }
     for (let property of Object.keys(source)) {
-        destination[property] = source[property];
+        set_own_key(destination, property, source[property]);
     }
     return destination;
 }
@@ -794,8 +794,8 @@ function json_object_update_existing(destination, source) // old __update_dict__
         return destination;
     }
     for (let property in source) {
-        if(source.hasOwnProperty(property) && destination.hasOwnProperty(property)) {
-            destination[property] = source[property];
+        if(Object.prototype.hasOwnProperty.call(source, property) && Object.prototype.hasOwnProperty.call(destination, property)) {
+            set_own_key(destination, property, source[property]);
         }
     }
     return destination;
@@ -811,8 +811,8 @@ function json_object_update_missing(destination, source)
         return destination;
     }
     for (let property in source) {
-        if(source.hasOwnProperty(property) && !destination.hasOwnProperty(property)) {
-            destination[property] = source[property];
+        if(Object.prototype.hasOwnProperty.call(source, property) && !Object.prototype.hasOwnProperty.call(destination, property)) {
+            set_own_key(destination, property, source[property]);
         }
     }
     return destination;
@@ -823,7 +823,7 @@ function json_object_update_missing(destination, source)
  ************************************************************/
 function json_object_get(o, key)
 {
-    if(o && o.hasOwnProperty(key)) {
+    if(o && Object.prototype.hasOwnProperty.call(o, key)) {
         return o[key];
     }
     return undefined;
@@ -834,7 +834,7 @@ function json_object_get(o, key)
  ************************************************************/
 function json_object_del(o, k)
 {
-    if(o && o.hasOwnProperty(k)) {
+    if(o && Object.prototype.hasOwnProperty.call(o, k)) {
         delete o[k];
     }
 }
@@ -844,7 +844,7 @@ function json_object_del(o, k)
  ************************************************************/
 function json_object_set(o, k, v)
 {
-    o[k] = v;
+    set_own_key(o, k, v);
 }
 
 /************************************************************
@@ -852,7 +852,7 @@ function json_object_set(o, k, v)
  ************************************************************/
 function json_object_set_new(o, k, v)
 {
-    o[k] = v;
+    set_own_key(o, k, v);
 }
 
 /************************************************************
@@ -1436,7 +1436,7 @@ function kw_pop(kw1, kw2)
 function kw_has_key(kw, key)
 {
     if(key in kw) {
-        if (kw.hasOwnProperty(key)) {
+        if (Object.prototype.hasOwnProperty.call(kw, key)) {
             return true;
         }
     }
@@ -1445,8 +1445,7 @@ function kw_has_key(kw, key)
 
 /************************************************************
  *  A key that reaches the prototype chain instead of the data:
- *  "__proto__", "constructor" or "prototype" when the object
- *  does not hold it as its OWN key. A walk through one of them
+ *  any key the object does not hold as its OWN key. A walk through one of them
  *  read, or WROTE, Object.prototype: the flat id
  *  "__proto__`polluted" set a key on every object of the page.
  *  In C they are keys like any other, so here too: read them
@@ -1454,10 +1453,10 @@ function kw_has_key(kw, key)
  ************************************************************/
 function is_prototype_segment(obj, key)
 {
-    if(key === "__proto__" || key === "constructor" || key === "prototype") {
-        return !Object.prototype.hasOwnProperty.call(obj, key);
-    }
-    return false;
+    /*  ANY key the object does not own: "__proto__" and "constructor",
+     *  but also "toString" or "valueOf", which a plain object answers
+     *  with an inherited function.  */
+    return !Object.prototype.hasOwnProperty.call(obj, key);
 }
 
 function set_own_key(obj, key, value)
@@ -2335,8 +2334,8 @@ function kw_clone_by_keys(gobj, kw, keys, verbose)    // old filter_dict
     let kw_clone = {};
     if(is_string(keys) && !empty_string(keys)) {
         let key = keys;
-        if(kw.hasOwnProperty(key)) {
-            kw_clone[key] = kw[key];
+        if(Object.prototype.hasOwnProperty.call(kw, key)) {
+            set_own_key(kw_clone, key, kw[key]);
         } else {
             if(verbose) {
                 log_error(`${gobj_short_name(gobj)}: key not found: ${key}`);
@@ -2344,8 +2343,8 @@ function kw_clone_by_keys(gobj, kw, keys, verbose)    // old filter_dict
         }
     } else if(is_object(keys) && json_object_size(keys)>0) {
         for(let key of Object.keys(keys)) {
-            if(kw.hasOwnProperty(key)) {
-                kw_clone[key] = kw[key];
+            if(Object.prototype.hasOwnProperty.call(kw, key)) {
+                set_own_key(kw_clone, key, kw[key]);
             } else {
                 if(verbose) {
                     log_error(`${gobj_short_name(gobj)}: key not found: ${key}`);
@@ -2355,8 +2354,8 @@ function kw_clone_by_keys(gobj, kw, keys, verbose)    // old filter_dict
     } else if(is_array(keys) && json_array_size(keys)>0) {
         for(let j=0; j<keys.length; j++) {
             let key = keys[j];
-            if(kw.hasOwnProperty(key)) {
-                kw_clone[key] = kw[key];
+            if(Object.prototype.hasOwnProperty.call(kw, key)) {
+                set_own_key(kw_clone, key, kw[key]);
             } else {
                 if(verbose) {
                     log_error(`${gobj_short_name(gobj)}: key not found: ${key}`);
@@ -2394,7 +2393,7 @@ function kw_clone_by_not_keys(
 
     if(is_string(keys) && !empty_string(keys)) {
         let key = keys;
-        if(kw.hasOwnProperty(key)) {      // a saved false/0/"" is a key too
+        if(Object.prototype.hasOwnProperty.call(kw, key)) {      // a saved false/0/"" is a key too
             json_object_del(kw_clone, key);
         } else {
             if(verbose) {
@@ -2403,7 +2402,7 @@ function kw_clone_by_not_keys(
         }
     } else if(is_object(keys) && json_object_size(keys)>0) {
         for(let key of Object.keys(keys)) {
-            if(kw.hasOwnProperty(key)) {
+            if(Object.prototype.hasOwnProperty.call(kw, key)) {
                 json_object_del(kw_clone, key);
             } else {
                 if(verbose) {
@@ -2414,7 +2413,7 @@ function kw_clone_by_not_keys(
     } else if(is_array(keys) && json_array_size(keys)>0) {
         for(let j=0; j<keys.length; j++) {
             let key = keys[j];
-            if(kw.hasOwnProperty(key)) {
+            if(Object.prototype.hasOwnProperty.call(kw, key)) {
                 json_object_del(kw_clone, key);
             } else {
                 if(verbose) {
@@ -2794,7 +2793,7 @@ function kwid_get_ids(gobj, ids)
             }
         */
         for(let id in ids) {
-            if (ids.hasOwnProperty(id)) {
+            if (Object.prototype.hasOwnProperty.call(ids, id)) {
                 new_ids.push(id);
             }
         }
@@ -3173,7 +3172,7 @@ function _traverse_dict(obj, callback, full_path)
         full_path = "";
     }
     for (let key of Object.keys(obj)) {
-        if(!obj.hasOwnProperty(key)) {
+        if(!Object.prototype.hasOwnProperty.call(obj, key)) {
             continue;
         }
         let sufix = (full_path.length? '`':'') + key;
@@ -4410,7 +4409,7 @@ function json2flat(jn)
         if(depth === 0) {
             return;     // a scalar root has no path
         }
-        flat[path] = value;
+        set_own_key(flat, path, value);
     };
 
     if(jn === undefined || jn === null) {
@@ -4591,14 +4590,14 @@ function flat_apply(flat, diff)
         delete flat[key];
     }
     for(const key of Object.keys(diff.added || {})) {
-        flat[key] = diff.added[key];
+        set_own_key(flat, key, diff.added[key]);
     }
     for(const key of Object.keys(diff.changed || {})) {
         const change = diff.changed[key];
         if(!change || !Object.prototype.hasOwnProperty.call(change, "to")) {
             throw new Error(`flat_apply: changed '${key}' without a 'to'`);
         }
-        flat[key] = change.to;
+        set_own_key(flat, key, change.to);
     }
 
     return flat;

@@ -7,6 +7,34 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.1
+
+Second check of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V).
+
+- **fix: a start whose url fails let the old socket's close in twice.** The
+  socket's sequence number was counted after `new WebSocket()`, so a url that
+  throws left the old socket current: its late close was delivered after the
+  one `mt_start()` already delivered, publishing a spurious
+  `EV_ON_OPEN_ERROR` and arming a retry against the bad url. Counted before.
+- **security: an own `__proto__` key turned into the prototype when copied.**
+  7.26.0 writes `__proto__` as an own key (as `JSON.parse()` does), and the
+  helpers that copy by assignment — `json_object_update()`,
+  `json_object_update_existing/missing()`, `json_object_set()`,
+  `kw_clone_by_keys()`, `kw_clone_by_not_keys()`, `flat_apply()`,
+  `json_mask_secrets()` — then set it as the PROTOTYPE of the copy
+  (`.admin === true`, `JSON.stringify()` = `{}`). They write own keys now, and
+  `json2flat()` keeps a top-level `__proto__` as `flat2json()` does.
+- **fix: an inherited method was read as a value.** A path read answers only
+  what the kw OWNS: `kw_get_dict_value(null, {}, "toString")` answered a
+  function, and `kw_match_simple({}, {valueOf: 0})` answered true. Every
+  `x.hasOwnProperty(k)` of helpers.js is `Object.prototype.hasOwnProperty.call()`,
+  so a kw with no prototype, or with its own `hasOwnProperty` key, works.
+- **fix: `DTP_JSON` decodes only a string that encodes a dict or a list.**
+  7.26.0 decoded every string that parses, so a persisted `"42"` came back a
+  number. The comment says the one difference with C.
+- **fix:** the log of an action that throws names the state it ran in, not the
+  next one.
+
 ## 7.26.0
 
 The minor follows the SDK (7.26.x); no API was removed. Findings of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §1), each

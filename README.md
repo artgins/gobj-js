@@ -610,9 +610,10 @@ kw_clone_by_not_keys(gobj, kw, keys, verbose)
 // A filter value is compared as a value: {online: false}, {channel: 0}
 // and {name: ""} match (up to 7.25.9 a false value never did):
 //   kw_select(null, [{id: "a", online: false}], {online: false})  → [{id: "a", ...}]
-// A key that names the prototype ("__proto__", "constructor",
-// "prototype") is a key like any other, as in C: it is read only when the
-// kw holds it, and written as the kw's own key, never into Object.prototype.
+// A key is read only when the kw OWNS it ("toString" or "constructor" on
+// a plain {} are not there) and written as its own key, "__proto__"
+// included, as in C: never into a prototype. The helpers that copy
+// (json_object_update(), kw_clone_by_*(), flat_apply()...) do the same.
 
 // Flags: KW_REQUIRED, KW_CREATE, KW_EXTRACT, KW_RECURSIVE, KW_WILD_NUMBER
 

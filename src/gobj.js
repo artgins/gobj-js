@@ -1091,16 +1091,20 @@ function json2item(gobj, sdata, it, jn_value_)
             break;
 
         case data_type_t.DTP_JSON:
-            /*  ANY json, as in C: null, a scalar, a dict or a list. A string
-             *  that parses as json is taken as the json it encodes (the
-             *  form a config read from a url or a form arrives in); one
-             *  that does not is a json string, and stays one. */
+            /*  ANY json, as in C: null, a scalar, a dict or a list. One
+             *  difference with C, kept from the old JS convenience: a string
+             *  that ENCODES a dict or a list (the form a config read from a
+             *  url or a form arrives in) is decoded. Any other string stays
+             *  a string, so "42" or "true" never changes type on a reload. */
             jn_value2 = jn_value_;
             if(is_string(jn_value_)) {
-                try {
-                    jn_value2 = JSON.parse(jn_value_);
-                } catch (error) {
-                    jn_value2 = jn_value_;
+                const t = jn_value_.trim();
+                if(t.startsWith("{") || t.startsWith("[")) {
+                    try {
+                        jn_value2 = JSON.parse(t);
+                    } catch (error) {
+                        jn_value2 = jn_value_;
+                    }
                 }
             }
             break;
@@ -4196,7 +4200,7 @@ function gobj_send_event(dst, event, kw, src)
         if(!(e && e.__gobj_logged__)) {
             log_error(
                 `${gobj_short_name(dst)}: action of ${event} in ` +
-                `${dst.current_state.state_name} THREW: ${e && e.stack? e.stack: e}`
+                `${state.state_name} THREW: ${e && e.stack? e.stack: e}`
             );
             try {
                 e.__gobj_logged__ = true;

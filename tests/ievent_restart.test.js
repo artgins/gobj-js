@@ -49,6 +49,9 @@ class FakeWebSocket {
     static CLOSING = 2;
     static CLOSED = 3;
     constructor(url) {
+        if(url === "ws://bad") {
+            throw new SyntaxError("bad url");     // as the browser does for a malformed url
+        }
         this.url = url;
         this.readyState = FakeWebSocket.CONNECTING;
         this.sent = [];
@@ -177,5 +180,32 @@ describe("C_IEVENT_CLI stopped and started in the same turn", () => {
         ws.fire_close();
         expect(published).toEqual(["EV_ON_CLOSE"]);
         expect(gobj_current_state(ievent)).toBe("ST_DISCONNECTED");
+    });
+
+    test("a start whose url fails still makes the old socket stale", () => {
+        const ievent = gobj_create_service("link3", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://good",
+        }, yuno);
+        const listener = gobj_create_pure_child("link3_listener", "C_PROBE_LINK_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+
+        gobj_start(ievent);
+        const ws_old = sockets[sockets.length - 1];
+        into_session(ievent, ws_old);
+        published.length = 0;
+
+        gobj_stop(ievent);
+        gobj_write_str_attr(ievent, "url", "ws://bad");
+        gobj_start(ievent);
+        expect(published).toEqual(["EV_ON_CLOSE"]);
+
+        /*  Its late close must not be delivered a second time (it was an
+         *  EV_ON_OPEN_ERROR and a retry armed against the bad url).  */
+        ws_old.fire_close();
+        expect(published).toEqual(["EV_ON_CLOSE"]);
+        gobj_stop(ievent);
     });
 });

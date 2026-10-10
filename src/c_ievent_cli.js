@@ -572,6 +572,19 @@ function setup_websocket(gobj)
     const url = gobj_read_str_attr(gobj, "url");
     log_debug(`====> Starting WebSocket to '${url}' (${gobj_short_name(gobj)})`);
 
+    /*
+     *  Every socket carries its sequence number into the kw of its
+     *  events. A socket that is no longer the current one (a stop and a
+     *  start in the same turn) is stale: its open, its frames and its
+     *  close belong to a session that already ended, and letting them
+     *  in put an EV_ON_OPEN into ST_SESSION (injected to the backend as
+     *  a message) and a close that unwired the NEW socket.
+     *  Counted BEFORE the socket is made: a url that fails to open must
+     *  still make the old socket stale, or its late close is delivered
+     *  a second time after the one mt_start() already delivered.
+     */
+    const ws_seq = ++gobj.priv.ws_seq;
+
     let websocket;
     try {
         websocket = new WebSocket(url);
@@ -584,16 +597,6 @@ function setup_websocket(gobj)
         log_error(`${gobj_short_name(gobj)}: Failed to initialize WebSocket.`);
         return null;
     }
-
-    /*
-     *  Every socket carries its sequence number into the kw of its
-     *  events. A socket that is no longer the current one (a stop and a
-     *  start in the same turn) is stale: its open, its frames and its
-     *  close belong to a session that already ended, and letting them
-     *  in put an EV_ON_OPEN into ST_SESSION (injected to the backend as
-     *  a message) and a close that unwired the NEW socket.
-     */
-    const ws_seq = ++gobj.priv.ws_seq;
 
     websocket.onopen = () => {
         if(ws_seq !== gobj.priv.ws_seq || gobj_is_destroying(gobj)) {

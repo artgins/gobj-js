@@ -47,7 +47,12 @@ import {
     kw_get_dict,
     kw_get_dict_value,
     kw_clone_by_not_keys,
+    kw_clone_by_keys,
     flat2json,
+    json2flat,
+    flat_apply,
+    json_object_update,
+    json_object_set,
 } from "../src/index.js";
 
 let logged = [];
@@ -181,6 +186,38 @@ describe("a path through the prototype", () => {
     });
 });
 
+describe("an own '__proto__' key is copied as a key", () => {
+    test("by the helpers that copy by assignment", () => {
+        const src = JSON.parse('{"__proto__": {"admin": true}, "b": 1}');
+        for(const out of [
+            kw_clone_by_not_keys(null, src, "b"),
+            kw_clone_by_keys(null, src, ["__proto__"]),
+            json_object_update({}, src),
+        ]) {
+            expect(out.admin).toBeUndefined();
+            expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+            expect(JSON.stringify(out)).toContain("__proto__");
+        }
+        const o = {};
+        json_object_set(o, "__proto__", {admin: true});
+        expect(o.admin).toBeUndefined();
+    });
+
+    test("json2flat and flat2json are symmetric on it", () => {
+        const jn = JSON.parse('{"__proto__": 1, "a": 2}');
+        const flat = json2flat(jn);
+        expect(Object.keys(flat).sort()).toEqual(["__proto__", "a"]);
+        expect(flat2json(flat)).toEqual(jn);
+        const applied = flat_apply({}, {added: JSON.parse('{"__proto__": 3}'), removed: {}, changed: {}});
+        expect(Object.getPrototypeOf(applied)).toBe(Object.prototype);
+    });
+
+    test("an inherited method is not a value", () => {
+        expect(kw_get_dict_value(null, {}, "toString", undefined, 0)).toBeUndefined();
+        expect(kw_match_simple({}, {valueOf: 0})).toBe(false);
+    });
+});
+
 describe("kw_clone_by_not_keys()", () => {
     test("drops a key saved as false", () => {
         expect(kw_clone_by_not_keys(null, {dark: false, x: 1}, "dark")).toEqual({x: 1});
@@ -205,6 +242,11 @@ describe("attrs", () => {
         const g3 = gobj_create("p_json3", "C_REV_PROBE", {cfg: '{"a":1}'}, yuno);
         expect(gobj_read_attr(g3, "cfg")).toEqual({a: 1});
         gobj_destroy(g3);
+
+        /*  A string that does not encode a dict or a list stays a string.  */
+        const g4 = gobj_create("p_json4", "C_REV_PROBE", {cfg: "42"}, yuno);
+        expect(gobj_read_attr(g4, "cfg")).toBe("42");
+        gobj_destroy(g4);
     });
 
     test("priv mirrors the value the attr holds", () => {
