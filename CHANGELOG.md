@@ -7,6 +7,29 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.6
+
+Fifth check of the review (yunovatios `REV-CLOUD.md` §V4).
+
+- **fix: `kw_delete()` as C.** A key or a parent that is not there answered
+  `0` in silence, and a top-level list still threw a TypeError on `length`.
+  Now only a key of a dict is deleted; anything else is `-1` with an error
+  (`path not found`, `cannot delete an item of a list`), as C. Nobody in the
+  libraries or the apps deletes a key that may be missing.
+- **removed: the dead treedb register of `lib_treedb.js`**
+  (`treedb_register_formtable`, `treedb_unregister_formtable`,
+  `treedb_register_nodes`, `treedb_register_update_node`,
+  `treedb_register_del_node`, `treedb_get_register`, `treedb_get_topic_data`,
+  `treedb_get_topic_field_data`). They were not exported, nobody called them,
+  and they could not have worked: their calls lacked the `gobj` argument, and
+  the `true` meant as "create" is `KW_REQUIRED`.
+- **notes on 7.26.4:** C's path WRITER also drops empty segments (`split2()`
+  is strtok-based), so in C `a`` replaces the whole `kw.a` while its reader
+  answers item 0; JS refuses it in both. And of the masking markers, four are
+  C's literals; `"<not shown: the masking failed>"` exists only here.
+- tests: `kw_delete()` of a missing key, a missing parent and a top-level
+  list; the retry armed when the failure cannot be posted (queue full).
+
 ## 7.26.5
 
 - **security: `create_template_record()` (lib_treedb) assigned the template's

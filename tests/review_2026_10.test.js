@@ -407,3 +407,17 @@ describe("V3: create_template_record writes own keys", () => {
         expect(JSON.parse(JSON.stringify(rec))).toHaveProperty("id", "x");
     });
 });
+
+describe("V4: kw_delete as C", () => {
+    test("a missing key or parent, and a top-level list, are -1 and do not throw", async () => {
+        const { kw_delete } = await import("../src/helpers.js");
+        expect(kw_delete(null, {a: 1}, "b")).toBe(-1);
+        expect(kw_delete(null, {a: {}}, "x`y")).toBe(-1);
+        expect(kw_delete(null, [1, 2], "length")).toBe(-1);
+        const kw = {a: 1, b: {c: 2}};
+        expect(kw_delete(null, kw, "a")).toBe(0);
+        expect(kw_delete(null, kw, "b`c")).toBe(0);
+        expect(kw).toEqual({b: {}});
+    });
+});
+

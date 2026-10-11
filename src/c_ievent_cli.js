@@ -608,8 +608,8 @@ function setup_websocket(gobj)
             gobj
         );
         if(ret < 0) {
-            /*  Error already logged (the queue is full): at least the
-             *  link keeps retrying.  */
+            /*  Error already logged (the posted-events queue is full):
+             *  at least the link keeps retrying.  */
             set_timeout(gobj.priv.gobj_timer, next_retry(gobj));
         }
         return null;

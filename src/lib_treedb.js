@@ -35,7 +35,6 @@
 import {
     kw_get_dict_value,
     is_array,
-    kw_set_dict_value,
     kw_has_key,
     log_error,
     is_string,
@@ -43,102 +42,8 @@ import {
     json_object_size,
     json_size,
     str_in_list,
-    kwid_new_dict,
     json_object_set,
 } from "./helpers.js";
-
-/********************************************
- *      Data
- ********************************************/
-let treedb_register = { // Dictionary with data of registered global topics
-};
-
-/********************************************
- *
- ********************************************/
-function treedb_register_formtable(treedb_name, topic_name, gobj_formtable)
-{
-    let treedb = kw_get_dict_value(null, treedb_register, treedb_name, {}, true);
-    let gobjs = kw_get_dict_value(null, treedb, "gobjs", {}, true);
-    kw_set_dict_value(null, gobjs, gobj_formtable.name, gobj_formtable);
-}
-
-/********************************************
- *
- ********************************************/
-function treedb_unregister_formtable(treedb_name, topic_name, gobj_formtable)
-{
-    let treedb = kw_get_dict_value(treedb_register, treedb_name, {}, true);
-    let gobjs = kw_get_dict_value(treedb, "gobjs", {}, true);
-    if(kw_has_key(gobjs, gobj_formtable.name)) {
-        delete gobjs[gobj_formtable.name];
-    } else {
-        log_error("treedb_unregister_formtable() gobj not found: " + gobj_formtable.name);
-    }
-}
-
-/********************************************
- *
- ********************************************/
-function treedb_register_nodes(treedb_name, topic_name, nodes)
-{
-    let treedb = kw_get_dict_value(treedb_register, treedb_name, {}, true);
-    let data = kw_get_dict_value(treedb, "data", {}, true);
-    kw_set_dict_value(data, topic_name, kwid_new_dict(nodes));
-}
-
-/********************************************
- *
- ********************************************/
-function treedb_register_update_node(treedb_name, topic_name, node)
-{
-    let treedb = kw_get_dict_value(treedb_register, treedb_name, {}, true);
-    let data = kw_get_dict_value(treedb, "data", {}, true);
-    let topic_data = kw_get_dict_value(data, topic_name, {}, true);
-
-    kw_set_dict_value(topic_data, node.id, node);
-}
-
-/********************************************
- *
- ********************************************/
-function treedb_register_del_node(treedb_name, topic_name, node)
-{
-    let treedb = kw_get_dict_value(treedb_register, treedb_name, {}, true);
-    let data = kw_get_dict_value(treedb, "data", {}, true);
-    let topic_data = kw_get_dict_value(data, topic_name, {}, true);
-
-    delete topic_data[node.id];
-}
-
-/********************************************
- *  Used by ui_treedb to update options
- ********************************************/
-function treedb_get_register(treedb_name)
-{
-    let treedb = kw_get_dict_value(treedb_register, treedb_name, {}, false);
-    return treedb;
-}
-
-/********************************************
- *  Used by formtable to get combo options
- ********************************************/
-function treedb_get_topic_data(treedb_name, topic_name)
-{
-    let treedb = kw_get_dict_value(treedb_register, treedb_name, {}, false);
-    let data = kw_get_dict_value(treedb, "data", {}, false);
-    return kw_get_dict_value(data, topic_name, {}, false);
-}
-
-/********************************************
- *  Used by formtable to get combo options
- ********************************************/
-function treedb_get_topic_field_data(treedb_name, topic_name)
-{
-    let treedb = kw_get_dict_value(treedb_register, treedb_name, {}, false);
-    let data = kw_get_dict_value(treedb, "data", {}, false);
-    return kw_get_dict_value(data, topic_name, {}, false);
-}
 
 /********************************************
  *

@@ -1578,20 +1578,31 @@ function kw_delete(gobj, kw, path)
         log_error(`GObj bad instanceof`);
     }
 
+    /*
+     *  As C: only a key of a dict is deleted, and a path that is not
+     *  there is an error (-1, logged). A delete of "length" threw a
+     *  TypeError here, and a missing key or parent answered 0 in silence.
+     */
+    const prefix = gobj ? gobj_short_name(gobj) + ": " : "";
     let [path_, k] = strrchr_split(path, '`');
+    let v = kw;
     if(!empty_string(k)) {
-        let v = kw_find_path(gobj, kw, path_, true);
-        if(is_array(v)) {
-            /*  As C, which deletes only a key of a dict. A delete of
-             *  "length" threw a TypeError here.  */
-            log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
-                `kw_delete(): cannot delete an item of a list: '${path}'`);
-            return -1;
+        v = kw_find_path(gobj, kw, path_, true);
+        if(v === undefined) {
+            return -1;      // Error already logged
         }
-        json_object_del(v, k);
     } else {
-        json_object_del(kw, path);
+        k = path;
     }
+    if(is_array(v)) {
+        log_error(`${prefix}kw_delete(): cannot delete an item of a list: '${path}'`);
+        return -1;
+    }
+    if(!is_object(v) || !Object.prototype.hasOwnProperty.call(v, k)) {
+        log_error(`${prefix}kw_delete(): path not found: '${path}'`);
+        return -1;
+    }
+    delete v[k];
     return 0;
 }
 

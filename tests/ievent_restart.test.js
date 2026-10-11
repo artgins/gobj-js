@@ -304,5 +304,32 @@ describe("C_IEVENT_CLI stopped and started in the same turn", () => {
         expect(n_errors()).toBeGreaterThanOrEqual(5);
         expect(seen).toEqual([30, 60, 120]);     // doubles, then stays at its top
     });
+
+    test("a failure that cannot be posted still arms the retry", async () => {
+        const { gobj_post_event, gobj_posted_events_size } = await import("../src/index.js");
+        const ievent = gobj_create_service("link8", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://bad",
+        }, yuno);
+        const sink = gobj_create_pure_child("link8_sink", "C_PROBE_LINK_LISTENER", {}, ievent);
+        gobj_start(sink);
+
+        /*  Fill the posted-events queue to its top, so the failure of the
+         *  refused url cannot be posted.  */
+        while(gobj_post_event(sink, "EV_ON_OPEN", {}, sink) === 0) {
+            /* fill */
+        }
+        const full = gobj_posted_events_size();
+
+        expect(ievent.priv.retry_ms).toBe(0);
+        gobj_start(ievent);
+        expect(gobj_posted_events_size()).toBe(full);      // nothing more was posted
+        expect(ievent.priv.retry_ms).toBeGreaterThan(0);    // and the retry is armed
+        gobj_stop(ievent);
+
+        await new Promise(resolve => setTimeout(resolve, 0));   // drain
+        published.length = 0;
+    });
 });
 
