@@ -2110,6 +2110,14 @@ function kw_set_dict_value(gobj, kw, path, value)
             `kw_set_dict_value(): path empty`);
         return -1;
     }
+    if(path.split('`').includes("")) {
+        /*  As C (SDK 7.26.9+): an empty SEGMENT names no key either.
+         *  This wrote the key "" ("a`" -> {a: {"": v}}), while C's writer
+         *  dropped it and wrote over `a`.  */
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `kw_set_dict_value(): empty segment in path: '${path}'`);
+        return -1;
+    }
 
     let ss = path.split('`');
     let len = ss.length;

@@ -7,6 +7,15 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.13
+
+- **fix: `kw_set_dict_value()` refuses a path with an empty segment**
+  (``"a`"``, ``"`a"``, ``"a``b"``): it wrote the key `""` (`{a: {"": v}}`),
+  while the C writer dropped the segment and wrote over `a`. Both writers
+  refuse it now (SDK 7.26.9 for C), logged, `-1`, nothing written; so do
+  `kw_set_subdict_value()` and a reader with `KW_CREATE` over such a path.
+  yunovatios `REV-CLOUD.md` §V10.1.
+
 ## 7.26.12
 
 Tenth check of the review (yunovatios `REV-CLOUD.md` §V10.5).

@@ -646,3 +646,22 @@ describe("V10: the jdb refuses what it cannot address", () => {
         }
     });
 });
+
+describe("V10.1: an empty segment is refused by the writer, as C", () => {
+    test("'a`', '`a' and 'a``b' answer -1, logged, nothing written", async () => {
+        const { kw_set_dict_value, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const kw = {a: 5};
+            const base = logged.length;
+            expect(kw_set_dict_value(null, kw, "a`", 1)).toBe(-1);
+            expect(kw_set_dict_value(null, kw, "`a", 1)).toBe(-1);
+            expect(kw_set_dict_value(null, kw, "b``c", 1)).toBe(-1);
+            expect(logged.length - base).toBe(3);
+            expect(kw).toEqual({a: 5});
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});
