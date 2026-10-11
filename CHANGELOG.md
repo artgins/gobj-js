@@ -7,6 +7,17 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.15
+
+Twelfth check of the review (yunovatios `REV-CLOUD.md` §V12.4).
+
+- **fix: a log line could still throw.** `log_stringify()` fell back to
+  `String()`, which throws on an object with no prototype or a `toString()`
+  that throws; and the jdb had its own copy, which read `e.message` of a
+  thrown `null`. One function now, safe all the way down; the jdb uses it.
+- docs: `kw_get_dict()` / `kw_get_list()` say what `KW_CREATE` does over a
+  `null` and over another type, and where C differs.
+
 ## 7.26.14
 
 Eleventh check of the review (yunovatios `REV-CLOUD.md` §V11.4).

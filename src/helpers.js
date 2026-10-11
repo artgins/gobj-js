@@ -200,14 +200,21 @@ function set_remote_log_functions(remote_log_fn)
 
 /************************************************************
  *  JSON.stringify for a log line: a circular object (a gobj,
- *  a DOM node) must not make the log call itself throw.
+ *  a DOM node), a BigInt or a toJSON() that throws must not make
+ *  the log call itself throw -- and neither must the fallback:
+ *  String() throws too, on an object with no prototype or with a
+ *  toString() that throws.
  ************************************************************/
 function log_stringify(v)
 {
     try {
         return JSON.stringify(v);
     } catch(e) {
-        return String(v);
+        try {
+            return String(v);
+        } catch(e2) {
+            return `<${typeof v}: not printable>`;
+        }
     }
 }
 
@@ -3425,19 +3432,6 @@ function jdb_init(jdb, prefix, duplicate)
 }
 
 /********************************************
- *  A value as json text for a log line: the error path must not throw
- *  (a circular record, a BigInt).
- ********************************************/
-function safe_json_text(v)
-{
-    try {
-        return JSON.stringify(v);
-    } catch(e) {
-        return `<${typeof v}: not json (${e.message})>`;
-    }
-}
-
-/********************************************
  *
  ********************************************/
 function jdb_update(jdb, topic_name, path, kw)
@@ -3449,7 +3443,7 @@ function jdb_update(jdb, topic_name, path, kw)
         return null;
     }
     if(!is_object(kw) || empty_string(kw["id"])) {
-        log_error(`jdb_update: record without id: ${safe_json_text(kw)}`);
+        log_error(`jdb_update: record without id: ${log_stringify(kw)}`);
         return null;
     }
     if(!is_string(path)) {
@@ -3528,7 +3522,7 @@ function jdb_delete(jdb, topic_name, path, kw)
         return null;
     }
     if(!is_object(kw) || empty_string(kw["id"])) {
-        log_error(`jdb_delete: record without id: ${safe_json_text(kw)}`);
+        log_error(`jdb_delete: record without id: ${log_stringify(kw)}`);
         return null;
     }
     if(!is_string(path)) {

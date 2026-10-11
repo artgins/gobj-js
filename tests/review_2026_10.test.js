@@ -704,3 +704,23 @@ describe("V11: KW_CREATE over a null or another type, a jdb log that cannot thro
         }
     });
 });
+
+/*
+ *  Twelfth check of the review (V12).
+ */
+describe("V12: an error line cannot throw, whatever the record", () => {
+    test("a toJSON that throws null, an object with no prototype", async () => {
+        const { jdb_init, jdb_update, jdb_delete, set_log_callback } = await import("../src/helpers.js");
+        set_log_callback(() => {});
+        try {
+            const jdb = jdb_init({schema: {menu: []}});
+            const bad = {toJSON() { throw null; }};
+            const bare = Object.create(null);
+            bare.self = bare;
+            expect(jdb_update(jdb, "menu", "", bad)).toBe(null);
+            expect(jdb_delete(jdb, "menu", "", bare)).toBe(null);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});
