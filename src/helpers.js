@@ -2144,6 +2144,36 @@ function kw_set_dict_value(gobj, kw, path, value)
 }
 
 /************************************************************
+ *  Whether walking `path` meets a value that is neither a dict nor
+ *  a list BEFORE its last segment: kw_find_path() logs that one
+ *  even when it is not verbose, so a writer that goes on to
+ *  kw_set_dict_value() would log it a second time.
+ ************************************************************/
+function path_crosses_a_scalar(kw, path)
+{
+    let ss = path.split('`');
+    let v = kw;
+    for(let i=0; i<ss.length-1; i++) {
+        if(is_array(v)) {
+            const idx = list_segment_index(v, ss[i]);
+            if(idx < 0) {
+                return false;
+            }
+            v = v[idx];
+        } else {
+            v = Object.prototype.hasOwnProperty.call(v, ss[i])? v[ss[i]] : undefined;
+        }
+        if(v === undefined || v === null) {
+            return false;
+        }
+        if(!(is_object(v) || is_array(v))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/************************************************************
  *
  ************************************************************/
 function kw_set_subdict_value(gobj, kw, path, key, value)
@@ -2162,8 +2192,8 @@ function kw_set_subdict_value(gobj, kw, path, key, value)
      *  that belongs to nobody while this answered 0.  */
     let subdict = kw_find_path(gobj, kw, path, false);
     if(subdict === undefined) {
-        if(!is_string(path)) {
-            return -1;  // Error already logged
+        if(!is_string(path) || path_crosses_a_scalar(kw, path)) {
+            return -1;  // Error already logged, by kw_find_path()
         }
         subdict = {};
         if(kw_set_dict_value(gobj, kw, path, subdict) < 0) {
@@ -3330,15 +3360,18 @@ function jdb_init(jdb, prefix, duplicate)
     if(duplicate) {
         jdb = json_deep_copy(jdb);
     }
-    let type = kw_get_dict_value(null, jdb, "type", [], 1);
-    let hook = kw_get_str(null, jdb, "hook", "data", 1);
-    let schema = kw_get_dict_value(null, jdb, "schema", {}, 1);
-    let topics = kw_get_dict_value(null, jdb, "topics", {}, 1);
+    /*  KW_CREATE, not the 1 these calls passed: 1 is KW_REQUIRED, so
+     *  nothing was created -- no topic, no hook -- and a jdb built from
+     *  a schema had no topic at all.  */
+    let type = kw_get_dict_value(null, jdb, "type", [], kw_flag_t.KW_CREATE);
+    kw_get_str(null, jdb, "hook", "data", kw_flag_t.KW_CREATE);
+    let schema = kw_get_dict_value(null, jdb, "schema", {}, kw_flag_t.KW_CREATE);
+    let topics = kw_get_dict_value(null, jdb, "topics", {}, kw_flag_t.KW_CREATE);
 
     // Create topics defined in schema
     let walk = function(obj, key, value, full_path) {
         if(key.substring(0, 2) !== "__") {
-            kw_get_dict_value(null, topics, full_path, json_deep_copy(type), 1);
+            kw_get_dict_value(null, topics, full_path, json_deep_copy(type), kw_flag_t.KW_CREATE);
             //trace_msg(sprintf("full_path: '%s', key: %s, value: %j", full_path, key, value));
         }
     };
@@ -3377,7 +3410,7 @@ function jdb_update(jdb, topic_name, path, kw)
             break;
         }
         if(is_object(v)) {
-            v = kw_get_dict_value(null, v, jdb.hook, [], 1);
+            v = kw_get_dict_value(null, v, jdb.hook, [], kw_flag_t.KW_CREATE);
         }
         v = _jdb_get(v, null, id, false);
     }
@@ -3389,7 +3422,7 @@ function jdb_update(jdb, topic_name, path, kw)
             if(v["id"]===kw["id"]) {
                 json_object_update(v, kw);
             } else {
-                let v_ = kw_get_dict_value(null, v, jdb.hook, [], 1);
+                let v_ = kw_get_dict_value(null, v, jdb.hook, [], kw_flag_t.KW_CREATE);
                 let v__ = _jdb_get(v_, jdb.hook, kw["id"], false);
                 if(v__) {
                     json_object_update(v__, kw);

@@ -486,3 +486,39 @@ describe("V6: what is left of the path writers", () => {
         }
     });
 });
+
+/*
+ *  Seventh check of the review (V7).
+ */
+describe("V7: kw_set_subdict_value logs a scalar on its path once", () => {
+    test("a scalar in the middle of the path: -1, one log, nothing written", async () => {
+        const { kw_set_subdict_value, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const kw = {a: 5};
+            const base = logged.length;
+            expect(kw_set_subdict_value(null, kw, "a`b", "k", 1)).toBe(-1);
+            expect(logged.length - base).toBe(1);
+            expect(kw).toEqual({a: 5});
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});
+
+describe("V7: jdb_init creates what it says it creates", () => {
+    test("a topic per schema key, the hook, and records under the hook", async () => {
+        const { jdb_init, jdb_update, jdb_delete, jdb_get } = await import("../src/helpers.js");
+        const jdb = jdb_init({schema: {menu: []}});
+        expect(jdb.topics).toEqual({menu: []});
+        expect(jdb.hook).toBe("data");
+        jdb_update(jdb, "menu", "", {id: "home", label: "Home"});
+        jdb_update(jdb, "menu", "home", {id: "users", label: "Users"});
+        jdb_update(jdb, "menu", "home", {id: "users", label: "People"});
+        expect(jdb.topics.menu).toEqual(
+            [{id: "home", label: "Home", data: [{id: "users", label: "People"}]}]);
+        jdb_delete(jdb, "menu", "home", {id: "users"});
+        expect(jdb_get(jdb, "menu", "home")).toEqual({id: "home", label: "Home", data: []});
+    });
+});

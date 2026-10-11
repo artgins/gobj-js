@@ -7,6 +7,20 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.9
+
+Seventh check of the review (yunovatios `REV-CLOUD.md` §V7.4).
+
+- **fix: `jdb_init()` created nothing.** It passed `1` where it meant to
+  create, and `1` is `KW_REQUIRED`: a jdb built from a schema had no topic and
+  no hook, and `jdb_update()` pushed a child into a hook list that belonged to
+  no record. Every one of those calls is `KW_CREATE` now. Nobody in the
+  libraries or the apps uses the jdb; the API reference gets its example.
+- **fix: `kw_set_subdict_value()` logged a scalar in the middle of its path
+  twice** (`{a: 5}` with ``"a`b"``): `kw_find_path()` logs that one even when
+  it is not verbose, as in C, and `kw_set_dict_value()` logged it again. Once
+  now, as 7.26.8 said.
+
 ## 7.26.8
 
 Sixth check of the review (yunovatios `REV-CLOUD.md` §V6.5).
