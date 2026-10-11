@@ -7,6 +7,18 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.14
+
+Eleventh check of the review (yunovatios `REV-CLOUD.md` §V11.4).
+
+- **`kw_get_dict()` / `kw_get_list()` with `KW_CREATE` over a value of another
+  type log it** (they gave an unwritten default back in silence), and a
+  `null` at the path is replaced by the create, as a missing key -- the C
+  readers do the same since SDK 7.26.9, except that C returns NULL where JS
+  gives the unwritten default back.
+- **the jdb's error lines cannot throw**: a record that is circular, or holds a
+  BigInt, broke the `JSON.stringify()` of its own error message.
+
 ## 7.26.13
 
 - **fix: `kw_set_dict_value()` refuses a path with an empty segment**

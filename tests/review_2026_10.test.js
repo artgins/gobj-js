@@ -665,3 +665,42 @@ describe("V10.1: an empty segment is refused by the writer, as C", () => {
         }
     });
 });
+
+/*
+ *  Eleventh check of the review (V11).
+ */
+describe("V11: KW_CREATE over a null or another type, a jdb log that cannot throw", () => {
+    test("a null at the path is replaced by a create; another type is logged", async () => {
+        const { kw_get_dict, kw_get_list, kw_flag_t, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const kw = {d: null, l: null, s: 5};
+            const d = kw_get_dict(null, kw, "d", {}, kw_flag_t.KW_CREATE);
+            const l = kw_get_list(null, kw, "l", [], kw_flag_t.KW_CREATE);
+            expect(kw.d).toBe(d);
+            expect(kw.l).toBe(l);
+            const base = logged.length;
+            const orphan = kw_get_dict(null, kw, "s", {}, kw_flag_t.KW_CREATE);
+            expect(kw.s).toBe(5);
+            expect(orphan).toEqual({});
+            expect(logged.slice(base).filter(m => m.includes("cannot create")).length).toBe(1);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+
+    test("a circular record in a jdb error does not throw", async () => {
+        const { jdb_init, jdb_update, set_log_callback } = await import("../src/helpers.js");
+        set_log_callback(() => {});
+        try {
+            const jdb = jdb_init({schema: {menu: []}});
+            const rec = {};
+            rec.self = rec;
+            expect(jdb_update(jdb, "menu", "", rec)).toBe(null);
+            expect(jdb_update(jdb, "menu", "", {id: "", n: 10n})).toBe(null);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});

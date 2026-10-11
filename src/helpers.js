@@ -1959,8 +1959,10 @@ function kw_get_pointer(gobj, kw, path, default_value, flag)
 /************************************************************
  *  As the C kw_get_dict(): a dict found is the answer, and
  *  anything else gives the default back AS GIVEN (null stays
- *  null). KW_CREATE stores a dict default, never a null one.
- *  Before gobj-js 7.25.2 the answer went through Object(), so a
+ *  null). KW_CREATE stores a dict default, never a null one, and
+ *  replaces a null at the path; over another type it logs and
+ *  gives the default back unwritten (C returns NULL there, SDK
+ *  7.26.9). Before gobj-js 7.25.2 the answer went through Object(), so a
  *  null default came back as {} and a 0 as a Number object.
  ************************************************************/
 function kw_get_dict(gobj, kw, path, default_value, flag)
@@ -1988,9 +1990,20 @@ function kw_get_dict(gobj, kw, path, default_value, flag)
     }
 
     if(!is_object(v)) {
-        if(required) {
+        if(create && v === null && is_object(default_value)) {
+            /*  A null is "no value", as in C (SDK 7.26.9): a create
+             *  replaces it, as a missing key.  */
+            kw_set_dict_value(gobj, kw, path, default_value);
+            return default_value;
+        }
+        if(required || create) {
+            /*  With KW_CREATE the caller means to write inside what it
+             *  gets: the default it gets back is held by nobody, so say
+             *  it. (C returns NULL here; JS frees nothing, and gives the
+             *  default back.)  */
             log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
-                `path MUST BE a json dict: '${path}'`);
+                `path MUST BE a json dict: '${path}'` +
+                (create? ", cannot create" : ""));
             trace_json_masked(kw);
         }
         return default_value;
@@ -2041,7 +2054,9 @@ function kw_get_dict_value(gobj, kw, path, default_value, flag)
 /************************************************************
  *  As the C kw_get_list(): a list found is the answer, and
  *  anything else gives the default back AS GIVEN. KW_CREATE
- *  stores a list default, never a null one. Before gobj-js
+ *  stores a list default, never a null one, and replaces a null
+ *  at the path; over another type it logs and gives the default
+ *  back unwritten (C returns NULL there, SDK 7.26.9). Before gobj-js
  *  7.25.2 the answer went through Array(), which WRAPS its
  *  argument: a list found came back as [list], a default of []
  *  as [[]] and a null one as [null].
@@ -2071,9 +2086,20 @@ function kw_get_list(gobj, kw, path, default_value, flag)
     }
 
     if(!is_array(v)) {
-        if(required) {
+        if(create && v === null && is_array(default_value)) {
+            /*  A null is "no value", as in C (SDK 7.26.9): a create
+             *  replaces it, as a missing key.  */
+            kw_set_dict_value(gobj, kw, path, default_value);
+            return default_value;
+        }
+        if(required || create) {
+            /*  With KW_CREATE the caller means to write inside what it
+             *  gets: the default it gets back is held by nobody, so say
+             *  it. (C returns NULL here; JS frees nothing, and gives the
+             *  default back.)  */
             log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
-                `path MUST BE a json list: '${path}'`);
+                `path MUST BE a json list: '${path}'` +
+                (create? ", cannot create" : ""));
             trace_json_masked(kw);
         }
         return default_value;
@@ -3399,6 +3425,19 @@ function jdb_init(jdb, prefix, duplicate)
 }
 
 /********************************************
+ *  A value as json text for a log line: the error path must not throw
+ *  (a circular record, a BigInt).
+ ********************************************/
+function safe_json_text(v)
+{
+    try {
+        return JSON.stringify(v);
+    } catch(e) {
+        return `<${typeof v}: not json (${e.message})>`;
+    }
+}
+
+/********************************************
  *
  ********************************************/
 function jdb_update(jdb, topic_name, path, kw)
@@ -3410,7 +3449,7 @@ function jdb_update(jdb, topic_name, path, kw)
         return null;
     }
     if(!is_object(kw) || empty_string(kw["id"])) {
-        log_error(`jdb_update: record without id: ${JSON.stringify(kw)}`);
+        log_error(`jdb_update: record without id: ${safe_json_text(kw)}`);
         return null;
     }
     if(!is_string(path)) {
@@ -3489,7 +3528,7 @@ function jdb_delete(jdb, topic_name, path, kw)
         return null;
     }
     if(!is_object(kw) || empty_string(kw["id"])) {
-        log_error(`jdb_delete: record without id: ${JSON.stringify(kw)}`);
+        log_error(`jdb_delete: record without id: ${safe_json_text(kw)}`);
         return null;
     }
     if(!is_string(path)) {
