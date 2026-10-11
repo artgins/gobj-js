@@ -2104,6 +2104,12 @@ function kw_set_dict_value(gobj, kw, path, value)
             `kw_set_dict_value(): path must be a string: ${String(path)}`);
         return -1;
     }
+    if(path === "") {
+        /*  As C: an empty path names no key (it wrote kw[""]).  */
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `kw_set_dict_value(): path empty`);
+        return -1;
+    }
 
     let ss = path.split('`');
     let len = ss.length;
@@ -3369,8 +3375,12 @@ function jdb_init(jdb, prefix, duplicate)
     let topics = kw_get_dict_value(null, jdb, "topics", {}, kw_flag_t.KW_CREATE);
 
     // Create topics defined in schema
+    /*  A key whose value is a dict GROUPS topics, it is not one: a topic
+     *  is created only for a leaf. Created for the group too, it was a
+     *  list, and its children's paths went through a list
+     *  ({schema: {a: {b: []}}} logged "segment 'b' is not an index").  */
     let walk = function(obj, key, value, full_path) {
-        if(key.substring(0, 2) !== "__") {
+        if(key.substring(0, 2) !== "__" && !is_object(value)) {
             kw_get_dict_value(null, topics, full_path, json_deep_copy(type), kw_flag_t.KW_CREATE);
             //trace_msg(sprintf("full_path: '%s', key: %s, value: %j", full_path, key, value));
         }
@@ -3413,6 +3423,10 @@ function jdb_update(jdb, topic_name, path, kw)
             v = kw_get_dict_value(null, v, jdb.hook, [], kw_flag_t.KW_CREATE);
         }
         v = _jdb_get(v, null, id, false);
+    }
+    if(!v || ids.length !== 0) {
+        log_error(`jdb_update: path not found in topic '${topic_name}': '${path}'`);
+        return null;
     }
 
     if(ids.length===0 && v) {
@@ -3472,21 +3486,19 @@ function jdb_delete(jdb, topic_name, path, kw)
         }
         v = _jdb_get(v, null, id, false);
     }
-
-    if(ids.length===0 && v) {
-        if(is_array(v)) {
-            let idx = id_index_in_obj_list(v, kw["id"]);
-            if(idx >= 0) {
-                v.splice(idx, 1);
-            }
-        } else {
-            let v_ = kw_get_dict_value(null, v, jdb.hook, null, 0);
-            let idx = id_index_in_obj_list(v_, kw["id"]);
-            if(idx >= 0) {
-                v_.splice(idx, 1);
-            }
-        }
+    if(!v || ids.length !== 0) {
+        log_error(`jdb_delete: path not found in topic '${topic_name}': '${path}'`);
+        return null;
     }
+
+    let list = is_array(v)? v : kw_get_dict_value(null, v, jdb.hook, null, 0);
+    let idx = id_index_in_obj_list(list, kw["id"]);
+    if(idx < 0) {
+        log_error(`jdb_delete: record not found in topic '${topic_name}': ` +
+            `'${path}' '${kw["id"]}'`);
+        return null;
+    }
+    list.splice(idx, 1);
 
     //trace_msg(JSON.stringify(topic, null, 4));
 
@@ -3498,13 +3510,13 @@ function jdb_delete(jdb, topic_name, path, kw)
  ********************************************/
 function jdb_get_topic(jdb, topic_name)
 {
-    let topics = kw_get_dict_value(null, jdb, "topics", null, 0, false);
+    let topics = kw_get_dict_value(null, jdb, "topics", null, 0);
     if(!topics) {
         log_error("jdb topics section not found");
         trace_msg(jdb);
         return null;
     }
-    let topic = kw_get_dict_value(null, topics, topic_name, null, 0, false);
+    let topic = kw_get_dict_value(null, topics, topic_name, null, 0);
     if(!topic) {
         log_error("jdb topic not found: " + topic_name);
         trace_msg(topics);

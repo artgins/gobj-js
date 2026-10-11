@@ -522,3 +522,60 @@ describe("V7: jdb_init creates what it says it creates", () => {
         expect(jdb_get(jdb, "menu", "home")).toEqual({id: "home", label: "Home", data: []});
     });
 });
+
+/*
+ *  Eighth check of the review (V8).
+ */
+describe("V8: the jdb says what it did not do, kw paths as C", () => {
+    test("jdb_update and jdb_delete with a path or a record that is not there: null, logged", async () => {
+        const { jdb_init, jdb_update, jdb_delete, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const jdb = jdb_init({schema: {menu: []}});
+            jdb_update(jdb, "menu", "", {id: "home"});
+            const base = logged.length;
+            expect(jdb_update(jdb, "menu", "nope", {id: "x"})).toBe(null);
+            expect(jdb_update(jdb, "menu", "home`nope", {id: "x"})).toBe(null);
+            expect(jdb_delete(jdb, "menu", "nope", {id: "x"})).toBe(null);
+            expect(jdb_delete(jdb, "menu", "home", {id: "nope"})).toBe(null);
+            expect(jdb_delete(jdb, "menu", "", {id: "nope"})).toBe(null);
+            expect(logged.length - base).toBe(5);
+            expect(jdb.topics.menu).toEqual([{id: "home", data: []}]);
+            expect(jdb_delete(jdb, "menu", "", {id: "home"})).toBe(jdb.topics.menu);
+            expect(jdb.topics.menu).toEqual([]);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+
+    test("jdb_init makes a topic of a leaf only: a nested schema logs nothing", async () => {
+        const { jdb_init, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const base = logged.length;
+            const jdb = jdb_init({schema: {a: {b: [], c: []}, d: []}});
+            expect(jdb.topics).toEqual({a: {b: [], c: []}, d: []});
+            expect(logged.length - base).toBe(0);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+
+    test("an empty path is refused by the writers, as C", async () => {
+        const { kw_set_dict_value, kw_set_subdict_value, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const kw = {};
+            const base = logged.length;
+            expect(kw_set_dict_value(null, kw, "", 1)).toBe(-1);
+            expect(kw_set_subdict_value(null, kw, "", "k", 1)).toBe(-1);
+            expect(logged.length - base).toBe(2);
+            expect(kw).toEqual({});
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});

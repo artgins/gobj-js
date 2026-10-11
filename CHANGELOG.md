@@ -7,6 +7,22 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.10
+
+Eighth check of the review (yunovatios `REV-CLOUD.md` §V8.4).
+
+- **fix: `jdb_update()` and `jdb_delete()` said nothing when they did
+  nothing.** A record of `path` that is not there, or a record to delete that
+  is not there, gave the topic back as if it had written. Both answer `null`
+  with an error now.
+- **fix: `jdb_init()` made a topic of a dict that groups topics**, so the
+  topics under it went through a list (`{schema: {a: {b: []}}}` logged
+  *"segment 'b' is not an index"*). Only a leaf of the schema is a topic.
+- **fix: an empty path is refused by `kw_set_dict_value()`** (and so by
+  `kw_set_subdict_value()` and a `KW_CREATE` reader), as C does: it wrote
+  `kw[""]` and answered `0`.
+- `jdb_get_topic()` passed an argument `kw_get_dict_value()` does not take.
+
 ## 7.26.9
 
 Seventh check of the review (yunovatios `REV-CLOUD.md` §V7.4).
