@@ -441,3 +441,48 @@ describe("V5: path writers with a path that is not a string", () => {
     });
 });
 
+
+/*
+ *  Sixth check of the review (V6).
+ */
+describe("V6: what is left of the path writers", () => {
+    /*  set_log_callback() replays the backlog to a new sink: count only
+     *  what a call logs, from where the log stood before it.  */
+    test("kw_set_subdict_value with a path it cannot write is -1, logged once, nothing written", async () => {
+        const { kw_set_subdict_value, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            let base = logged.length;
+            expect(kw_set_subdict_value(null, {a: 1}, null, "k", 1)).toBe(-1);
+            expect(logged.length - base).toBe(1);
+
+            base = logged.length;
+            const kw = {a: [1, 2]};
+            expect(kw_set_subdict_value(null, kw, "a`length", "k", 1)).toBe(-1);
+            expect(logged.length - base).toBe(1);
+            expect(kw).toEqual({a: [1, 2]});
+
+            const ok = {};
+            expect(kw_set_subdict_value(null, ok, "x`y", "k", 1)).toBe(0);
+            expect(ok).toEqual({x: {y: {k: 1}}});
+        } finally {
+            set_log_callback(null);
+        }
+    });
+
+    test("jdb_update and jdb_delete refuse a path that is not a string, no TypeError", async () => {
+        const { jdb_update, jdb_delete, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const base = logged.length;
+            const jdb = {hook: "data", topics: {items: {id: "x"}}};
+            expect(jdb_update(jdb, "items", null, {id: "x"})).toBe(null);
+            expect(jdb_delete(jdb, "items", 5, {id: "x"})).toBe(null);
+            expect(logged.slice(base).filter(l => l.includes("path must be a string")).length).toBe(2);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});

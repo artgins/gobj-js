@@ -7,6 +7,20 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.8
+
+Sixth check of the review (yunovatios `REV-CLOUD.md` §V6.5).
+
+- **fix: `kw_set_subdict_value()` answered `0` for a path it could not
+  write**, and wrote the value into a dict that belonged to nobody: it went
+  through `kw_get_dict(KW_CREATE)`, which hands back its default when the
+  create fails. A path that is not a string, a segment that is not an index of
+  its list, or a value at the path that is not an object is now `-1` with one
+  log error, and nothing is written.
+- **fix: `jdb_update()` and `jdb_delete()` threw a TypeError** on a path that
+  is not a string (`path.split()`); they answer `null` with an error now, as
+  for a missing topic.
+
 ## 7.26.7
 
 - **fix: a path that is not a string threw a TypeError** in `kw_delete()` and

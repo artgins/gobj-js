@@ -2157,9 +2157,21 @@ function kw_set_subdict_value(gobj, kw, path, key, value)
         return -1;
     }
 
-    let subdict = kw_get_dict(gobj, kw, path, {}, kw_flag_t.KW_CREATE);
+    /*  Not kw_get_dict(KW_CREATE): when the path cannot be written it
+     *  hands back its default anyway, and the value went into a dict
+     *  that belongs to nobody while this answered 0.  */
+    let subdict = kw_find_path(gobj, kw, path, false);
+    if(subdict === undefined) {
+        if(!is_string(path)) {
+            return -1;  // Error already logged
+        }
+        subdict = {};
+        if(kw_set_dict_value(gobj, kw, path, subdict) < 0) {
+            return -1;  // Error already logged
+        }
+    }
     if(!is_object(subdict)) {
-        log_error("subdict is not an object");
+        log_error(`subdict is not an object: '${path}'`);
         return -1;
     }
     set_own_key(subdict, key, value);
@@ -3351,6 +3363,10 @@ function jdb_update(jdb, topic_name, path, kw)
         trace_msg(kw);
         return null;
     }
+    if(!is_string(path)) {
+        log_error(`jdb_update: path must be a string: ${String(path)}`);
+        return null;
+    }
 
     let ids = path.split('`');
 
@@ -3403,6 +3419,10 @@ function jdb_delete(jdb, topic_name, path, kw)
     if(empty_string(kw["id"])) {
         log_error("jdb_delete: record without id: " + kw);
         trace_msg(kw);
+        return null;
+    }
+    if(!is_string(path)) {
+        log_error(`jdb_delete: path must be a string: ${String(path)}`);
         return null;
     }
 
