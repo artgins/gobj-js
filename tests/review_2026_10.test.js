@@ -870,3 +870,33 @@ describe("V15: a remote log function that logs, a BigInt in the backlog", () => 
         }
     });
 });
+
+/*
+ *  Sixteenth check of the review (V16).
+ */
+describe("V16: the guard is the remote function's only", () => {
+    test("a remote function that logs info: its console line is not swallowed", async () => {
+        /*  A FRESH module, loaded after the spy: the log functions bind the
+         *  console when the module loads.  */
+        const { vi } = await import("vitest");
+        vi.resetModules();
+        const seen = [];
+        const spy = vi.spyOn(console, "info").mockImplementation((...a) => { seen.push(a.join(" ")); });
+        const errspy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const { log_error, log_info, set_remote_log_functions } = await import("../src/helpers.js");
+        let calls = 0;
+        set_remote_log_functions(() => {
+            calls++;
+            log_info("from the remote");
+        });
+        try {
+            log_error("x");
+            expect(calls).toBe(1);
+            expect(seen.some((l) => l.includes("from the remote"))).toBe(true);
+        } finally {
+            set_remote_log_functions(null);
+            spy.mockRestore();
+            errspy.mockRestore();
+        }
+    });
+});

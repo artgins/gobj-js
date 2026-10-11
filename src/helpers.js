@@ -299,17 +299,8 @@ function format_log(format)
  *  over a socket that is gone, an app's handler with a bug -- and a log line
  *  must never take its caller with it. What it threw goes to the console.
  */
-let __in_log_function__ = false;
-
 function call_log_function(fn, ...args)
 {
-    if(__in_log_function__) {
-        /*  A log function that logs (a remote one whose socket logs as it
-         *  fails) came back here: dropped, or it recursed until the stack
-         *  overflowed, thousands of lines deep (REV-CLOUD V15.4).  */
-        return;
-    }
-    __in_log_function__ = true;
     try {
         fn(...args);
     } catch(e) {
@@ -318,8 +309,31 @@ function call_log_function(fn, ...args)
         } catch(e2) {
             /*  the console itself is gone: nothing is left to say it with  */
         }
+    }
+}
+
+/*
+ *  The REMOTE log function (set_remote_log_functions()) is not called again
+ *  from inside itself: one whose socket logs as it fails recursed until the
+ *  stack overflowed. Only the remote call is dropped -- the inner line still
+ *  reaches the console and the sink. The console functions are not guarded:
+ *  a guard shared with them swallowed the console line of any level the
+ *  remote one logged (REV-CLOUD V16.5). Synchronous recursion only: a remote
+ *  function that logs from a timer still loops, so unwire it first on a
+ *  teardown (set_remote_log_functions(null)).
+ */
+let __in_remote_log__ = false;
+
+function call_remote_log_function(fn, ...args)
+{
+    if(__in_remote_log__) {
+        return;
+    }
+    __in_remote_log__ = true;
+    try {
+        call_log_function(fn, ...args);
     } finally {
-        __in_log_function__ = false;
+        __in_remote_log__ = false;
     }
 }
 
@@ -337,7 +351,7 @@ function log_error(format, ...args)
             if(console_wants("error", msg)) {
                 _console.error("%c" + hora + " ERROR: " + String(msg), "color:red");
             }
-            call_log_function(f_error, `${hora} ERROR: ${String(msg)}`);
+            call_remote_log_function(f_error, `${hora} ERROR: ${String(msg)}`);
         }
     }
     emit_log_callback("error", msg, hora);
@@ -357,7 +371,7 @@ function log_warning(format, ...args)
             if(console_wants("warning", msg)) {
                 _console.warn("%c" + hora + " WARNING: " + String(msg), "color:yellow");
             }
-            call_log_function(f_warning, `${hora} WARNING: ${String(msg)}`);
+            call_remote_log_function(f_warning, `${hora} WARNING: ${String(msg)}`);
         }
     }
     emit_log_callback("warning", msg, hora);

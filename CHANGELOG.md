@@ -7,6 +7,20 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.19
+
+Sixteenth check of the review (yunovatios `REV-CLOUD.md` §V16.5).
+
+- **fix: the reentrancy guard of 7.26.18 swallowed console lines.** It was
+  ONE guard for every log function, and `log_info()`, `log_debug()`,
+  `trace_msg()` and `trace_json()` write their console through it: a remote
+  function that logged one of those levels lost its console line (the sink
+  and the backlog still had it). The guard is the remote function's only
+  now. 7.26.18 said "the inner line still reaches the console", which was
+  true only for errors and warnings. The guard stops synchronous recursion;
+  a remote function that logs from a timer still loops, so a teardown
+  unwires it first (`set_remote_log_functions(null)`).
+
 ## 7.26.18
 
 Fifteenth check of the review (yunovatios `REV-CLOUD.md` §V15.4).
