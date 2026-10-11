@@ -541,7 +541,7 @@ describe("V8: the jdb says what it did not do, kw paths as C", () => {
             expect(jdb_delete(jdb, "menu", "home", {id: "nope"})).toBe(null);
             expect(jdb_delete(jdb, "menu", "", {id: "nope"})).toBe(null);
             expect(logged.length - base).toBe(5);
-            expect(jdb.topics.menu).toEqual([{id: "home", data: []}]);
+            expect(jdb.topics.menu).toEqual([{id: "home"}]);       // the failures left nothing (V9)
             expect(jdb_delete(jdb, "menu", "", {id: "home"})).toBe(jdb.topics.menu);
             expect(jdb.topics.menu).toEqual([]);
         } finally {
@@ -577,5 +577,46 @@ describe("V8: the jdb says what it did not do, kw paths as C", () => {
         } finally {
             set_log_callback(null);
         }
+    });
+});
+
+/*
+ *  Ninth check of the review (V9).
+ */
+describe("V9: jdb_update leaves no trace of a failure, and updates at the root", () => {
+    test("a hook that is not a list: null, logged, no TypeError", async () => {
+        const { jdb_init, jdb_update, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const jdb = jdb_init({schema: {menu: []}});
+            jdb_update(jdb, "menu", "", {id: "a", data: 5});
+            const base = logged.length;
+            expect(jdb_update(jdb, "menu", "a", {id: "b"})).toBe(null);
+            expect(logged.slice(base).filter(l => l.includes("is not a list")).length).toBe(1);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+
+    test("a failed update does not create the hook it walked through", async () => {
+        const { jdb_init, jdb_update, set_log_callback } = await import("../src/helpers.js");
+        set_log_callback(() => {});
+        try {
+            const jdb = jdb_init({schema: {menu: []}});
+            jdb_update(jdb, "menu", "", {id: "a"});
+            expect(jdb_update(jdb, "menu", "a`zz", {id: "x"})).toBe(null);
+            expect(jdb.topics.menu).toEqual([{id: "a"}]);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+
+    test("an id already at the root is updated, not added twice", async () => {
+        const { jdb_init, jdb_update } = await import("../src/helpers.js");
+        const jdb = jdb_init({schema: {menu: []}});
+        jdb_update(jdb, "menu", "", {id: "a", label: "A"});
+        jdb_update(jdb, "menu", "", {id: "a", label: "B"});
+        expect(jdb.topics.menu).toEqual([{id: "a", label: "B"}]);
     });
 });

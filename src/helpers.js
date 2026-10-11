@@ -3420,7 +3420,9 @@ function jdb_update(jdb, topic_name, path, kw)
             break;
         }
         if(is_object(v)) {
-            v = kw_get_dict_value(null, v, jdb.hook, [], kw_flag_t.KW_CREATE);
+            /*  Walking creates nothing: an update that fails leaves the
+             *  jdb as it was (it left an empty hook list behind).  */
+            v = kw_get_dict_value(null, v, jdb.hook, null, 0);
         }
         v = _jdb_get(v, null, id, false);
     }
@@ -3429,22 +3431,33 @@ function jdb_update(jdb, topic_name, path, kw)
         return null;
     }
 
-    if(ids.length===0 && v) {
-        if(is_array(v)) {
-            v.push(kw);
-        } else {
-            if(v["id"]===kw["id"]) {
-                json_object_update(v, kw);
-            } else {
-                let v_ = kw_get_dict_value(null, v, jdb.hook, [], kw_flag_t.KW_CREATE);
-                let v__ = _jdb_get(v_, jdb.hook, kw["id"], false);
-                if(v__) {
-                    json_object_update(v__, kw);
-                } else {
-                    v_.push(kw);
-                }
-            }
+    /*  The list the record goes in: the topic itself at the root, else
+     *  the hook list of the record the path ends on -- unless the path
+     *  ends on the record itself.  */
+    let list;
+    if(is_array(v)) {
+        list = v;
+    } else if(v["id"] === kw["id"]) {
+        json_object_update(v, kw);
+        return topic;
+    } else {
+        list = kw_get_dict_value(null, v, jdb.hook, null, 0);
+        if(list === null || list === undefined) {
+            list = [];
+            json_object_set(v, jdb.hook, list);
+        } else if(!is_array(list)) {
+            log_error(`jdb_update: the hook '${jdb.hook}' of '${path}' is not a list ` +
+                `in topic '${topic_name}'`);
+            return null;
         }
+    }
+    /*  An id that is already there is UPDATED, at the root too (it was
+     *  added a second time there).  */
+    let found = _jdb_get(list, jdb.hook, kw["id"], false);
+    if(found) {
+        json_object_update(found, kw);
+    } else {
+        list.push(kw);
     }
 
     //trace_msg(JSON.stringify(topic, null, 4));

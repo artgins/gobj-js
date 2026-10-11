@@ -7,6 +7,21 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.11
+
+Ninth check of the review (yunovatios `REV-CLOUD.md` §V9.4).
+
+- **fix: `jdb_update()` threw a TypeError when the hook of the record its path
+  ends on was not a list** (`5`, a string, an object). It answers `null` with
+  an error now.
+- **fix: a failed `jdb_update()` changed the jdb**: walking the path created
+  the hook list of every record it went through, so ``"a`zz"`` left
+  `a.data = []` behind. Walking creates nothing now.
+- **fix: at the root, an `id` that was already there was added a second
+  time.** It is updated, as under any record.
+- docs: an empty dict in a jdb schema is an empty group (no topic); an empty
+  SEGMENT of a kw path is a key `""` in JS, which C does not agree on.
+
 ## 7.26.10
 
 Eighth check of the review (yunovatios `REV-CLOUD.md` §V8.4).
