@@ -7,6 +7,19 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.18
+
+Fifteenth check of the review (yunovatios `REV-CLOUD.md` §V15.4).
+
+- **a log function that logs is not called again from inside itself**: a
+  remote one (`set_remote_log_functions()`) whose socket logs as it fails
+  recursed until the stack overflowed -- some 2000 lines in 27 ms, enough to
+  fill the backlog of 600. The inner line still reaches the console and the
+  sink; only the remote call is dropped.
+- `log_stringify()` writes a BigInt as text, all its digits: `JSON.stringify()`
+  threw on it, so a `trace_json()` of one replayed from the backlog lost the
+  value.
+
 ## 7.26.17
 
 Fourteenth check of the review (yunovatios `REV-CLOUD.md` §V14.3).

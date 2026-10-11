@@ -204,7 +204,9 @@ function set_remote_log_functions(remote_log_fn)
 function log_stringify(v)
 {
     try {
-        return JSON.stringify(v);
+        /*  A BigInt has no json: as text, all its digits (JSON.stringify
+         *  threw, and a replayed backlog lost the value).  */
+        return JSON.stringify(v, (k, x) => (typeof x === "bigint") ? x.toString() : x);
     } catch(e) {
         try {
             return String(v);
@@ -297,8 +299,17 @@ function format_log(format)
  *  over a socket that is gone, an app's handler with a bug -- and a log line
  *  must never take its caller with it. What it threw goes to the console.
  */
+let __in_log_function__ = false;
+
 function call_log_function(fn, ...args)
 {
+    if(__in_log_function__) {
+        /*  A log function that logs (a remote one whose socket logs as it
+         *  fails) came back here: dropped, or it recursed until the stack
+         *  overflowed, thousands of lines deep (REV-CLOUD V15.4).  */
+        return;
+    }
+    __in_log_function__ = true;
     try {
         fn(...args);
     } catch(e) {
@@ -307,6 +318,8 @@ function call_log_function(fn, ...args)
         } catch(e2) {
             /*  the console itself is gone: nothing is left to say it with  */
         }
+    } finally {
+        __in_log_function__ = false;
     }
 }
 

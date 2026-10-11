@@ -831,3 +831,42 @@ describe("V14: no log path throws, format_log speaks %% %j and BigInt", () => {
         }
     });
 });
+
+/*
+ *  Fifteenth check of the review (V15).
+ */
+describe("V15: a remote log function that logs, a BigInt in the backlog", () => {
+    test("a remote function that logs is called once, not until the stack overflows", async () => {
+        const { log_error, set_remote_log_functions } = await import("../src/helpers.js");
+        let calls = 0;
+        const chatty = (line) => {
+            calls++;
+            log_error("the remote says: %s", line);
+        };
+        set_remote_log_functions(chatty);
+        try {
+            expect(() => log_error("x")).not.toThrow();
+            expect(calls).toBe(1);
+        } finally {
+            set_remote_log_functions(null);
+        }
+    });
+
+    test("a BigInt in a trace_json keeps its digits when the backlog is replayed", async () => {
+        const { trace_json, set_log_callback } = await import("../src/helpers.js");
+        set_log_callback(null);
+        trace_json({n: 12345678901234567890n}, "big");
+        const replayed = [];
+        set_log_callback((level, msg) => {
+            if(level === "json") {
+                replayed.push(msg);
+            }
+        });
+        try {
+            const last = replayed[replayed.length - 1];
+            expect(last).toEqual({n: "12345678901234567890"});
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});
