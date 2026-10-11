@@ -3601,6 +3601,93 @@ function safeSrc(url)
 /***************************************************************************
  *
  ***************************************************************************/
+/***************************************************************************
+ *  Markup that createElement2() inserts AS HTML, said out loud.
+ *
+ *  createElement2() reads a string that starts with '<' as markup. That
+ *  decision depends on the CONTENT of the string, not on who wrote it, so
+ *  a value from a backend or typed by a user that starts with '<' runs as
+ *  html. html_markup() is the explicit way to ask for markup: the string
+ *  is the caller's own (an icon, an svg), never data.
+ *
+ *      ['span', {class: 'icon'}, html_markup('<i class="yi-copy"></i>')]
+ *
+ *  With set_strings_are_text(true) a plain string is ALWAYS text and
+ *  html_markup() is the only way to insert markup.
+ ***************************************************************************/
+class HtmlMarkup {
+    constructor(html) {
+        this.html = html;
+        Object.freeze(this);
+    }
+    toString() {
+        return this.html;
+    }
+}
+
+function html_markup(html)
+{
+    if(typeof html !== "string") {
+        log_error(`html_markup: not a string, type ${typeof html}`);
+        return new HtmlMarkup("");
+    }
+    return new HtmlMarkup(html);
+}
+
+function is_html_markup(v)
+{
+    return v instanceof HtmlMarkup;
+}
+
+/*
+ *  Every node of the markup (createOneHtml() keeps only the first one).
+ */
+function markup_fragment(markup)
+{
+    const template = document.createElement('template');
+    template.innerHTML = markup.html.trim();
+    return template.content;
+}
+
+let __strings_are_text__ = false;
+const __markup_strings_warned__ = new Set();
+
+/***************************************************************************
+ *  The mode of createElement2() for a plain string that starts with '<':
+ *      false (default): it is markup, as it always was.
+ *      true:            it is TEXT; markup is asked for with html_markup().
+ *  An app turns it on once its own code and the libraries it mounts pass
+ *  every deliberate markup through html_markup(). A string that starts
+ *  with '<' is then logged once (a deliberate one not migrated yet, or a
+ *  datum that used to run as html).
+ ***************************************************************************/
+function set_strings_are_text(on)
+{
+    __strings_are_text__ = !!on;
+}
+
+function strings_are_text()
+{
+    return __strings_are_text__;
+}
+
+function warn_markup_string(content)
+{
+    if(__markup_strings_warned__.size >= 100) {
+        return;
+    }
+    const key = content.slice(0, 80);
+    if(__markup_strings_warned__.has(key)) {
+        return;
+    }
+    __markup_strings_warned__.add(key);
+    log_warning(
+        `createElement2: a string that starts with '<' is TEXT ` +
+        `(set_strings_are_text): use html_markup() if it is markup: ` +
+        `${JSON.stringify(key)}`
+    );
+}
+
 function createOneHtml(htmlString)
 {
     // Convert the HTML string to DOM nodes
@@ -3768,6 +3855,7 @@ function createOneHtml(htmlString)
  *                  if string begins with '<' then
  *                      it will be converted to HTMLElement
  *                          content = createOneHtml(string)
+ *                  | html_markup(string): markup, said out loud (any mode)
  *                  ⚠️ So a string is MARKUP when it starts with '<': never
  *                  pass DATA (a value from a backend, a name a user typed)
  *                  as a bare string, or "<img src=x onerror=...>" runs.
@@ -3777,6 +3865,8 @@ function createOneHtml(htmlString)
  *                  appended as it is and a string is always text -- but a
  *                  list whose first item is a string is read as ONE
  *                  description (the string is its tag).
+ *                  With set_strings_are_text(true) a plain string is
+ *                  always text, and markup only comes in html_markup().
  *                  if attrs['i18n'] is not empty then (or 'data-i18n' or 'data_i18next')
 *                          it will be overridden with the translation
  *                          content = translate(attrs['i18n']));
@@ -3853,11 +3943,16 @@ function createElement2(description, translate_fn) {
     /*
      *  Append content, it can be a string or another kids
      */
-    if(is_string(content)) {
+    if(is_html_markup(content)) {
+        el.appendChild(markup_fragment(content));
+    } else if(is_string(content)) {
         content = content.trim();
-        if(content.length > 0 && content[0] === '<') {
+        if(content.length > 0 && content[0] === '<' && !__strings_are_text__) {
             el.appendChild(createOneHtml(content));
         } else {
+            if(content.length > 0 && content[0] === '<') {
+                warn_markup_string(content);
+            }
             if(translate_fn && data_i18next) {
                 let translated = translate_fn(data_i18next);
                 el.textContent = translated?translated:content;
@@ -3883,6 +3978,8 @@ function createElement2(description, translate_fn) {
                         }
                     } else if (child instanceof Node) {
                         el.appendChild(child);
+                    } else if (is_html_markup(child)) {
+                        el.appendChild(markup_fragment(child));
                     } else if (is_string(child)) {
                         el.appendChild(document.createTextNode(child));
                     } else if (child !== null && child !== undefined && child !== false) {
@@ -4749,6 +4846,10 @@ export {
     escapeHtml,
     safeSrc,
     createOneHtml,
+    html_markup,
+    is_html_markup,
+    set_strings_are_text,
+    strings_are_text,
     createElement2,
     getPositionRelativeToBody,
     parseSVG,

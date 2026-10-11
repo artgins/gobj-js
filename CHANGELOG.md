@@ -7,6 +7,21 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.3
+
+- **feature: `html_markup(string)`, markup said out loud.** `createElement2()`
+  reads a plain string that starts with `<` as html, so whether a string runs
+  depends on its CONTENT, not on who wrote it: a value from a backend that
+  starts with `<` runs. `html_markup('<i class="yi-copy"></i>')` is the explicit
+  way to ask for markup (in the third slot or in a list of children; every node
+  of it is kept, not only the first). `is_html_markup()` tells it apart.
+- **feature: `set_strings_are_text(true)`.** Opt-in mode of `createElement2()`
+  in which a plain string is ALWAYS text and `html_markup()` is the only way to
+  insert markup. A string that starts with `<` is then logged once (a
+  deliberate one not migrated yet, or a datum that used to run as html). The
+  default is unchanged: an app turns it on once its code and the libraries it
+  mounts are migrated. The default flips only when every consumer is.
+
 ## 7.26.2
 
 Third check of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V2).
