@@ -7,6 +7,40 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.2
+
+Third check of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V2).
+
+- **fix: a url the browser refuses opened nothing and said nothing.** When
+  `new WebSocket()` THROWS (a malformed url, typically one edited by hand),
+  `C_IEVENT_CLI` only logged: no `EV_ON_OPEN_ERROR`, no retry, the link left
+  running in `ST_DISCONNECTED` with no timer. Up to 7.26.0 the warning arrived
+  by accident, with the stale close of the previous socket. The failure is now
+  posted as the close of a socket that never opened, so it publishes
+  `EV_ON_OPEN_ERROR` and arms the retry, at the start and on every retry. A
+  posted failure of a socket that a later start replaced is ignored.
+- **fix: a deliberate stop while the socket was still connecting published
+  `EV_ON_OPEN_ERROR`.** Nothing failed to open; it publishes nothing now. A
+  stop with a session open still publishes `EV_ON_CLOSE`.
+- **security: the copies by assignment that were left.** `flat_diff()` (a
+  `__proto__` id was lost, so diff → apply did not make the round trip),
+  `kwid_new_dict()`, `kw_set_subdict_value()`, `duplicate_objects()`, the jdb
+  update, and the `Object.assign()` of `gobj.js` and `C_IEVENT_CLI` — the
+  publication twin, the subscription match and the injected kw, where a kw
+  parsed from the backend with an own `__proto__` reached the subscriber with
+  a prototype the backend chose. All copy own keys now. The 12
+  `x.hasOwnProperty()` of `gobj.js` are `.call()` too.
+- **fix: `kw_find_path()` read `length` of a list as an item.** In a list a
+  segment is an index (digits only, read as C's `atoi()` reads them); any other
+  segment is not found. C answers item 0 for a segment that is not a number
+  (`atoi()`); that difference is left on the C side.
+- **fix: `createElement2()` dropped a Text node (or an svg) in a LIST of
+  children, in silence.** A node is appended as it is, a string in that list
+  is appended as TEXT (never markup), and any other non-null child is logged.
+  A bare string in the third slot is still markup when it starts with `<`
+  (that contract is unchanged; see its docstring).
+- tests: run with `jsdom` (new devDependency) for the DOM helpers.
+
 ## 7.26.1
 
 Second check of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V).

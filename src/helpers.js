@@ -717,7 +717,7 @@ function duplicate_objects(...sourceObjects)
     const result = {};
     for (const obj of sourceObjects) {
         const clonedObj = structuredClone(obj); // jshint ignore:line
-        Object.assign(result, clonedObj); // Merge into the result object
+        json_object_update(result, clonedObj); // own keys, never the __proto__ setter
     }
     return result;
 }
@@ -1502,6 +1502,17 @@ function kw_find_path(gobj, kw, path, verbose)
     let ss = path.split('`');
     let len = ss.length;
     for(let i=0; i<len; i++) {
+        if(is_array(kw)) {
+            /*  In a list a segment is an index, as in C. "length" is an
+             *  own key of a javascript array, but it is not an item.  */
+            if(!/^[0-9]+$/.test(ss[i])) {
+                if(verbose) {
+                    log_error(`${prefix}path not found: '${path}'`);
+                }
+                return undefined;
+            }
+            ss[i] = String(Number(ss[i]));
+        }
         if(is_prototype_segment(kw, ss[i])) {
             if(verbose) {
                 log_error(`${prefix}path not found: '${path}'`);
@@ -2096,7 +2107,7 @@ function kw_set_subdict_value(gobj, kw, path, key, value)
         log_error("subdict is not an object");
         return -1;
     }
-    subdict[key] = value;
+    set_own_key(subdict, key, value);
 
     return 0;
 }
@@ -2655,7 +2666,7 @@ function kwid_new_dict(gobj, kw, path)
              *  said which row had gone or why.  */
             let id = kw_get_str(gobj, kv, "id", "", kw_flag_t.KW_REQUIRED);
             if(!empty_string(id)) {
-                new_dict[id] = kv;
+                set_own_key(new_dict, id, kv);
             }
         }
 
@@ -3305,12 +3316,12 @@ function jdb_update(jdb, topic_name, path, kw)
             v.push(kw);
         } else {
             if(v["id"]===kw["id"]) {
-                Object.assign(v, kw);
+                json_object_update(v, kw);
             } else {
                 let v_ = kw_get_dict_value(null, v, jdb.hook, [], 1);
                 let v__ = _jdb_get(v_, jdb.hook, kw["id"], false);
                 if(v__) {
-                    Object.assign(v__, kw);
+                    json_object_update(v__, kw);
                 } else {
                     v_.push(kw);
                 }
@@ -3762,6 +3773,10 @@ function createOneHtml(htmlString)
  *                  as a bare string, or "<img src=x onerror=...>" runs.
  *                  Pass it as a Text node, which is always text:
  *                      ['span', {}, document.createTextNode(value)]
+ *                  In a LIST of children a node (element, svg, Text) is
+ *                  appended as it is and a string is always text -- but a
+ *                  list whose first item is a string is read as ONE
+ *                  description (the string is its tag).
  *                  if attrs['i18n'] is not empty then (or 'data-i18n' or 'data_i18next')
 *                          it will be overridden with the translation
  *                          content = translate(attrs['i18n']));
@@ -3856,11 +3871,22 @@ function createElement2(description, translate_fn) {
                 el.appendChild(createElement2(content, translate_fn));
             } else {
                 for (let child of content) {
-                    // Check if the child is an array description or an HTMLElement
-                    if (Array.isArray(child) && child.length > 0) {
-                        el.appendChild(createElement2(child, translate_fn));
-                    } else if (child instanceof HTMLElement) {
+                    /*
+                     *  A description, a node (element, svg, Text), or a
+                     *  string -- which here is always TEXT, never html.
+                     *  Up to 7.26.1 a Text node or a string in this list
+                     *  was dropped in silence.
+                     */
+                    if (Array.isArray(child)) {
+                        if(child.length > 0) {
+                            el.appendChild(createElement2(child, translate_fn));
+                        }
+                    } else if (child instanceof Node) {
                         el.appendChild(child);
+                    } else if (is_string(child)) {
+                        el.appendChild(document.createTextNode(child));
+                    } else if (child !== null && child !== undefined && child !== false) {
+                        log_error(`createElement2: child ignored, type ${typeof child}`);
                     }
                 }
             }
@@ -4556,14 +4582,14 @@ function flat_diff(flat1, flat2)
 
     for(const key of Object.keys(a)) {
         if(!Object.prototype.hasOwnProperty.call(b, key)) {
-            diff.removed[key] = a[key];
+            set_own_key(diff.removed, key, a[key]);
         } else if(!flat_value_equal(a[key], b[key])) {
-            diff.changed[key] = {from: a[key], to: b[key]};
+            set_own_key(diff.changed, key, {from: a[key], to: b[key]});
         }
     }
     for(const key of Object.keys(b)) {
         if(!Object.prototype.hasOwnProperty.call(a, key)) {
-            diff.added[key] = b[key];
+            set_own_key(diff.added, key, b[key]);
         }
     }
 

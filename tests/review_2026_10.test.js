@@ -318,3 +318,44 @@ describe("an action that throws", () => {
         gobj_destroy(g);
     });
 });
+
+/*
+ *  Second check of the review (V2).
+ */
+describe("V2: own keys when copying, list paths, children lists", () => {
+    test("flat_diff + flat_apply carry a __proto__ key there and back", async () => {
+        const { json2flat, flat_diff, flat_apply } = await import("../src/helpers.js");
+        const b = JSON.parse('{"__proto__": 5, "a": 1}');
+        const diff = flat_diff({}, json2flat(b));
+        expect(Object.keys(diff.added).sort()).toEqual(["__proto__", "a"]);
+        const flat = flat_apply({}, diff);
+        expect(Object.prototype.hasOwnProperty.call(flat, "__proto__")).toBe(true);
+        expect(Object.getPrototypeOf(flat)).toBe(Object.prototype);
+    });
+
+    test("kwid_new_dict and kw_set_subdict_value write own keys", async () => {
+        const { kwid_new_dict, kw_set_subdict_value } = await import("../src/helpers.js");
+        const d = kwid_new_dict(null, [{id: "__proto__", v: 1}]);
+        expect(Object.getPrototypeOf(d)).toBe(Object.prototype);
+        expect(d["__proto__"]).toEqual({id: "__proto__", v: 1});
+        const kw = {};
+        kw_set_subdict_value(null, kw, "sub", "__proto__", {x: 1});
+        expect(Object.getPrototypeOf(kw.sub)).toBe(Object.prototype);
+        expect(kw.sub.x).toBeUndefined();
+    });
+
+    test("duplicate_objects keeps a parsed __proto__ as a key", async () => {
+        const { duplicate_objects } = await import("../src/helpers.js");
+        const r = duplicate_objects(JSON.parse('{"__proto__": {"polluted": 1}}'));
+        expect(Object.getPrototypeOf(r)).toBe(Object.prototype);
+        expect(r.polluted).toBeUndefined();
+    });
+
+    test("kw_find_path walks a list by index only", async () => {
+        const { kw_find_path } = await import("../src/helpers.js");
+        expect(kw_find_path(null, {a: [1, 2]}, "a`length", false)).toBeUndefined();
+        expect(kw_find_path(null, {a: [1, 2]}, "a`1", false)).toBe(2);
+        expect(kw_find_path(null, {a: [1, 2]}, "a`01", false)).toBe(2);   // atoi, as C
+    });
+
+});

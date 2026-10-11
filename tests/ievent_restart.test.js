@@ -208,4 +208,48 @@ describe("C_IEVENT_CLI stopped and started in the same turn", () => {
         expect(published).toEqual(["EV_ON_CLOSE"]);
         gobj_stop(ievent);
     });
+
+    test("a url the browser refuses still publishes EV_ON_OPEN_ERROR and retries", async () => {
+        const ievent = gobj_create_service("link4", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://bad",
+        }, yuno);
+        const listener = gobj_create_pure_child("link4_listener", "C_PROBE_LINK_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        published.length = 0;
+
+        const n_sockets = sockets.length;
+        gobj_start(ievent);
+        expect(sockets.length).toBe(n_sockets);     // the constructor threw
+        expect(published).toEqual([]);              // posted, not sent from mt_start
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(published).toEqual(["EV_ON_OPEN_ERROR"]);
+        expect(gobj_current_state(ievent)).toBe("ST_DISCONNECTED");
+
+        /*  And the retry is armed (next_retry() moved the backoff).  */
+        expect(ievent.priv.retry_ms).toBeGreaterThan(0);
+        gobj_stop(ievent);
+    });
+
+    test("a stop while still connecting publishes nothing", () => {
+        const ievent = gobj_create_service("link5", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://slow",
+        }, yuno);
+        const listener = gobj_create_pure_child("link5_listener", "C_PROBE_LINK_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        published.length = 0;
+
+        gobj_start(ievent);
+        const ws = sockets[sockets.length - 1];
+        gobj_stop(ievent);
+        ws.fire_close();
+        expect(published).toEqual([]);
+        expect(gobj_current_state(ievent)).toBe("ST_DISCONNECTED");
+    });
 });

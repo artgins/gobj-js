@@ -247,3 +247,21 @@ describe("C_IEVENT_CLI injecting a published event", () => {
         gobj_destroy(pub);
     });
 });
+
+describe("the twin is a copy of OWN keys", () => {
+    test("a parsed kw with an own __proto__ does not pick the twin's prototype", () => {
+        const pub = gobj_create("pub_proto", "C_TWIN_PUB", {}, yuno);
+        gobj_start(pub);
+        const sub = make_sub("proto_sub");
+        gobj_subscribe_event(pub, EV_X, {__global__: {g: 1}}, sub);
+
+        const kw = JSON.parse('{"__proto__": {"polluted": "yes"}, "a": 1}');
+        gobj_publish_event(pub, EV_X, kw);
+
+        const got = received("proto_sub");
+        expect(got.length).toBe(1);
+        expect(Object.getPrototypeOf(got[0].kw)).toBe(Object.prototype);
+        expect(got[0].kw.polluted).toBeUndefined();
+        expect(got[0].kw.g).toBe(1);
+    });
+});

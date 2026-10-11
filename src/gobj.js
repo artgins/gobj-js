@@ -1121,7 +1121,7 @@ function json2item(gobj, sdata, it, jn_value_)
     sdata[it.name] = jn_value2;
 
     // New, write automatically the defined private data, in JS is possible do it
-    if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(it.name)) {
+    if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, it.name)) {
         gobj.priv[it.name] = jn_value2;
     }
 
@@ -1805,7 +1805,7 @@ function _json_object_update_config(destination, source) {
         return destination;
     }
     for (let property in source) {
-        if (source.hasOwnProperty(property) && destination.hasOwnProperty(property)) {
+        if (Object.prototype.hasOwnProperty.call(source, property) && Object.prototype.hasOwnProperty.call(destination, property)) {
             if(is_object(destination[property]) && is_object(source[property])) {
                 json_object_update(
                     destination[property],
@@ -3311,7 +3311,7 @@ function gobj_read_attr(gobj, name, src)
     // TODO implement inherited attributes
     // TODO if attribute not found then find in bottom gobj
     if(name in jn_attrs) {
-        if(jn_attrs.hasOwnProperty(name)) {
+        if(Object.prototype.hasOwnProperty.call(jn_attrs, name)) {
             // TODO must be a item2json, to call mt_reading
             let value = jn_attrs[name];
             if(gobj.gclass.gmt.mt_reading) {
@@ -3481,11 +3481,11 @@ function gobj_write_attr(
     if(ss.length<=1) {
         let key = path;
         if(key in jn_attrs) {
-            if(jn_attrs.hasOwnProperty(key)) {
+            if(Object.prototype.hasOwnProperty.call(jn_attrs, key)) {
                 jn_attrs[key] = value;
 
                 // New, write automatically the defined private data, in JS is possible do it
-                if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(key)) {
+                if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, key)) {
                     gobj.priv[key] = value;
                 }
 
@@ -3517,11 +3517,11 @@ function gobj_write_attr(
         let jn_attrs = gobj.jn_attrs;
 
         if(key in jn_attrs) {
-            if(jn_attrs.hasOwnProperty(key)) {
+            if(Object.prototype.hasOwnProperty.call(jn_attrs, key)) {
                 jn_attrs[key] = value;
 
                 // New, write automatically the defined private data, in JS is possible do it
-                if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(key)) {
+                if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, key)) {
                     gobj.priv[key] = value;
                 }
 
@@ -3572,7 +3572,7 @@ function sdata_write_default_values(
 
             // New, write automatically the defined private data, in JS is possible do it
             // (the value set, not set_default()'s return, which is always 0)
-            if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(it.name)) {
+            if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, it.name)) {
                 gobj.priv[it.name] = gobj.jn_attrs[it.name];
             }
 
@@ -3633,7 +3633,7 @@ function gobj_write_bool_attr(gobj, name, value)
         hs[name] = parseBoolean(value);
 
         // New, write automatically the defined private data, in JS is possible do it
-        if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(name)) {
+        if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, name)) {
             gobj.priv[name] = hs[name];     // the coerced value, as the attr holds it
         }
 
@@ -3661,7 +3661,7 @@ function gobj_write_integer_attr(gobj, name, value)
         hs[name] = parseInt(value);
 
         // New, write automatically the defined private data, in JS is possible do it
-        if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(name)) {
+        if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, name)) {
             gobj.priv[name] = hs[name];     // the coerced value, as the attr holds it
         }
 
@@ -3689,7 +3689,7 @@ function gobj_write_str_attr(gobj, name, value)
         hs[name] = String(value);
 
         // New, write automatically the defined private data, in JS is possible do it
-        if(is_object(gobj.priv) && gobj.priv.hasOwnProperty(name)) {
+        if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, name)) {
             gobj.priv[name] = hs[name];     // the coerced value, as the attr holds it
         }
 
@@ -4397,8 +4397,8 @@ function _subscription_match_kw(kw, event)
         return {kw: kw, renamed_event: ""};
     }
 
-    let kw_match = Object.assign({}, kw);
-    let config_match = Object.assign({}, __config__);
+    let kw_match = json_object_update({}, kw);
+    let config_match = json_object_update({}, __config__);
     kw_match.__config__ = config_match;
     let renamed_event = "";
 
@@ -4409,8 +4409,9 @@ function _subscription_match_kw(kw, event)
         renamed_event = event_type.event_name;
         delete config_match.__rename_event_name__;
         if(event && json_size(kw_match.__global__) > 0) {
-            kw_match.__global__ = Object.assign(
-                {}, kw_match.__global__, {__original_event_name__: event}
+            kw_match.__global__ = json_object_update(
+                json_object_update({}, kw_match.__global__),
+                {__original_event_name__: event}
             );
         }
     }
@@ -5240,7 +5241,7 @@ function gobj_publish_event(
              */
             let kw2publish = kw;
             if(json_size(__local__)>0 || json_size(__global__)>0) {
-                kw2publish = Object.assign({}, kw);
+                kw2publish = json_object_update({}, kw);
             }
 
             /*

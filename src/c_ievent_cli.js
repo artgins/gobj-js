@@ -23,6 +23,7 @@ import {
     gobj_yuno,
     gobj_trace_level,
     gobj_send_event,
+    gobj_post_event,
     gobj_publish_event,
     gobj_read_integer_attr,
     gobj_read_str_attr,
@@ -65,6 +66,7 @@ import {
     trace_json,
     trace_json_masked,
     json_deep_copy,
+    json_object_update,
     is_object,
     json_object_del,
     set_remote_log_functions, kw_flag_t,
@@ -417,7 +419,7 @@ function mt_inject_event(gobj, event, kw, src)
      *  reached every subscriber after it, and the publisher. The copy is
      *  shallow, except __md_iev__, whose stacks are pushed in place.
      */
-    kw = Object.assign({}, is_object(kw) ? kw : {});
+    kw = json_object_update({}, is_object(kw) ? kw : {});
     if(is_object(kw["__md_iev__"])) {
         kw["__md_iev__"] = json_deep_copy(kw["__md_iev__"]);
     }
@@ -590,6 +592,21 @@ function setup_websocket(gobj)
         websocket = new WebSocket(url);
     } catch (e) {
         log_error(`${gobj_short_name(gobj)}: Cannot open WebSocket to '${url}', Error: ${e.message}`);
+        /*
+         *  A url the browser refuses to even try (it throws instead of
+         *  closing) is still a failed open: it goes the way of a close
+         *  before the open, so EV_ON_OPEN_ERROR is published and the
+         *  retry is armed. Posted, not sent: we may be inside mt_start().
+         */
+        gobj_post_event(
+            gobj,
+            "EV_ON_CLOSE",
+            {
+                url, ws_seq,
+                code: 1006, reason: e.message, was_clean: false
+            },
+            gobj
+        );
         return null;
     }
 
@@ -1006,6 +1023,14 @@ function ac_on_close(gobj, event, kw, src)
     let priv = gobj.priv;
     let url = kw.url;
 
+    if(kw.ws_seq !== undefined && kw.ws_seq !== priv.ws_seq) {
+        /*
+         *  A posted failure of a socket that a later start already
+         *  replaced: that start ended its session.
+         */
+        return 0;
+    }
+
     set_remote_log_functions(); // clean remote log
 
     log_warning(`${gobj_short_name(gobj)}: WebSocket closed ${url} (Code: ${kw.code}, Reason: "${kw.reason}", Clean: ${kw.was_clean})`);
@@ -1038,6 +1063,11 @@ function ac_on_close(gobj, event, kw, src)
                 remote_yuno_service:    priv.remote_yuno_service
             }
         );
+    } else if(!gobj_is_running(gobj)) {
+        /*
+         *  A deliberate stop while the socket was still connecting: no
+         *  session ended and no open failed, there is nothing to tell.
+         */
     } else {
         /*
          *  WebSocket closed BEFORE EV_ON_OPEN ever fired — typical
