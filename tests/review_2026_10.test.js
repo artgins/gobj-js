@@ -421,3 +421,23 @@ describe("V4: kw_delete as C", () => {
     });
 });
 
+describe("V5: path writers with a path that is not a string", () => {
+    test("kw_delete and kw_set_dict_value log and answer -1, no TypeError", async () => {
+        const { kw_delete, kw_set_dict_value, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            expect(kw_delete(null, {a: 1}, null)).toBe(-1);
+            expect(kw_delete(null, {a: 1}, 5)).toBe(-1);
+            expect(kw_set_dict_value(null, {a: 1}, null, 1)).toBe(-1);
+            expect(logged.filter(l => l.includes("path must be a string")).length).toBe(3);
+
+            logged.length = 0;
+            expect(kw_delete(null, {a: 1}, "b")).toBe(-1);
+            expect(logged.some(l => l.includes("path not found"))).toBe(true);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});
+

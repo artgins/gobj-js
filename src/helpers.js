@@ -1584,6 +1584,10 @@ function kw_delete(gobj, kw, path)
      *  TypeError here, and a missing key or parent answered 0 in silence.
      */
     const prefix = gobj ? gobj_short_name(gobj) + ": " : "";
+    if(!is_string(path)) {
+        log_error(`${prefix}kw_delete(): path must be a string: ${String(path)}`);
+        return -1;
+    }
     let [path_, k] = strrchr_split(path, '`');
     let v = kw;
     if(!empty_string(k)) {
@@ -2093,6 +2097,11 @@ function kw_set_dict_value(gobj, kw, path, value)
 
     if(!is_object(kw)) {
         log_error("kw is not an object");
+        return -1;
+    }
+    if(!is_string(path)) {
+        log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+            `kw_set_dict_value(): path must be a string: ${String(path)}`);
         return -1;
     }
 

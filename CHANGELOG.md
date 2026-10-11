@@ -7,6 +7,13 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.7
+
+- **fix: a path that is not a string threw a TypeError** in `kw_delete()` and
+  `kw_set_dict_value()` (`path.split()` / `lastIndexOf()` on `null` or a
+  number). Both answer `-1` with an error now, as `kw_find_path()` already
+  did. The test checks the errors are logged (yunovatios `REV-CLOUD.md` §V5.3).
+
 ## 7.26.6
 
 Fifth check of the review (yunovatios `REV-CLOUD.md` §V4).
