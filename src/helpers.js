@@ -218,6 +218,28 @@ function log_stringify(v)
     }
 }
 
+/*
+ *  String() throws for an object with no prototype, a toString that throws
+ *  or a revoked Proxy; a log line must print whatever it is given.
+ */
+function log_string(v)
+{
+    try {
+        return String(v);
+    } catch(e) {
+        return log_stringify(v);
+    }
+}
+
+function log_number(parse, v)
+{
+    try {
+        return parse(v);
+    } catch(e) {
+        return log_string(v);
+    }
+}
+
 function format_log(format)
 {
     const args = Array.prototype.slice.call(arguments);
@@ -233,20 +255,20 @@ function format_log(format)
         output = format.replace(/%[sdifoO]/g, match => {
             const val = args[i++];
             switch (match) {
-                case '%s': return String(val);
+                case '%s': return log_string(val);
                 case '%d':
-                case '%i': return parseInt(val);
-                case '%f': return parseFloat(val);
+                case '%i': return log_number(parseInt, val);
+                case '%f': return log_number(parseFloat, val);
                 case '%o':
                 case '%O':
-                    return typeof val === 'object' ? log_stringify(val) : String(val);
+                    return typeof val === 'object' ? log_stringify(val) : log_string(val);
                 default: return match;
             }
         });
 
         // Append any remaining arguments (e.g. raw objects or extra messages)
         const rest = args.slice(i).map(arg =>
-            typeof arg === 'object' ? log_stringify(arg) : String(arg)
+            typeof arg === 'object' ? log_stringify(arg) : log_string(arg)
         );
 
         if (rest.length > 0) {
@@ -255,7 +277,7 @@ function format_log(format)
     } else {
         // If no format string, join all args
         output = args.map(arg =>
-            typeof arg === 'object' ? log_stringify(arg) : String(arg)
+            typeof arg === 'object' ? log_stringify(arg) : log_string(arg)
         ).join(" ");
     }
 
@@ -2003,6 +2025,15 @@ function kw_get_dict(gobj, kw, path, default_value, flag)
             kw_set_dict_value(gobj, kw, path, default_value);
             return default_value;
         }
+        if(create && v === null) {
+            /*  A null with no dict default: as a missing key, and said
+             *  as one only when it is required (as C).  */
+            if(required) {
+                log_error(`path not found: '${path}'`);
+                trace_json_masked(kw);
+            }
+            return default_value;
+        }
         if(required || create) {
             /*  With KW_CREATE the caller means to write inside what it
              *  gets: the default it gets back is held by nobody, so say
@@ -2097,6 +2128,15 @@ function kw_get_list(gobj, kw, path, default_value, flag)
             /*  A null is "no value", as in C (SDK 7.26.9): a create
              *  replaces it, as a missing key.  */
             kw_set_dict_value(gobj, kw, path, default_value);
+            return default_value;
+        }
+        if(create && v === null) {
+            /*  A null with no list default: as a missing key, and said
+             *  as one only when it is required (as C).  */
+            if(required) {
+                log_error(`path not found: '${path}'`);
+                trace_json_masked(kw);
+            }
             return default_value;
         }
         if(required || create) {
@@ -2478,8 +2518,8 @@ function kw_collect(gobj, kw, jn_filter, match_fn)
         ["$key1", "$key2", ...]
         {"$key1":*, "$key2":*, ...}
 
-    It's not a deep copy, new keys are the paths.
-    If paths are empty return kw
+    It's not a deep copy. A key is a KEY, not a path (as C, SDK 7.26.9).
+    If keys are empty return kw
  *************************************************************/
 function kw_clone_by_keys(gobj, kw, keys, verbose)    // old filter_dict
 {
@@ -2530,8 +2570,8 @@ function kw_clone_by_keys(gobj, kw, keys, verbose)    // old filter_dict
         ["$key1", "$key2", ...]
         {"$key1":*, "$key2":*, ...}
 
-    It's not a deep copy, new keys are the paths.
-    If paths are empty return empty
+    It's not a deep copy. A key is a KEY, not a path (as C, SDK 7.26.9).
+    If keys are empty return empty
  ***************************************************************************/
 function kw_clone_by_not_keys(
     gobj,

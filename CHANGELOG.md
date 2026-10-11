@@ -7,6 +7,24 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.16
+
+Thirteenth check of the review (yunovatios `REV-CLOUD.md` §V13.4).
+
+- **fix: `format_log()` could still throw.** `%s` went through `String()` and
+  `%d`/`%f` through `parseInt()`/`parseFloat()`, which throw on an object with
+  no prototype, a `toString()` that throws, a revoked Proxy or (for the
+  numbers) a Symbol -- so `log_error("%s", x)` threw. Every conversion of a
+  log line is guarded now; what cannot be a string is printed as json, or as
+  `<type: not printable>`. 7.26.15 said "a log line can no longer throw",
+  and it could.
+- **`kw_get_dict()` / `kw_get_list()` with `KW_CREATE` over a `null` and no
+  default of the right type** treat it as a missing key, as C does since SDK
+  7.26.9: silent, or "path not found" with `KW_REQUIRED`. They logged
+  "cannot create" for it.
+- docs: `kw_clone_by_keys()` / `kw_clone_by_not_keys()` no longer say "new
+  keys are the paths": they read keys as keys, now as C does.
+
 ## 7.26.15
 
 Twelfth check of the review (yunovatios `REV-CLOUD.md` §V12.4).

@@ -724,3 +724,55 @@ describe("V12: an error line cannot throw, whatever the record", () => {
         }
     });
 });
+
+/*
+ *  Thirteenth check of the review (V13).
+ */
+describe("V13: a format that cannot throw, a required null said as missing", () => {
+    test("%s, %d and %f print what they are given", async () => {
+        const { log_error, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(String(msg)); });
+        try {
+            const bare = Object.create(null);
+            bare.a = 1;
+            const throwing = {toString() { throw new Error("no"); }};
+            const { proxy, revoke } = Proxy.revocable({}, {});
+            revoke();
+            const base = logged.length;
+            expect(() => log_error("s %s", bare)).not.toThrow();
+            expect(() => log_error("s %s", throwing)).not.toThrow();
+            expect(() => log_error("d %d", Symbol("x"))).not.toThrow();
+            expect(() => log_error("f %f", bare)).not.toThrow();
+            expect(() => log_error("s %s", proxy)).not.toThrow();
+            expect(() => log_error("rest", bare)).not.toThrow();
+            expect(logged.length - base).toBe(6);
+            expect(logged[base]).toContain('{"a":1}');
+            expect(logged[base + 2]).toContain("Symbol(x)");
+        } finally {
+            set_log_callback(null);
+        }
+    });
+
+    test("KW_CREATE|KW_REQUIRED over a null with no default: as a missing key", async () => {
+        const { kw_get_dict, kw_get_list, kw_flag_t, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(String(msg)); });
+        try {
+            const kw = {d: null, l: null};
+            const base = logged.length;
+            expect(kw_get_dict(null, kw, "d", null, kw_flag_t.KW_CREATE)).toBe(null);
+            expect(kw_get_list(null, kw, "l", null, kw_flag_t.KW_CREATE)).toBe(null);
+            expect(logged.length - base).toBe(0);
+            const flag = kw_flag_t.KW_CREATE | kw_flag_t.KW_REQUIRED;
+            expect(kw_get_dict(null, kw, "d", null, flag)).toBe(null);
+            expect(kw_get_list(null, kw, "l", null, flag)).toBe(null);
+            const said = logged.slice(base);
+            expect(said.filter(m => m.includes("path not found")).length).toBe(2);
+            expect(said.filter(m => m.includes("cannot create")).length).toBe(0);
+            expect(kw).toEqual({d: null, l: null});
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});
