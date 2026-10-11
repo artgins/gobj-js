@@ -776,3 +776,58 @@ describe("V13: a format that cannot throw, a required null said as missing", () 
         }
     });
 });
+
+/*
+ *  Fourteenth check of the review (V14).
+ */
+describe("V14: no log path throws, format_log speaks %% %j and BigInt", () => {
+    test("trace_json and trace_json_masked keep a hostile value without throwing", async () => {
+        const { trace_json, trace_json_masked, set_log_callback } = await import("../src/helpers.js");
+        const seen = [];
+        set_log_callback((level, msg) => { seen.push(level); });
+        try {
+            const bare = Object.create(null);
+            bare.self = bare;
+            const both = {toJSON() { throw new Error("j"); }, toString() { throw new Error("s"); }};
+            const { proxy, revoke } = Proxy.revocable({}, {});
+            revoke();
+            expect(() => trace_json(bare)).not.toThrow();
+            expect(() => trace_json(both)).not.toThrow();
+            expect(() => trace_json(proxy)).not.toThrow();
+            expect(() => trace_json_masked(both)).not.toThrow();
+            expect(() => trace_json({a: 1}, Symbol("m"))).not.toThrow();
+            expect(() => trace_json({a: 1}, both)).not.toThrow();
+        } finally {
+            set_log_callback(null);
+        }
+    });
+
+    test("a remote log function that throws does not take log_error with it", async () => {
+        const { log_error, log_warning, set_remote_log_functions } = await import("../src/helpers.js");
+        const thrower = () => { throw new Error("socket gone"); };
+        set_remote_log_functions(thrower);
+        try {
+            expect(() => log_error("x %s", "y")).not.toThrow();
+            expect(() => log_warning("x %s", "y")).not.toThrow();
+        } finally {
+            set_remote_log_functions(null);
+        }
+    });
+
+    test("%% is a percent, %j is json, a BigInt keeps its digits", async () => {
+        const { log_error, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(String(msg)); });
+        try {
+            const base = logged.length;
+            log_error("100%% of %s", "it");
+            log_error("obj %j", {a: 1});
+            log_error("big %d", 12345678901234567890n);
+            expect(logged[base]).toBe("100% of it");
+            expect(logged[base + 1]).toBe('obj {"a":1}');
+            expect(logged[base + 2]).toBe("big 12345678901234567890");
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});

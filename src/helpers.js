@@ -70,11 +70,7 @@ function keep_in_backlog(level, msg, hora)
 {
     let m = msg;
     if(level === "json") {
-        try {
-            m = JSON.stringify(msg);
-        } catch(e) {
-            m = String(msg);
-        }
+        m = log_stringify(msg);     // String() threw too (no prototype, a revoked Proxy)
     }
     __log_backlog__.push([level, m, hora]);
     if(__log_backlog__.length > LOG_BACKLOG_MAX) {
@@ -252,13 +248,25 @@ function format_log(format)
             return format;
         }
         let i = 1;
-        output = format.replace(/%[sdifoO]/g, match => {
+        output = format.replace(/%[sdifoOj%]/g, match => {
+            if(match === '%%') {
+                return '%';     // takes no argument
+            }
             const val = args[i++];
             switch (match) {
                 case '%s': return log_string(val);
                 case '%d':
-                case '%i': return log_number(parseInt, val);
-                case '%f': return log_number(parseFloat, val);
+                case '%i':
+                    if(typeof val === 'bigint') {
+                        return val.toString();  // parseInt() lost its precision
+                    }
+                    return log_number(parseInt, val);
+                case '%f':
+                    if(typeof val === 'bigint') {
+                        return val.toString();
+                    }
+                    return log_number(parseFloat, val);
+                case '%j': return log_stringify(val);
                 case '%o':
                 case '%O':
                     return typeof val === 'object' ? log_stringify(val) : log_string(val);
@@ -284,6 +292,24 @@ function format_log(format)
     return output;
 }
 
+/*
+ *  A log function can throw -- a remote one (set_remote_log_functions())
+ *  over a socket that is gone, an app's handler with a bug -- and a log line
+ *  must never take its caller with it. What it threw goes to the console.
+ */
+function call_log_function(fn, ...args)
+{
+    try {
+        fn(...args);
+    } catch(e) {
+        try {
+            _console.error("a log function threw:", e);
+        } catch(e2) {
+            /*  the console itself is gone: nothing is left to say it with  */
+        }
+    }
+}
+
 function log_error(format, ...args)
 {
     let msg = format_log(format, ...args);
@@ -292,13 +318,13 @@ function log_error(format, ...args)
     if(f_error) {
         if(f_error === _console.error) {
             if(console_wants("error", msg)) {
-                f_error("%c" + hora + " ERROR: " + String(msg), "color:red");
+                call_log_function(f_error, "%c" + hora + " ERROR: " + String(msg), "color:red");
             }
         } else {
             if(console_wants("error", msg)) {
                 _console.error("%c" + hora + " ERROR: " + String(msg), "color:red");
             }
-            f_error(`${hora} ERROR: ${String(msg)}`);
+            call_log_function(f_error, `${hora} ERROR: ${String(msg)}`);
         }
     }
     emit_log_callback("error", msg, hora);
@@ -312,13 +338,13 @@ function log_warning(format, ...args)
     if(f_warning) {
         if(f_warning === _console.warn) {
             if(console_wants("warning", msg)) {
-                f_warning("%c" + hora + " WARNING: " + String(msg), "color:yellow");
+                call_log_function(f_warning, "%c" + hora + " WARNING: " + String(msg), "color:yellow");
             }
         } else {
             if(console_wants("warning", msg)) {
                 _console.warn("%c" + hora + " WARNING: " + String(msg), "color:yellow");
             }
-            f_warning(`${hora} WARNING: ${String(msg)}`);
+            call_log_function(f_warning, `${hora} WARNING: ${String(msg)}`);
         }
     }
     emit_log_callback("warning", msg, hora);
@@ -331,7 +357,7 @@ function log_info(format, ...args)
 
     if(f_info) {
         if(console_wants("info", msg)) {
-            f_info("%c" + hora + " INFO: " + String(msg), "color:cyan");
+            call_log_function(f_info, "%c" + hora + " INFO: " + String(msg), "color:cyan");
         }
     }
     emit_log_callback("info", msg, hora);
@@ -344,7 +370,7 @@ function log_debug(format, ...args)
 
     if(f_debug) {
         if(console_wants("debug", msg)) {
-            f_debug("%c" + hora + " DEBUG: " + String(msg), "color:silver");
+            call_log_function(f_debug, "%c" + hora + " DEBUG: " + String(msg), "color:silver");
         }
     }
     emit_log_callback("debug", msg, hora);
@@ -357,7 +383,7 @@ function trace_msg(format, ...args)
 
     if(f_debug) {
         if(console_wants("msg", msg)) {
-            f_debug("%c" + hora + " MSG: " + String(msg), "color:cyan");
+            call_log_function(f_debug, "%c" + hora + " MSG: " + String(msg), "color:cyan");
         }
     }
     emit_log_callback("msg", msg, hora);
@@ -367,9 +393,9 @@ function trace_json(jn, msg)
 {
     if(console_wants("json", msg)) {
         if(msg) {
-            _console.warn("=====> " + msg);
+            call_log_function(_console.warn, "=====> " + log_string(msg));
         }
-        _console.dir(jn);
+        call_log_function(_console.dir, jn);
     }
     /*  Also mirror it to the log sink (e.g. the dev monitor) so the payload
      *  shows next to the trace that dumped it — console.dir stays in the

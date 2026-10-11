@@ -7,6 +7,23 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.17
+
+Fourteenth check of the review (yunovatios `REV-CLOUD.md` §V14.3).
+
+- **fix: a log path could still throw.** `trace_json()` kept its payload in
+  the backlog with a bare `String()` fallback, which throws on an object with
+  no prototype, a `toString()` that throws or a revoked Proxy (so
+  `trace_json_masked()` threw too); it goes through `log_stringify()` now.
+  Its message is printed with `log_string()` (a Symbol or an object threw in
+  `"=====> " + msg`), and `console.dir()` cannot throw out of it.
+- **a log function that throws no longer takes its caller with it**: the
+  remote one of `set_remote_log_functions()` (a socket that is gone) and the
+  console ones are called inside a `try`; what they threw goes to the console.
+- `format_log()`: `%%` is a `%` and takes no argument (it came out as `%%`),
+  `%j` prints json (it stayed literal, and its argument went to the end), and
+  a BigInt in `%d`/`%i`/`%f` keeps its digits (`parseInt()` rounded it).
+
 ## 7.26.16
 
 Thirteenth check of the review (yunovatios `REV-CLOUD.md` §V13.4).
