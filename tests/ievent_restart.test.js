@@ -252,4 +252,57 @@ describe("C_IEVENT_CLI stopped and started in the same turn", () => {
         expect(published).toEqual([]);
         expect(gobj_current_state(ievent)).toBe("ST_DISCONNECTED");
     });
+
+    test("a posted failure of a socket that a later start replaced is ignored", async () => {
+        const ievent = gobj_create_service("link6", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://bad",
+        }, yuno);
+        const listener = gobj_create_pure_child("link6_listener", "C_PROBE_LINK_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        published.length = 0;
+
+        gobj_start(ievent);                     // posts the failure of ws://bad
+        gobj_stop(ievent);
+        gobj_write_str_attr(ievent, "url", "ws://good2");
+        gobj_start(ievent);                     // a new socket, a new ws_seq
+        const ws = sockets[sockets.length - 1];
+        expect(ws.url).toBe("ws://good2");
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(published).toEqual([]);          // the stale failure said nothing
+        expect(ievent.priv.websocket).toBe(ws);
+        gobj_stop(ievent);
+    });
+
+    test("the backoff doubles on every failed open, up to its top", async () => {
+        const ievent = gobj_create_service("link7", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://bad",
+            timeout_retry:       30,
+            timeout_retry_max:   120,
+        }, yuno);
+        const listener = gobj_create_pure_child("link7_listener", "C_PROBE_LINK_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        published.length = 0;
+
+        gobj_start(ievent);
+        const seen = [];
+        const n_errors = () => published.filter(e => e === "EV_ON_OPEN_ERROR").length;
+        for(let i = 0; i < 200 && n_errors() < 5; i++) {
+            await new Promise(resolve => setTimeout(resolve, 5));
+            const r = ievent.priv.retry_ms;
+            if(r && seen[seen.length - 1] !== r) {
+                seen.push(r);
+            }
+        }
+        gobj_stop(ievent);
+        expect(n_errors()).toBeGreaterThanOrEqual(5);
+        expect(seen).toEqual([30, 60, 120]);     // doubles, then stays at its top
+    });
 });
+

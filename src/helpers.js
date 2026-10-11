@@ -1484,6 +1484,23 @@ function set_own_key(obj, key, value)
  *  called gobj_short_name() on a null gobj ("gobj bad type"), and a
  *  null middle segment threw a TypeError.
  ************************************************************/
+/*
+ *  A segment of a path that walks a LIST is an index: digits only (read
+ *  as C's atoi() reads them) and inside the list. -1 when it is not one.
+ *  "length" is an own key of a javascript array, but it is not an item.
+ */
+function list_segment_index(list, seg)
+{
+    if(!/^[0-9]+$/.test(seg)) {
+        return -1;
+    }
+    const idx = Number(seg);
+    if(idx >= list.length) {
+        return -1;
+    }
+    return idx;
+}
+
 function kw_find_path(gobj, kw, path, verbose)
 {
     if(gobj && !is_gobj(gobj)) {
@@ -1503,15 +1520,14 @@ function kw_find_path(gobj, kw, path, verbose)
     let len = ss.length;
     for(let i=0; i<len; i++) {
         if(is_array(kw)) {
-            /*  In a list a segment is an index, as in C. "length" is an
-             *  own key of a javascript array, but it is not an item.  */
-            if(!/^[0-9]+$/.test(ss[i])) {
+            const idx = list_segment_index(kw, ss[i]);
+            if(idx < 0) {
                 if(verbose) {
                     log_error(`${prefix}path not found: '${path}'`);
                 }
                 return undefined;
             }
-            ss[i] = String(Number(ss[i]));
+            ss[i] = String(idx);
         }
         if(is_prototype_segment(kw, ss[i])) {
             if(verbose) {
@@ -1565,6 +1581,13 @@ function kw_delete(gobj, kw, path)
     let [path_, k] = strrchr_split(path, '`');
     if(!empty_string(k)) {
         let v = kw_find_path(gobj, kw, path_, true);
+        if(is_array(v)) {
+            /*  As C, which deletes only a key of a dict. A delete of
+             *  "length" threw a TypeError here.  */
+            log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+                `kw_delete(): cannot delete an item of a list: '${path}'`);
+            return -1;
+        }
         json_object_del(v, k);
     } else {
         json_object_del(kw, path);
@@ -2066,6 +2089,18 @@ function kw_set_dict_value(gobj, kw, path, value)
     let len = ss.length;
     for(let i=0; i<len; i++) {
         let key = ss[i];
+        if(is_array(kw)) {
+            /*  A list is walked, never grown: the segment is an index
+             *  inside it, as C (and as kw_find_path() reads it).  */
+            const idx = list_segment_index(kw, key);
+            if(idx < 0) {
+                log_error(`${gobj ? gobj_short_name(gobj) + ": " : ""}` +
+                    `kw_set_dict_value(): segment '${key}' is not an index ` +
+                    `of its list: '${path}'`);
+                return -1;
+            }
+            key = String(idx);
+        }
         if(i === len-1) {
             /* last segment */
             set_own_key(kw, key, value);
@@ -3688,6 +3723,10 @@ function warn_markup_string(content)
     );
 }
 
+/*
+ *  The string IS markup, in any mode (set_strings_are_text() does not
+ *  apply): never pass it data. Only its FIRST node is returned.
+ */
 function createOneHtml(htmlString)
 {
     // Convert the HTML string to DOM nodes

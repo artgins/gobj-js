@@ -265,3 +265,30 @@ describe("the twin is a copy of OWN keys", () => {
         expect(got[0].kw.g).toBe(1);
     });
 });
+
+describe("C_IEVENT_CLI injects a copy of OWN keys", () => {
+    test("a parsed kw with an own __proto__ goes on the wire with that key", () => {
+        const pub = gobj_create("pub_inject_proto", "C_TWIN_PUB", {}, yuno);
+        gobj_start(pub);
+        const ievent = gobj_create_service("proto_ievent", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://127.0.0.1:1",
+        }, yuno);
+        gobj_change_state(ievent, "ST_SESSION");
+        const wire = [];
+        ievent.priv.websocket = {
+            readyState: WebSocket.OPEN,
+            send: (msg) => { wire.push(msg); },
+        };
+        gobj_subscribe_event(pub, EV_X, {}, ievent);
+
+        gobj_publish_event(pub, EV_X, JSON.parse('{"__proto__": {"admin": true}, "value": 1}'));
+
+        expect(wire.length).toBe(1);
+        const sent = JSON.parse(wire[0]).kw;
+        expect(Object.prototype.hasOwnProperty.call(sent, "__proto__")).toBe(true);
+        expect(sent.value).toBe(1);
+    });
+});
+

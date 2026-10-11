@@ -598,7 +598,7 @@ function setup_websocket(gobj)
          *  before the open, so EV_ON_OPEN_ERROR is published and the
          *  retry is armed. Posted, not sent: we may be inside mt_start().
          */
-        gobj_post_event(
+        let ret = gobj_post_event(
             gobj,
             "EV_ON_CLOSE",
             {
@@ -607,6 +607,11 @@ function setup_websocket(gobj)
             },
             gobj
         );
+        if(ret < 0) {
+            /*  Error already logged (the queue is full): at least the
+             *  link keeps retrying.  */
+            set_timeout(gobj.priv.gobj_timer, next_retry(gobj));
+        }
         return null;
     }
 

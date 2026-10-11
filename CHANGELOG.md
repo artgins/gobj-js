@@ -7,6 +7,32 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.4
+
+Fourth check of the review (yunovatios `REV-CLOUD.md` §V3).
+
+- **fix: the path WRITERS read a list as the reader does.** 7.26.2 made
+  `kw_find_path()` take a list segment only as an index, and left the writers
+  behind: `kw_set_dict_value(kw, "a`length", 0)` emptied the list, `"a`01"`
+  wrote a property `"01"` on the array (invisible in JSON) while the reader
+  took it as item 1, and `kw_delete(kw, "a`length")` threw a TypeError. Now a
+  list is walked by an index inside it (digits, read as `atoi()`), never grown,
+  and anything else is refused with an error, as C does; `kw_delete()` of a
+  list item is refused with an error, as in C (which deletes only a key of a
+  dict). The remaining difference with C: its `atoi()` also takes `" 1"`,
+  `+1` and `1abc` as item 1 and `""`/`abc` as item 0; here they are not found.
+- **fix: a failed open whose failure could not be posted left the link without
+  a retry.** `gobj_post_event()` refuses when its queue is full (logged); the
+  retry is armed directly then.
+- **docs: `createOneHtml()`** says its string is markup in any mode.
+- **correction to 7.26.2:** before it, a STRING in a list of children was not
+  parsed as html either: it was DROPPED in silence, like the Text node and the
+  svg. Since 7.26.2 it is appended as text, and a number or an object in the
+  list is logged as an ERROR — so `[count && ['b', {}, 'x'], ...]` with a count
+  of 0 logs one now (`false`, `null` and `undefined` are skipped).
+- tests: the own-key copies of the C_IEVENT_CLI inject and of `jdb_update()`,
+  a stale posted failure ignored, and the backoff over several failed opens.
+
 ## 7.26.3
 
 - **feature: `html_markup(string)`, markup said out loud.** `createElement2()`

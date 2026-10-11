@@ -359,3 +359,39 @@ describe("V2: own keys when copying, list paths, children lists", () => {
     });
 
 });
+
+/*
+ *  Third check of the review (V3).
+ */
+describe("V3: path writers walk a list by index, as the reader", () => {
+    test("kw_set_dict_value refuses a segment that is not an index of its list", async () => {
+        const { kw_set_dict_value } = await import("../src/helpers.js");
+        const kw = {a: [1, 2]};
+        expect(kw_set_dict_value(null, kw, "a`length", 0)).toBe(-1);
+        expect(kw.a).toEqual([1, 2]);
+        expect(kw_set_dict_value(null, kw, "a`5", 0)).toBe(-1);
+        expect(kw.a).toEqual([1, 2]);
+        expect(kw_set_dict_value(null, kw, "a`01", 9)).toBe(0);    // atoi, as C
+        expect(kw.a).toEqual([1, 9]);
+        expect(Object.keys(kw.a)).toEqual(["0", "1"]);
+    });
+
+    test("kw_delete of a list item is refused, and does not throw", async () => {
+        const { kw_delete } = await import("../src/helpers.js");
+        const kw = {a: [1, 2]};
+        expect(kw_delete(null, kw, "a`length")).toBe(-1);
+        expect(kw_delete(null, kw, "a`0")).toBe(-1);
+        expect(kw.a).toEqual([1, 2]);
+    });
+
+    test("jdb_update merges own keys: a parsed __proto__ is not the record's prototype", async () => {
+        const { jdb_update } = await import("../src/helpers.js");
+        const rec = {id: "x", v: 1};
+        const jdb = {hook: "data", topics: {items: rec}};
+        jdb_update(jdb, "items", "", JSON.parse('{"id": "x", "__proto__": {"admin": true}}'));
+        expect(Object.getPrototypeOf(rec)).toBe(Object.prototype);
+        expect(rec.admin).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(rec, "__proto__")).toBe(true);
+    });
+});
+
