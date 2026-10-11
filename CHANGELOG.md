@@ -7,6 +7,14 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.5
+
+- **security: `create_template_record()` (lib_treedb) assigned the template's
+  keys.** The template is the backend's schema, so a parsed key `__proto__`
+  became the PROTOTYPE of the new record (`.admin === true`, lost by
+  `JSON.stringify()`). It writes own keys now. The last copy by assignment of
+  the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V3.6).
+
 ## 7.26.4
 
 Fourth check of the review (yunovatios `REV-CLOUD.md` §V3).

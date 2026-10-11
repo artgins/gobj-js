@@ -395,3 +395,15 @@ describe("V3: path writers walk a list by index, as the reader", () => {
     });
 });
 
+
+describe("V3: create_template_record writes own keys", () => {
+    test("a parsed template with an own __proto__ does not set the record's prototype", async () => {
+        const { create_template_record } = await import("../src/lib_treedb.js");
+        const template = JSON.parse('{"id": "string", "__proto__": {"default": {"admin": true}}}');
+        const rec = create_template_record(template, {id: "x"});
+        expect(Object.getPrototypeOf(rec)).toBe(Object.prototype);
+        expect(rec.admin).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(rec, "__proto__")).toBe(true);
+        expect(JSON.parse(JSON.stringify(rec))).toHaveProperty("id", "x");
+    });
+});

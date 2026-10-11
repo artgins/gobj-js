@@ -44,6 +44,7 @@ import {
     json_size,
     str_in_list,
     kwid_new_dict,
+    json_object_set,
 } from "./helpers.js";
 
 /********************************************
@@ -566,7 +567,10 @@ function create_template_record(template, kw)
             default_value = col.default;
         }
         let value = kw_get_dict_value(null, kw, field, default_value);
-        new_record[field] = value;
+        /*  A key of the template (it comes from the backend's schema) is
+         *  written as an OWN key: "__proto__" assigned here became the
+         *  prototype of the record.  */
+        json_object_set(new_record, field, value);
     });
 
     return new_record;
