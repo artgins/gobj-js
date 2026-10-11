@@ -7,6 +7,19 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.12
+
+Tenth check of the review (yunovatios `REV-CLOUD.md` §V10.5).
+
+- **fix: `jdb_update()` / `jdb_delete()` with a record that is not an object
+  threw a TypeError** (`kw["id"]` on `null`). They answer `null` with an error,
+  and the error shows the record as json (it printed `[object Object]`).
+- **fix: a path with an empty segment** (``"a`"``, ``"`a"``) was taken as the
+  path without it, or failed further on. It is refused, logged.
+- docs: a json reader with `KW_CREATE` that cannot write gives its default
+  back, unwritten and logged -- C returns NULL there since SDK 7.26.9, and both
+  pages say so.
+
 ## 7.26.11
 
 Ninth check of the review (yunovatios `REV-CLOUD.md` §V9.4).

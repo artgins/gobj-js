@@ -3401,13 +3401,17 @@ function jdb_update(jdb, topic_name, path, kw)
         log_error("jdb_update: topic not found: " + topic_name);
         return null;
     }
-    if(empty_string(kw["id"])) {
-        log_error("jdb_update: record without id: " + kw);
-        trace_msg(kw);
+    if(!is_object(kw) || empty_string(kw["id"])) {
+        log_error(`jdb_update: record without id: ${JSON.stringify(kw)}`);
         return null;
     }
     if(!is_string(path)) {
         log_error(`jdb_update: path must be a string: ${String(path)}`);
+        return null;
+    }
+    if(path !== "" && path.split('`').includes("")) {
+        /*  "a`" walked as "a": an empty segment names no record.  */
+        log_error(`jdb_update: empty segment in path: '${path}'`);
         return null;
     }
 
@@ -3476,13 +3480,17 @@ function jdb_delete(jdb, topic_name, path, kw)
         log_error("jdb_delete: topic not found: " + topic_name);
         return null;
     }
-    if(empty_string(kw["id"])) {
-        log_error("jdb_delete: record without id: " + kw);
-        trace_msg(kw);
+    if(!is_object(kw) || empty_string(kw["id"])) {
+        log_error(`jdb_delete: record without id: ${JSON.stringify(kw)}`);
         return null;
     }
     if(!is_string(path)) {
         log_error(`jdb_delete: path must be a string: ${String(path)}`);
+        return null;
+    }
+    if(path !== "" && path.split('`').includes("")) {
+        /*  "a`" walked as "a": an empty segment names no record.  */
+        log_error(`jdb_delete: empty segment in path: '${path}'`);
         return null;
     }
 

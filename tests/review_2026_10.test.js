@@ -620,3 +620,29 @@ describe("V9: jdb_update leaves no trace of a failure, and updates at the root",
         expect(jdb.topics.menu).toEqual([{id: "a", label: "B"}]);
     });
 });
+
+/*
+ *  Tenth check of the review (V10).
+ */
+describe("V10: the jdb refuses what it cannot address", () => {
+    test("a null record, an empty segment: null, logged, no TypeError", async () => {
+        const { jdb_init, jdb_update, jdb_delete, set_log_callback } = await import("../src/helpers.js");
+        const logged = [];
+        set_log_callback((level, msg) => { logged.push(`${level}: ${msg}`); });
+        try {
+            const jdb = jdb_init({schema: {menu: []}});
+            jdb_update(jdb, "menu", "", {id: "a"});
+            const base = logged.length;
+            expect(jdb_update(jdb, "menu", "", null)).toBe(null);
+            expect(jdb_delete(jdb, "menu", "", null)).toBe(null);
+            expect(jdb_update(jdb, "menu", "a`", {id: "b"})).toBe(null);
+            expect(jdb_delete(jdb, "menu", "`a", {id: "a"})).toBe(null);
+            const mine = logged.slice(base);
+            expect(mine.length).toBe(4);
+            expect(mine.some(l => l.includes("[object Object]"))).toBe(false);
+            expect(jdb.topics.menu).toEqual([{id: "a"}]);
+        } finally {
+            set_log_callback(null);
+        }
+    });
+});
