@@ -669,13 +669,21 @@ container at once) instead of guessing.
 
 ```javascript
 is_secret_name("password")                // → true ("token", "jwt", "apikey"...)
+is_secret_name("sim_pin")                 // → true (pass, pin, otp: whole segments)
+is_secret_name("mapping")                 // → false (pin inside a word)
 is_secret_name("token_endpoint")          // → false (names something ABOUT one)
 mask_secrets_inline("login user=a passw=x")  // → "login user=a passw=********"
+mask_secrets_inline("curl -H 'Authorization: Bearer abc' u")
+                                          // → "curl -H 'Authorization: Bearer ********' u"
 json_mask_secrets({user: "a", password: "x"})  // → {user: "a", password: "********"}
+json_mask_secrets({note: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"})
+                                          // → {note: "********"}: a JWT under any key
 trace_json_masked(kw, "sent")            // trace_json() of the masked copy
 ```
 
-As the C kernel's: linear and bounded (a text over 4 MB is not shown at all).
+As the C kernel's: the same names, the same shapes by value (a JWT, the token
+after `Bearer `), a NUL in a string read as a blank; linear and bounded (a text
+over 4 MB is not shown at all). `key` and `cert` are not secrets' names.
 
 ### Logging
 
@@ -794,6 +802,11 @@ let yuno = gobj_create_yuno("app_yuno", "C_YUNO", {...});    // restores the sav
 gobj_command(yuno, "set-global-no-trace", {level: "timer_periodic", set: 0}, yuno);
 // no_trace_levels.__global_no_trace__ = [] -- stays off after a reload
 ```
+
+`set` is read as the C kernel reads it: a boolean, an integer, or text --
+`set`/`reset`, a JSON integer (`"1"`, `"-1"`, `"0"`), `true`/`false`,
+`yes`/`no`, `on`/`off` in any case. Anything else answers `-1` *"bitmask set
+or re-set?"*: a real (`2.5`), `" 1"`, `"0x1"`, `"1e3"`, `"+5"`, `"007"`.
 
 The traffic of the websocket is `C_IEVENT_CLI`'s own level `ievents`; its lines
 go to the yuno attr `trace_ievent_callback`, or to the console.

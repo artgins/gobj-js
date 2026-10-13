@@ -9,6 +9,11 @@
  *      One yuno per module, so "the next start up" is played by writing
  *      the store first and creating the yuno afterwards: the persistent
  *      attrs are loaded before its mt_create restores them.
+ *
+ *      And `set` is read as the C kernel reads it (trace_set_value()):
+ *      a boolean, an integer, or text -- set/reset, a JSON integer,
+ *      true/false, yes/no, on/off --; " 1", "0x1", "1e3", "+5", "007",
+ *      "2.5" and a real refused (REV-CLOUD V23.4.6).
  ***********************************************************************/
 import { describe, test, expect, beforeAll } from "vitest";
 import {
@@ -129,5 +134,31 @@ describe("the trace commands", () => {
 
     test("the attrs themselves carry the scopes", () => {
         expect(gobj_read_attr(yuno, "trace_levels").C_IEVENT_CLI).toEqual(["ievents"]);
+    });
+});
+
+describe("set is read as the C kernel reads it", () => {
+    test("refused: a real, and a text that is no JSON integer and no word", () => {
+        gobj_command(yuno, "set-global-trace", {level: "subscriptions", set: 0}, yuno);
+        for(const set of [" 1", "0x1", "1e3", "+5", "007", "2.5", 2.5, "maybe", ""]) {
+            let r = gobj_command(yuno, "set-global-trace", {level: "subscriptions", set: set}, yuno);
+            expect(r.result, JSON.stringify(set)).toBe(-1);
+            expect(r.comment, JSON.stringify(set)).toMatch(/bitmask set or re-set\?/);
+        }
+        expect(gobj_global_trace_level() & trace_level_t.TRACE_SUBSCRIPTIONS).toBeFalsy();
+    });
+
+    test("taken: yes/on/true and no/off/false in any case, a JSON integer, an integer, set/reset", () => {
+        const cases = [
+            ["yes", true], ["OFF", false], ["On", true], ["no", false],
+            ["TRUE", true], ["false", false], ["-1", true], ["0", false],
+            [7, true], [0, false], ["set", true], ["reset", false],
+        ];
+        for(const [set, on] of cases) {
+            let r = gobj_command(yuno, "set-global-trace", {level: "subscriptions", set: set}, yuno);
+            expect(r.result, JSON.stringify(set)).toBe(0);
+            expect(!!(gobj_global_trace_level() & trace_level_t.TRACE_SUBSCRIPTIONS),
+                JSON.stringify(set)).toBe(on);
+        }
     });
 });

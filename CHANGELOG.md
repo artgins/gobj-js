@@ -7,6 +7,30 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## Unreleased
+
+Parity with the C kernel of the twenty-third review (yunovatios `REV-CLOUD.md`
+§V23.4.3, §V23.4.6).
+
+- **A secret by its VALUE, as the C kernel masks it.** `mask_secrets_inline()`
+  and `json_mask_secrets()` (every string, under any key) mask a JWT (`eyJ...`,
+  three base64url parts joined by `.`; a `.` after it, the end of a sentence,
+  is not a fourth) and the token after `Bearer ` (any case, a word of its own)
+  wherever they are -- the shapes of the C kernel's `jwt_len()` /
+  `bearer_token_len()`. A JWT under a plain key showed in clear. A string with
+  a NUL inside is read as a blank, as C reads it.
+- **`is_secret_name()` takes `pass`, `pin` and `otp` as WHOLE segments** (a run
+  of letters and digits: `db_pass`, `user-pin`, `sim_pin`, `user[pin]`; not
+  `passive`, `ping`, `spinner`, `otpx`), with the same exclusions (`pin_count`
+  is not one). `key` and `cert` stay no secrets' names. The list is the C
+  kernel's again.
+- **`set` of the yuno's trace commands is read as the C kernel reads it**
+  (`trace_set_value()`): a boolean, an integer, or text -- `set`/`reset`, a
+  JSON integer `-?(0|[1-9][0-9]*)`, `true`/`false`, `yes`/`no`, `on`/`off` in
+  any case. It went through `Number()`, which took `" 1"`, `"0x1"`, `"1e3"`,
+  `"+5"`, `"007"`, `"2.5"` and a real (refused now, as in C), and refused
+  `"yes"` and `"on"`.
+
 ## 7.26.19
 
 Sixteenth check of the review (yunovatios `REV-CLOUD.md` §V16.5).

@@ -9,6 +9,11 @@
  *      command line), and the "value" of a write-attr whose attribute
  *      names a secret.
  *
+ *      And a secret by its VALUE, under any key or none: a JWT and the
+ *      token after "Bearer "; pass, pin and otp are secrets' names as
+ *      WHOLE segments; a NUL in a string is read as a blank -- the same
+ *      table as the C kernel's test_secret_attrs (REV-CLOUD V23.4.3).
+ *
  *      Where it is used, and what went in clear up to gobj-js 7.25.9:
  *        - the commands trace of gobj_command(): the line and, with
  *          ev_kw, its kw;
@@ -159,6 +164,51 @@ describe("the names of the secrets", () => {
         expect(kw.auth.access_token).toBe("eyJ.x.y");
         const plain = {a: 1};
         expect(json_mask_secrets(plain)).toBe(plain);
+    });
+});
+
+describe("a secret by its value, and pass/pin/otp as whole segments (the C kernel's)", () => {
+    test("pass, pin and otp are secrets' names as WHOLE segments only; key and cert are not", () => {
+        for(const name of ["pass", "db_pass", "user-pin", "otp", "sim_pin", "PIN", "user[pin]", "otp.code"]) {
+            expect(is_secret_name(name), name).toBe(true);
+        }
+        for(const name of ["passive", "bypass", "compass", "ping", "mapping", "spinner", "otpx", "pin2",
+                           "pin_count", "key", "cert", "cert_pem"]) {
+            expect(is_secret_name(name), name).toBe(false);
+        }
+    });
+
+    test("a JWT, and the token after Bearer, by their shape: the C kernel's table", () => {
+        const shapes = [
+            ["note=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnLWh1bnRlcjI x=1", "note=******** x=1"],
+            ["curl -H 'Authorization: Bearer abc-hunter2' x", "curl -H 'Authorization: Bearer ********' x"],
+            ["BEARER   tok-hunter2", "BEARER   ********"],
+            ["the jwt eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.c2ln.", "the jwt ********."],
+            ["pin=1234 sim_pin=5678 ping=1", "pin=******** sim_pin=******** ping=1"],
+            ["eyJabc.def x=eyJabc", null],      // two parts, and one: no JWT
+            ["xeyJa.b.c", null],                // inside a word
+            ["bearer=x", "bearer=********"],    // its name, as before
+        ];
+        for(const [text, shown] of shapes) {
+            expect(mask_secrets_inline(text), text).toBe(shown);
+        }
+    });
+
+    test("json_mask_secrets(): a JWT or a Bearer token under any key, a NUL read as a blank", () => {
+        const shown = json_mask_secrets({
+            note: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.jwtnote-hunter2",
+            headers: "Authorization: Bearer hdr-hunter2",
+            sim_pin: 4242,
+            db_pass: "dbpass-hunter2",
+            passive: "visible-passive",
+            nul: "a\u0000password=nul-hunter2",
+        });
+        expect(shown.note).toBe("********");
+        expect(shown.headers).toBe("Authorization: Bearer ********");
+        expect(shown.sim_pin).toBe("********");
+        expect(shown.db_pass).toBe("********");
+        expect(shown.passive).toBe("visible-passive");
+        expect(shown.nul).toBe("a password=********");     // as C: the NUL shown as a blank
     });
 });
 

@@ -444,9 +444,17 @@ const SECRET_NAME_PARTS = [
  */
 const SECRET_NAME_JOINED = ["apikey", "sessionid", "sessionkey", "authdata"];
 /*
+ *  ... or one of these as a WHOLE segment, a run of letters and digits
+ *  (pass, db_pass, user-pin, sim_pin, otp, user[pin]): inside a word they
+ *  are other words (passive, bypass, compass, ping, mapping, spinner, otpx)
+ */
+const SECRET_NAME_SEGMENTS = new Set(["pass", "pin", "otp"]);
+/*
  *  A name with one of these SEGMENTS (split by '_', '-', '.' and blanks)
  *  is not a secret: it names something ABOUT a credential (token_endpoint,
- *  cookie_domain, jwt_public_keys, refresh_token_count)
+ *  cookie_domain, jwt_public_keys, refresh_token_count, pin_count). `key`
+ *  and `cert` are no parts: a key is the key of a record as often as a
+ *  credential, and a certificate is public.
  */
 const NOT_SECRET_SEGMENTS = new Set([
     "endpoint", "url", "uri", "domain", "path", "file", "public", "pub",
@@ -461,14 +469,22 @@ const NOT_SECRET_SEGMENTS = new Set([
 function is_secret_name(name)
 {
     if(typeof name !== "string" || name.length < 3) {
-        return false;   // the shortest part is three letters ("pwd", "jwt")
+        return false;   // the shortest part is three letters ("pwd", "jwt", "pin")
     }
     let lower = name.toLowerCase();
     let hit = false;
-    for(const part of SECRET_NAME_PARTS) {
-        if(lower.indexOf(part) >= 0) {
-            hit = true;
+    for(const segment of lower.split(/[^a-z0-9]+/)) {
+        if(SECRET_NAME_SEGMENTS.has(segment)) {
+            hit = true;     // a whole segment
             break;
+        }
+    }
+    if(!hit) {
+        for(const part of SECRET_NAME_PARTS) {
+            if(lower.indexOf(part) >= 0) {
+                hit = true;
+                break;
+            }
         }
     }
     if(!hit) {
@@ -534,11 +550,89 @@ function inline_secret_value_end(str, p, outer)
 }
 
 /************************************************************
+ *  A credential by its SHAPE, whatever names it -- the C kernel's
+ *  jwt_len() / bearer_token_len(), the shapes the agent's audit
+ *  record redacts:
+ *    - a JWT: "eyJ" (the base64url of '{"') at the start of a
+ *      word, and three parts of base64url joined by '.'; the dots
+ *      at the end of the run are not its own (a JWT ends a
+ *      sentence: "... eyJ.eyJ.sig.");
+ *    - the token after "Bearer " (any case, a word of its own).
+ ************************************************************/
+function is_ascii_alnum_code(code)
+{
+    return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function is_base64url_code(code)
+{
+    return is_ascii_alnum_code(code) || code === 45 || code === 95;    // '-', '_'
+}
+
+/*
+ *  The characters of the JWT that begins at `p`, 0 if none begins there
+ */
+function jwt_len(str, p)
+{
+    if(str.length - p < 3 || str[p] !== "e" || str[p+1] !== "y" || str[p+2] !== "J") {
+        return 0;
+    }
+    if(p > 0 && (is_base64url_code(str.charCodeAt(p-1)) || str[p-1] === ".")) {
+        return 0;   // inside a word, or a part of a dotted run
+    }
+    let e = p;
+    let dots = 0;
+    while(e < str.length && (is_base64url_code(str.charCodeAt(e)) || str[e] === ".")) {
+        if(str[e] === ".") {
+            dots++;
+        }
+        e++;
+    }
+    while(str[e-1] === ".") {
+        e--;        // never before p: str[p] is 'e'
+        dots--;
+    }
+    return (dots === 2)? e - p : 0;
+}
+
+/*
+ *  The token after a "Bearer " that begins at `p`: [its offset from `p`,
+ *  its length], [0, 0] if none begins there. The token runs to a blank, an
+ *  end of line, a quote or one of ",;}]" (or a NUL, where C stops).
+ */
+const BEARER_STOPS = " \t\r\n'\",;}]\u0000";
+
+function bearer_token(str, p)
+{
+    const word_len = 6;     // "bearer"
+    if(str.length - p <= word_len || str.slice(p, p + word_len).toLowerCase() !== "bearer") {
+        return [0, 0];
+    }
+    if(p > 0 && is_ascii_alnum_code(str.charCodeAt(p-1))) {
+        return [0, 0];      // inside a word
+    }
+    let t = p + word_len;
+    if(str[t] !== " " && str[t] !== "\t") {
+        return [0, 0];
+    }
+    while(t < str.length && (str[t] === " " || str[t] === "\t")) {
+        t++;
+    }
+    let e = t;
+    while(e < str.length && BEARER_STOPS.indexOf(str[e]) < 0) {
+        e++;
+    }
+    return [t - p, e - t];
+}
+
+/************************************************************
  *  A text (a command line) with the value of every "name=value"
  *  whose name is a secret's written as "********", quoted or not
  *  (and the "value" of a write-attr whose attribute names a
- *  secret). The rest as it is. Return null when there was nothing
- *  to mask. As the C kernel's mask_secrets_inline().
+ *  secret); and a JWT or the token after "Bearer ", wherever they
+ *  are, whatever names them. The rest as it is. Return null when
+ *  there was nothing to mask. As the C kernel's
+ *  mask_secrets_inline().
  ************************************************************/
 /*
  *  As the C kernel: masking is reachable from a peer, so it is linear and
@@ -552,8 +646,11 @@ const MASK_TOO_LARGE = "<not shown: too large to mask>";
 
 function mask_secrets_inline(str)
 {
-    if(typeof str !== "string" || str.indexOf("=") < 0) {
+    if(typeof str !== "string") {
         return null;
+    }
+    if(str.indexOf("=") < 0 && str.indexOf("eyJ") < 0 && !/bearer/i.test(str)) {
+        return null;    // nothing a secret can begin with
     }
     if(str.length > MASK_MAX_BYTES) {
         return MASK_TOO_LARGE;
@@ -587,6 +684,23 @@ function mask_secrets_inline(str)
             } else if(c === outer && is_blank_or_end(p+1)) {
                 outer = "";     // closes it
             }
+        }
+        /*
+         *  A credential by its shape, under any name or none
+         */
+        let shape = (c === "e")? jwt_len(str, p) : 0;
+        let token_offset = 0;
+        if(c === "b" || c === "B") {
+            [token_offset, shape] = bearer_token(str, p);
+        }
+        if(shape) {
+            parts.push(str.substring(copied, p + token_offset));    // "Bearer " is kept
+            parts.push("********");
+            p += token_offset + shape;
+            copied = p;
+            changed = true;
+            word = p;
+            continue;
         }
         if(c !== "=") {
             p++;
@@ -641,7 +755,8 @@ function mask_secrets_inline(str)
  *  value of a key with a secret's name is "********", whatever
  *  its type (not an absent one, a null or an empty string); so is
  *  the "value" of a dict whose "attribute" names a secret; and a
- *  string is masked as mask_secrets_inline(). Return a masked
+ *  string, under any key, is masked as mask_secrets_inline() (a
+ *  JWT, a "Bearer" token, a secret name=value). Return a masked
  *  copy, or `jn` itself when there was nothing to mask. As the C
  *  kernel's json_mask_secrets().
  *
@@ -677,7 +792,13 @@ function _json_mask_secrets(jn, memo, depth, budget)
             return MASK_TOO_LARGE;      // fails safe: not shown, never in clear
         }
         budget.left -= jn.length;
-        let masked = mask_secrets_inline(jn);
+        /*
+         *  A NUL inside is read as a blank, as the C kernel reads it (a peer's
+         *  frame carries one): when something is masked, the NULs are shown
+         *  as blanks
+         */
+        let text = (jn.indexOf("\u0000") >= 0)? jn.replace(/\u0000/g, " ") : jn;
+        let masked = mask_secrets_inline(text);
         return masked !== null? masked : jn;
     }
     let is_array = Array.isArray(jn);

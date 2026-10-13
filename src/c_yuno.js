@@ -306,24 +306,52 @@ function save_trace_scope(gobj, attr, scope, levels)
 }
 
 /***************************************************************
- *  "set" as the C command reads it: TRUE / set / 1, FALSE / reset / 0
+ *  "set" as the C command reads it (trace_set_value() of c_yuno.c):
+ *  a boolean; an integer in the range of an int (true unless 0); or
+ *  text -- set / reset, a JSON integer -?(0|[1-9][0-9]*), or true /
+ *  false, yes / no, on / off, any case. null for anything else: a
+ *  real (2.5), " 1", "0x1", "1e3", "+5", "007" and "2.5" are refused,
+ *  as in C. Up to gobj-js 7.26.19 the text went through Number(),
+ *  which took all of them, and "yes" / "on" were refused.
  ***************************************************************/
+const INT_MIN = -2147483648;
+const INT_MAX = 2147483647;
+
 function parse_set(value)
 {
     if(value === true || value === false) {
         return value;
     }
-    let v = String(value === undefined || value === null ? "" : value).toLowerCase();
-    if(v === "true" || v === "set") {
-        return true;
+    if(typeof value === "number") {
+        if(!Number.isInteger(value) || value < INT_MIN || value > INT_MAX) {
+            return null;
+        }
+        return value !== 0;
     }
-    if(v === "false" || v === "reset") {
-        return false;
-    }
-    if(v === "" || isNaN(Number(v))) {
+    if(typeof value !== "string" || value === "") {
         return null;
     }
-    return Number(v) ? true : false;
+    let v = value.toLowerCase();
+    if(v === "set") {
+        return true;
+    }
+    if(v === "reset") {
+        return false;
+    }
+    if(/^-?(0|[1-9][0-9]*)$/.test(value)) {
+        let n = Number(value);
+        if(n < INT_MIN || n > INT_MAX) {
+            return null;
+        }
+        return n !== 0;
+    }
+    if(v === "true" || v === "yes" || v === "on") {
+        return true;
+    }
+    if(v === "false" || v === "no" || v === "off") {
+        return false;
+    }
+    return null;
 }
 
 function yuno_prefix()
