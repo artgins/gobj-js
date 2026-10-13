@@ -7,6 +7,41 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## Unreleased
+
+Parity with the C kernel of the twenty-fourth review (yunovatios
+`REV-CLOUD.md` §V24.4.2, §V24.4.3).
+
+- **After `Bearer` or `Basic`, only a word that can be a credential is
+  masked**, by the rule of the C kernel's `scheme_credential()`: a quoted one,
+  one after the scheme doubled (`Bearer Bearer tok`), or one that is not a word
+  of prose -- it holds a digit or one of `_~+=`, mixes its case past its first
+  letter, or is 24 characters or more; for `Bearer` 8 at least, for `Basic` the
+  base64 of a `user:password`. `the bearer of this letter` showed
+  `the bearer ******** this letter`; `basic plan` is left as it is.
+- **A JWT or a JWE is `eyJ`, base64url and a `.`** (two parts or more): a JWE
+  (five parts) and a JWT a cap cut were shown.
+- **A `name: value` whose name is a secret's is masked**, its name in quotes
+  or not (`"password": hunter2`, `bearer: tok`, `X-Auth-Token: x`), and a value
+  that is a scheme and its credential WHOLE (`Authorization: Basic x` is
+  `Authorization: ********`; it was `Authorization: Bearer ********`).
+- The twin tests carry the C kernel's table, and the same 30 000 texts give the
+  same answers on both sides.
+- **Nothing that the masking of 7.26.9 hid is shown** but the word after a bare
+  `Bearer` that cannot be a credential (the security review of the C kernel's
+  V24): each rule judges the text as it came (the characters to mask are
+  marked, a run of them is one `********`), and 7.26.9's reading of the
+  parameters is kept whole. V24 had shown the value of a `name=value` whose
+  name a JWT of two parts took (`eyJ..bearer1=x`), whose `=` the word after
+  `Bearer Bearer` took, or that a label's value hid (`x-auth-token:
+  password=a,b` showed `,b`); the rest of a token after a byte of no token68
+  (`Bearer abc%2Bdef`: the word of 7.26.9's Bearer is masked whole, its dots
+  at the end too). A `\"name\":\"x\"` of a json inside a json is a
+  `name: value` (its value to the quote escaped the same way), a character
+  that is no ASCII is no letter of prose, and the base64 of `Basic` is read as
+  far as it goes (`(Basic dXNlcjpwYXNz)`). The C and JS twins give the same
+  answers on 230 078 texts.
+
 ## 7.26.20
 
 Parity with the C kernel of the twenty-third review (yunovatios `REV-CLOUD.md`

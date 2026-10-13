@@ -674,16 +674,31 @@ is_secret_name("mapping")                 // → false (pin inside a word)
 is_secret_name("token_endpoint")          // → false (names something ABOUT one)
 mask_secrets_inline("login user=a passw=x")  // → "login user=a passw=********"
 mask_secrets_inline("curl -H 'Authorization: Bearer abc' u")
-                                          // → "curl -H 'Authorization: Bearer ********' u"
+                                          // → "curl -H 'Authorization: ********' u"
+mask_secrets_inline("sent Bearer mF_9.B5f-4.1JqM")  // → "sent Bearer ********"
+mask_secrets_inline("the bearer of this letter")    // → null: prose
+mask_secrets_inline("\"password\": hunter2")        // → "\"password\": ********"
 json_mask_secrets({user: "a", password: "x"})  // → {user: "a", password: "********"}
 json_mask_secrets({note: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"})
                                           // → {note: "********"}: a JWT under any key
 trace_json_masked(kw, "sent")            // trace_json() of the masked copy
 ```
 
-As the C kernel's: the same names, the same shapes by value (a JWT, the token
-after `Bearer `), a NUL in a string read as a blank; linear and bounded (a text
-over 4 MB is not shown at all). `key` and `cert` are not secrets' names.
+As the C kernel's: the same names, the same rules. By name: the value of a
+`name=value` and of a `name: value` (`"password": x`, `Authorization: Basic x`,
+`bearer: tok`, `{\"password\":\"x\"}` of a json inside a json) whose name is
+a secret's, whole. By value: a JWT or a JWE (`eyJ`, base64url and a `.`: also
+one a cap cut), and after `Bearer` or `Basic` the word that can be a credential
+-- quoted, after the scheme doubled, or not a word of prose (a digit, a symbol,
+a character that is no ASCII, its case mixed, 24 characters or more; for
+`Bearer` 8 at least, for `Basic` a run of base64 that decodes to a
+`user:password`). Each rule judges the text as it came, and a run of
+characters to mask is one `********`: nothing that the masking of 7.26.9 hid is
+shown, but the word after a bare `Bearer` that cannot be a credential. A key
+is judged as a name, never as a value: a key that is itself a credential (a
+dict keyed by tokens, `{"eyJ...": 1}`) is shown as it is. A NUL in a string is
+read as a blank; linear and bounded (a text over 4 MB is not shown at all).
+`key` and `cert` are not secrets' names.
 
 ### Logging
 

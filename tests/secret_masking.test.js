@@ -13,6 +13,10 @@
  *      token after "Bearer "; pass, pin and otp are secrets' names as
  *      WHOLE segments; a NUL in a string is read as a blank -- the same
  *      table as the C kernel's test_secret_attrs (REV-CLOUD V23.4.3).
+ *      And V24.4: after "Bearer" or "Basic" only a word that can be a
+ *      credential (never prose), a quoted or doubled one whatever its
+ *      shape, a JWE, a JWT cut by a cap, a "name: value" of a secret's
+ *      name, a scheme under a secret's name masked whole.
  *
  *      Where it is used, and what went in clear up to gobj-js 7.25.9:
  *        - the commands trace of gobj_command(): the line and, with
@@ -44,6 +48,59 @@ import {
     set_log_callback,
     event_flag_t,
 } from "../src/index.js";
+
+/*
+ *  The C kernel's table of tests/c/secret_attrs/test_secret_attrs.c
+ *  (REV-CLOUD V24.4.2, V24.4.3): the same texts, the same answers
+ */
+const V24_SHAPES = [
+    ["the bearer of this letter", null],
+    ["Pay the Bearer Bond.", null],
+    ["the bearer self-service and/or e.g. holder", null],
+    ["bearer BOND", null],
+    ["el portador bearer señor", null],
+    ["a basic plan, BASIC programs, Basic Operations", null],
+    ["Basic YWRtaW4=", null],
+    ["Bearer mF_9.B5f-4.1JqM", "Bearer ********"],
+    ["bearer abcdEFGHijkl", "bearer ********"],
+    ["Bearer 12345678", "Bearer ********"],
+    ["Bearer abcdefghijklmnopqrstuvwxyz", "Bearer ********"],
+    ["Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln", "Bearer ********"],
+    ["Bearer short1", null],
+    ["x Basic dXNlcjpwYXNz y", "x Basic ******** y"],
+    ["basic YTpi", "basic ********"],
+    ["Bearer Bearer TOKEN", "Bearer Bearer ********"],
+    ["Bearer \"tok\"", "Bearer ********"],
+    ["bearer: tok", "bearer: ********"],
+    ["x eyJhbGciOiJSU0EtT0FFUCJ9.OKOawDo.48V1_ALb.5eym8TW.XFBoMYUZ y", "x ******** y"],
+    ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0ZX", "********"],
+    ["the jwt eyJhbGciOiJIUzI1NiJ9.", "the jwt ********."],
+    ["eyJhbGciOiJIUzI1NiJ9", null],
+    ["token=Bearer abc x=1", "token=******** x=1"],
+    ["password=Basic xyz", "password=********"],
+    ["\"password\": Bearer abc, \"a\": 1", "\"password\": ********, \"a\": 1"],
+    ["{\"password\": \"pw-hunter2\", \"user\": \"bob\"}", "{\"password\": ********, \"user\": \"bob\"}"],
+    ["\"password\": hunter2", "\"password\": ********"],
+    ["Authorization: Basic dXNlcjpwYXNz", "Authorization: ********"],
+    ["X-Auth-Token: xat-hunter2; next", "X-Auth-Token: ********; next"],
+    ["{'token': 'py-hunter2'}", "{'token': ********}"],
+    ["token_endpoint: https://idp/token", null],
+    ["at 12:30:45 on host:8080", null],
+    ["Wrong token: try again", "Wrong token: ******** again"],
+
+    /*
+     *  REV-CLOUD V24, the security review of the C kernel's 2e8d0589f: each
+     *  rule judges the text as it came, and 7.26.9's reading of the
+     *  parameters is kept whole -- V24 showed what 7.26.9 masked
+     */
+    ["eyJzdWIiOiJ4In0.bearer12345678=sr1-hunter2", "********=********"],
+    ["Bearer Bearer pwd=x \"sr2-hunter2\"", "Bearer Bearer ********"],
+    ["x-auth-token: password=sr3,hunter2 c", "x-auth-token: ********"],
+    ["x Bearer abc%2Bsr4hunter2 y", "x Bearer ******** y"],
+    ["password12:30command='sr5-hunter2' y", "password12:******** y"],
+    ["update-node x='{\\\"password\\\":\\\"sr6-hunter2\\\"}'",
+     "update-node x='{\\\"password\\\":********}'"],
+];
 
 let lines = [];
 set_log_callback((level, msg) => {
@@ -181,14 +238,21 @@ describe("a secret by its value, and pass/pin/otp as whole segments (the C kerne
     test("a JWT, and the token after Bearer, by their shape: the C kernel's table", () => {
         const shapes = [
             ["note=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnLWh1bnRlcjI x=1", "note=******** x=1"],
-            ["curl -H 'Authorization: Bearer abc-hunter2' x", "curl -H 'Authorization: Bearer ********' x"],
+            ["curl -H 'Authorization: Bearer abc-hunter2' x", "curl -H 'Authorization: ********' x"],
             ["BEARER   tok-hunter2", "BEARER   ********"],
             ["the jwt eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.c2ln.", "the jwt ********."],
             ["pin=1234 sim_pin=5678 ping=1", "pin=******** sim_pin=******** ping=1"],
-            ["eyJabc.def x=eyJabc", null],      // two parts, and one: no JWT
+            ["eyJabc.def x=eyJabc", "******** x=eyJabc"],  // two parts: a JWT a cap cut (V24.4.3)
             ["xeyJa.b.c", null],                // inside a word
             ["bearer=x", "bearer=********"],    // its name, as before
         ];
+        for(const [text, shown] of shapes) {
+            expect(mask_secrets_inline(text), text).toBe(shown);
+        }
+    });
+
+    test("V24.4: the word after Bearer or Basic, by its shape, and the name: value rule", () => {
+        const shapes = V24_SHAPES;
         for(const [text, shown] of shapes) {
             expect(mask_secrets_inline(text), text).toBe(shown);
         }
@@ -204,11 +268,18 @@ describe("a secret by its value, and pass/pin/otp as whole segments (the C kerne
             nul: "a\u0000password=nul-hunter2",
         });
         expect(shown.note).toBe("********");
-        expect(shown.headers).toBe("Authorization: Bearer ********");
+        expect(shown.headers).toBe("Authorization: ********");
         expect(shown.sim_pin).toBe("********");
         expect(shown.db_pass).toBe("********");
         expect(shown.passive).toBe("visible-passive");
         expect(shown.nul).toBe("a password=********");     // as C: the NUL shown as a blank
+    });
+
+    test("json_mask_secrets(): a key with a NUL is judged by all of it, as C (V24.4)", () => {
+        const shown = json_mask_secrets({"a\u0000password": "nulkey-hunter2", note: "visible"});
+        expect(shown["a\u0000password"]).toBe("********");
+        expect(shown.note).toBe("visible");
+        expect(Object.keys(shown).length).toBe(2);
     });
 });
 
@@ -307,6 +378,16 @@ describe("masking is linear and bounded", () => {
             json_mask_secrets({anything: word});
             t1 = performance.now();
             expect(t1 - t0).toBeLessThan(500);
+        }
+
+        // and the shapes of V24.4, as in C: a scheme word repeated, ':' after
+        // secrets' names, a container that does not close
+        for(const pattern of ["Bearer ", "basic ", "token:", "\"pin\": {["]) {
+            const text = pattern.repeat(Math.floor(1024*1024 / pattern.length));
+            let t0 = performance.now();
+            mask_secrets_inline(text);
+            let t1 = performance.now();
+            expect(t1 - t0, pattern).toBeLessThan(500);
         }
 
         const value = "password=" + "x".repeat(1024*1024);
