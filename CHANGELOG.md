@@ -7,7 +7,7 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
-## Unreleased
+## 7.26.21
 
 Parity with the C kernel of the twenty-fourth review (yunovatios
 `REV-CLOUD.md` §V24.4.2, §V24.4.3).
