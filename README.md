@@ -308,10 +308,12 @@ string, a `DTP_DICT` or a `DTP_LIST` (7.26.25): a cycle anywhere inside, a
 of a class. They were written, and burst (or turned into `"{}"`) when the value
 was serialized, far from the write. And so is a value whose text would say
 another value (7.26.26): an object with a `toJSON()`, `NaN` or `Infinity` inside
-(the text says `null`; jansson holds no such real), a function, `undefined` or a
-symbol inside an array (the text says `null`), and a value nested deeper than
-2048 levels (a scalar is a level too), which C would not read back and which
-bursts `JSON.stringify()` a little further on. A getter or a `Proxy` trap that
+(the text says `null`; jansson holds no such real), a function, `undefined`, a
+symbol or a hole inside an array (`[1, , 3]`: the text says `null`), and a value
+nested deeper than 2048 levels (a scalar is a level too), which C would not read
+back and which bursts `JSON.stringify()` a little further on. Every version
+before 7.26.26 wrote them, so this is a BREAKING change for a caller that wrote
+one. A getter or a `Proxy` trap that
 throws is a refusal too, never an exception (7.26.26). A key whose value is
 `undefined`, a function or a symbol is dropped, as `JSON.stringify()` drops it:
 an absent key. A plain object of another realm (a `vm` context, an iframe) is a
@@ -324,6 +326,7 @@ gobj_write_attr(gobj, "settings", new Map([["a", 1]]));     // -1, ERROR "a valu
 gobj_write_str_attr(gobj, "name", new Map());               // -1: it was the text "{}"
 gobj_write_attr(gobj, "settings", {ratio: NaN});            // -1: it was the text {"ratio":null}
 gobj_write_attr(gobj, "items", [1, undefined]);             // -1: it was the text [1,null]
+gobj_write_attr(gobj, "items", [1, , 3]);                   // -1: a hole, it was the text [1,null,3]
 gobj_write_str_attr(gobj, "name", NaN);                     // -1: it was the text "null"
 ```
 
@@ -723,8 +726,20 @@ kw_clone_by_not_keys(gobj, kw, keys, verbose)
 
 // Local storage helpers (browser localStorage, no "store" parameter)
 kw_get_local_storage_value(key, default_value, create)   // create=false
-kw_set_local_storage_value(key, value)
+kw_set_local_storage_value(key, value)                   // 0, or -1 logged
 kw_remove_local_storage_value(key)
+// BREAKING in 7.26.26: kw_get_local_storage_value() answers default_value
+// where it answered null (an absent entry, a json null) or undefined (no
+// browser), and an entry that is not json is REMOVED, with one WARNING
+// that never shows its text. A store the browser blocks (cookies blocked,
+// a sandboxed iframe: reading window.localStorage throws) answers the
+// default, warned once per key, and a write to it is -1 (7.26.27: before,
+// every helper and node_uuid() threw). A value with no json text is
+// refused by the writer, -1 with an ERROR, as a typed writer refuses it
+// (7.26.27; a function was stored as the text "undefined"):
+//   kw_set_local_storage_value("k", () => 1)     → -1
+//   kw_set_local_storage_value("k", {w: NaN})    → -1 (it was {"w":null})
+//   kw_set_local_storage_value("k", [1, , 3])    → -1 (a hole: [1,null,3])
 
 // Misc utilities
 current_timestamp()          // ISO string
@@ -1091,7 +1106,10 @@ count as reached: the backoff goes on from where it was (7.26.25), so a server
 that breaks every session is not reconnected at the first delay for ever -- unless
 the session outlived `timeout_retry_max`: a session that long was served, and its
 fault starts the backoff over, as a clean end does (7.26.26). For the old fixed-interval behaviour set `timeout_retry_max` equal to
-`timeout_retry`.
+`timeout_retry`. The first delay is **at least 1000 ms** (7.26.27): a lower
+`timeout_retry` is raised to 1000 with one WARNING, because 0 never doubled
+away from 0 and a server that closes before the ack was reconnected in a loop
+with no wait, hundreds of times a second.
 
 **A refused identity card** (`result < 0` in its ack) publishes `EV_ON_ID_NAK`
 and closes the channel with 1000; no session was reached, so the close is then

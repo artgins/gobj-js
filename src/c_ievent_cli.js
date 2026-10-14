@@ -108,7 +108,7 @@ SDATA (data_type_t.DTP_STRING,  "jwt",              sdata_flag_t.SDF_PERSIST,   
 SDATA (data_type_t.DTP_STRING,  "cert_pem",         sdata_flag_t.SDF_PERSIST,   "",         "SSL server certification, PEM str format"),
 SDATA (data_type_t.DTP_JSON,    "extra_info",       sdata_flag_t.SDF_RD,        "{}",       "dict data set by user, added to the identity card msg."),
 SDATA (data_type_t.DTP_LIST,    "required_services",sdata_flag_t.SDF_RD,        "[]",       "Services this LINK requires (identity card). Empty = the yuno's `required_services`, as before. A yuno with several links to DIFFERENT backends must set it per link: the yuno-wide list is the union, so every backend is told the service names of all the others."),
-SDATA (data_type_t.DTP_INTEGER, "timeout_retry",    sdata_flag_t.SDF_RD,        "5000",     "First reconnect delay (ms). It BACKS OFF from here, doubling up to timeout_retry_max, and resets when a session is reached"),
+SDATA (data_type_t.DTP_INTEGER, "timeout_retry",    sdata_flag_t.SDF_RD,        "5000",     "First reconnect delay (ms), at least 1000. It BACKS OFF from here, doubling up to timeout_retry_max, and resets when a session is reached"),
 SDATA (data_type_t.DTP_INTEGER, "timeout_retry_max",sdata_flag_t.SDF_RD,        "60000",     "Cap of the reconnect backoff (ms). Set it equal to timeout_retry for the old fixed-interval behaviour"),
 SDATA (data_type_t.DTP_INTEGER, "timeout_idack",    sdata_flag_t.SDF_RD,        "5000",     "timeout waiting idAck"),
 SDATA (data_type_t.DTP_POINTER, "subscriber",       0,              0,          "subscriber of output-events. If null then subscriber is the parent"),
@@ -153,6 +153,7 @@ let PRIVATE_DATA = {
     retry_ms:           0,      // current backoff (0 = none yet); see next_retry()
     retry_ms_before_session: 0, // the backoff the ack reset; see close_for_peer_fault()
     session_since:      0,      // performance.now() of the ack; see close_for_peer_fault()
+    retry_floor_warned: false,  // see retry_bounds()
 };
 
 let __gclass__ = null;
@@ -736,11 +737,7 @@ function close_for_peer_fault(gobj, reason)
 
     if(gobj_current_state(gobj) === "ST_SESSION") {
         const lived = performance.now() - priv.session_since;
-        const longest = Math.max(
-            gobj_read_integer_attr(gobj, "timeout_retry"),
-            gobj_read_integer_attr(gobj, "timeout_retry_max")
-        );
-        if(lived < longest) {
+        if(lived < retry_bounds(gobj).max) {
             priv.retry_ms = priv.retry_ms_before_session;
         }
         priv.retry_ms_before_session = 0;
@@ -1225,6 +1222,36 @@ function ac_on_close(gobj, event, kw, src)
 }
 
 /***************************************************************
+ *  The first delay of the backoff and its cap.
+ *
+ *  A first delay below RETRY_FLOOR_MS is raised to it, with a WARNING
+ *  once: `timeout_retry` 0 never left 0 (0 doubled is 0), so a server
+ *  that closed before the ack was reconnected in a loop with no wait,
+ *  hundreds of connections a second.
+ ***************************************************************/
+const RETRY_FLOOR_MS = 1000;
+
+function retry_bounds(gobj)
+{
+    let priv = gobj.priv;
+
+    let base = gobj_read_integer_attr(gobj, "timeout_retry");
+    let max = gobj_read_integer_attr(gobj, "timeout_retry_max");
+    if(!(base >= RETRY_FLOOR_MS)) {
+        if(!priv.retry_floor_warned) {
+            priv.retry_floor_warned = true;
+            log_warning(`${gobj_short_name(gobj)}: timeout_retry ${base} ms is below ` +
+                `${RETRY_FLOOR_MS} ms: ${RETRY_FLOOR_MS} ms is used`);
+        }
+        base = RETRY_FLOOR_MS;
+    }
+    if(!(max >= base)) {
+        max = base;     /*  equal = the old fixed-interval behaviour  */
+    }
+    return {base: base, max: max};
+}
+
+/***************************************************************
  *  How long to wait before the next reconnect attempt.
  *
  *  The delay used to be a constant (`timeout_retry`, 5s), for ever. A
@@ -1247,12 +1274,7 @@ function next_retry(gobj)
 {
     let priv = gobj.priv;
 
-    let base = gobj_read_integer_attr(gobj, "timeout_retry");
-    let max = gobj_read_integer_attr(gobj, "timeout_retry_max");
-    if(max < base) {
-        max = base;     /*  equal = the old fixed-interval behaviour  */
-    }
-
+    const {base, max} = retry_bounds(gobj);
     priv.retry_ms = priv.retry_ms ? Math.min(priv.retry_ms * 2, max) : base;
 
     let jitter = priv.retry_ms * 0.2;

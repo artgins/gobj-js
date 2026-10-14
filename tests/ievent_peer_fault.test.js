@@ -20,7 +20,7 @@
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
  ***********************************************************************/
-import { describe, test, expect, beforeAll } from "vitest";
+import { describe, test, expect, beforeAll, vi } from "vitest";
 import {
     SDATA_END,
     gclass_create,
@@ -130,6 +130,26 @@ function foreign_message(ws)
     })});
 }
 
+/*  The backoff starts at 1000 ms at least: fake time, a minute of it at most  */
+async function next_socket_fake(count)
+{
+    for(let i = 0; i < 600 && sockets.length < count; i++) {
+        await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(sockets.length).toBe(count);
+    return sockets[count - 1];
+}
+
+async function with_fake_timers(fn)
+{
+    vi.useFakeTimers({toFake: ["setTimeout", "clearTimeout", "performance"]});
+    try {
+        await fn();
+    } finally {
+        vi.useRealTimers();
+    }
+}
+
 async function next_socket(count)
 {
     for(let i = 0; i < 200 && sockets.length < count; i++) {
@@ -166,13 +186,13 @@ describe("a session closed for a fault of the server", () => {
         gobj_stop(ievent);
     });
 
-    test("does not reset the backoff: it goes on growing, session after session", async () => {
+    test("does not reset the backoff: it goes on growing, session after session", () => with_fake_timers(async () => {
         const ievent = gobj_create_service("fault2", "C_IEVENT_CLI", {
             remote_yuno_role:    "remote_role",
             remote_yuno_service: "remote_service",
             url:                 "ws://fault2",
-            timeout_retry:       10,
-            timeout_retry_max:   1000,
+            timeout_retry:       1000,
+            timeout_retry_max:   100000,
         }, yuno);
         gobj_start(ievent);
         let count = sockets.length;
@@ -185,25 +205,25 @@ describe("a session closed for a fault of the server", () => {
             ws.fire_close(ws.closed_with.code);
             seen.push(ievent.priv.retry_ms);
             count++;
-            await next_socket(count);
+            await next_socket_fake(count);
         }
-        expect(seen).toEqual([10, 20, 40]);
+        expect(seen).toEqual([1000, 2000, 4000]);
 
         /*  A session that ends well starts the backoff over  */
         const ws = sockets[count - 1];
         into_session(ievent, ws);
         ws.fire_close(1000);
-        expect(ievent.priv.retry_ms).toBe(10);
+        expect(ievent.priv.retry_ms).toBe(1000);
         gobj_stop(ievent);
-    });
+    }));
 
-    test("a session that outlived the longest delay starts the backoff over, whatever came before", async () => {
+    test("a session that outlived the longest delay starts the backoff over, whatever came before", () => with_fake_timers(async () => {
         const ievent = gobj_create_service("fault4", "C_IEVENT_CLI", {
             remote_yuno_role:    "remote_role",
             remote_yuno_service: "remote_service",
             url:                 "ws://fault4",
-            timeout_retry:       10,
-            timeout_retry_max:   40,
+            timeout_retry:       1000,
+            timeout_retry_max:   4000,
         }, yuno);
         gobj_start(ievent);
         let count = sockets.length;
@@ -213,21 +233,45 @@ describe("a session closed for a fault of the server", () => {
             foreign_message(ws);
             ws.fire_close(ws.closed_with.code);
             count++;
-            await next_socket(count);
+            await next_socket_fake(count);
         }
-        expect(ievent.priv.retry_ms).toBe(40);
+        expect(ievent.priv.retry_ms).toBe(4000);
 
         /*  Broken at once, the escalated delay is kept (above); after a
          *  session longer than timeout_retry_max, it is not  */
         const ws = sockets[count - 1];
         into_session(ievent, ws);
-        await new Promise(resolve => setTimeout(resolve, 60));
+        await vi.advanceTimersByTimeAsync(4100);
         foreign_message(ws);
         expect(ws.closed_with.code).toBe(4002);
         ws.fire_close(ws.closed_with.code);
-        expect(ievent.priv.retry_ms).toBe(10);
+        expect(ievent.priv.retry_ms).toBe(1000);
         gobj_stop(ievent);
-    });
+    }));
+
+    test("with a timeout_retry below the floor, a session that broke at once keeps the backoff", () => with_fake_timers(async () => {
+        const ievent = gobj_create_service("fault5", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://fault5",
+            timeout_retry:       0,
+            timeout_retry_max:   3000,
+        }, yuno);
+        gobj_start(ievent);
+        let count = sockets.length;
+        const seen = [];
+        for(let round = 0; round < 3; round++) {
+            const ws = sockets[count - 1];
+            into_session(ievent, ws);
+            foreign_message(ws);
+            ws.fire_close(ws.closed_with.code);
+            seen.push(ievent.priv.retry_ms);
+            count++;
+            await next_socket_fake(count);
+        }
+        expect(seen).toEqual([1000, 2000, 3000]);
+        gobj_stop(ievent);
+    }));
 
     test("an event out of session closes with 4002 too, and the backoff of the opens goes on", () => {
         const ievent = gobj_create_service("fault3", "C_IEVENT_CLI", {

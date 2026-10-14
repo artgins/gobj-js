@@ -18,7 +18,7 @@
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
  ***********************************************************************/
-import { describe, test, expect, beforeAll } from "vitest";
+import { describe, test, expect, beforeAll, vi } from "vitest";
 import {
     SDATA_END,
     event_flag_t,
@@ -278,31 +278,80 @@ describe("C_IEVENT_CLI stopped and started in the same turn", () => {
     });
 
     test("the backoff doubles on every failed open, up to its top", async () => {
-        const ievent = gobj_create_service("link7", "C_IEVENT_CLI", {
-            remote_yuno_role:    "remote_role",
-            remote_yuno_service: "remote_service",
-            url:                 "ws://bad",
-            timeout_retry:       30,
-            timeout_retry_max:   120,
-        }, yuno);
-        const listener = gobj_create_pure_child("link7_listener", "C_PROBE_LINK_LISTENER", {}, ievent);
-        gobj_start(listener);
-        gobj_subscribe_event(ievent, null, {}, listener);
-        published.length = 0;
+        vi.useFakeTimers({toFake: ["setTimeout", "clearTimeout", "performance"]});
+        try {
+            const ievent = gobj_create_service("link7", "C_IEVENT_CLI", {
+                remote_yuno_role:    "remote_role",
+                remote_yuno_service: "remote_service",
+                url:                 "ws://bad",
+                timeout_retry:       1000,
+                timeout_retry_max:   4000,
+            }, yuno);
+            const listener = gobj_create_pure_child("link7_listener", "C_PROBE_LINK_LISTENER", {}, ievent);
+            gobj_start(listener);
+            gobj_subscribe_event(ievent, null, {}, listener);
+            published.length = 0;
 
-        gobj_start(ievent);
-        const seen = [];
-        const n_errors = () => published.filter(e => e === "EV_ON_OPEN_ERROR").length;
-        for(let i = 0; i < 200 && n_errors() < 5; i++) {
-            await new Promise(resolve => setTimeout(resolve, 5));
-            const r = ievent.priv.retry_ms;
-            if(r && seen[seen.length - 1] !== r) {
-                seen.push(r);
+            gobj_start(ievent);
+            const seen = [];
+            const n_errors = () => published.filter(e => e === "EV_ON_OPEN_ERROR").length;
+            for(let i = 0; i < 400 && n_errors() < 5; i++) {
+                await vi.advanceTimersByTimeAsync(50);
+                const r = ievent.priv.retry_ms;
+                if(r && seen[seen.length - 1] !== r) {
+                    seen.push(r);
+                }
             }
+            gobj_stop(ievent);
+            expect(n_errors()).toBeGreaterThanOrEqual(5);
+            expect(seen).toEqual([1000, 2000, 4000]);     // doubles, then stays at its top
+        } finally {
+            vi.useRealTimers();
         }
-        gobj_stop(ievent);
-        expect(n_errors()).toBeGreaterThanOrEqual(5);
-        expect(seen).toEqual([30, 60, 120]);     // doubles, then stays at its top
+    });
+
+    /*
+     *  0 doubled is 0: a timeout_retry of 0 was a reconnect loop with no
+     *  wait, hundreds of connections a second against a server that
+     *  closes before the ack. The first delay is at least 1000 ms now,
+     *  warned once.
+     */
+    test("a timeout_retry below the floor is raised to it, with one WARNING", async () => {
+        const logs = [];
+        set_log_callback((level, msg) => {
+            logs.push(`${level}: ${String(msg)}`);
+        });
+        vi.useFakeTimers({toFake: ["setTimeout", "clearTimeout", "performance"]});
+        try {
+            for(const [name, base, max] of [["link9", 0, 0], ["link10", -5, 0], ["link11", 10, 10]]) {
+                const ievent = gobj_create_service(name, "C_IEVENT_CLI", {
+                    remote_yuno_role:    "remote_role",
+                    remote_yuno_service: "remote_service",
+                    url:                 "ws://bad",
+                    timeout_retry:       base,
+                    timeout_retry_max:   max,
+                }, yuno);
+                const listener = gobj_create_pure_child(`${name}_listener`, "C_PROBE_LINK_LISTENER", {}, ievent);
+                gobj_start(listener);
+                gobj_subscribe_event(ievent, null, {}, listener);
+                published.length = 0;
+
+                gobj_start(ievent);
+                for(let i = 0; i < 1000; i++) {
+                    await vi.advanceTimersByTimeAsync(5);
+                }
+                gobj_stop(ievent);
+                const n_errors = published.filter(e => e === "EV_ON_OPEN_ERROR").length;
+                expect(n_errors).toBeGreaterThanOrEqual(5);     // 5 s: about one a second
+                expect(n_errors).toBeLessThanOrEqual(7);
+                expect(logs.filter(l => l.indexOf(`^${name}: timeout_retry`) >= 0)).toEqual([
+                    `warning: C_IEVENT_CLI^${name}: timeout_retry ${base} ms is below 1000 ms: 1000 ms is used`,
+                ]);
+            }
+        } finally {
+            vi.useRealTimers();
+            set_log_callback(() => {});
+        }
     });
 
     test("a failure that cannot be posted still arms the retry", async () => {

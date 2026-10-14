@@ -8,6 +8,7 @@
 import {
     GObj,
     gobj_short_name,
+    json_text_of,
 } from "./gobj.js";
 
 import {sprintf} from "./sprintf.js";
@@ -3939,39 +3940,75 @@ function kw_clone_by_not_keys(
 }
 
 /********************************************
- *  Get a local attribute
+ *  The browser's localStorage, or null when there is none (outside a
+ *  browser).
  *
- *  The json the entry holds, or `default_value` when there is none
- *  (written there too with `create`). A json null is no value, as
- *  json_absent() in C: the default. An entry that is not json (a
- *  corrupt or foreign write) is one WARNING and is REMOVED, so the
- *  next read finds no entry: it used to console.warn on every read,
- *  for ever. Its text is never shown (JSON.parse() quotes it in its
- *  error, and an entry can hold a token). A store that cannot be read
- *  is warned once per key. Outside a browser: the default.
+ *  With the site's data blocked (Chrome with cookies blocked, a sandboxed
+ *  iframe), READING the window.localStorage property already throws a
+ *  SecurityError, not only its getItem(): every app reads its locale at
+ *  start, so the app did not start. Such a store is answered as one whose
+ *  every call throws that error, so each helper fails as it fails for any
+ *  store that refuses it: a read gives the default, a write -1.
+ ********************************************/
+function local_store()
+{
+    if (typeof window === "undefined") {
+        return null;
+    }
+    let store;
+    try {
+        store = window.localStorage;
+    } catch (e) {
+        const refuse = () => {
+            throw e;
+        };
+        return {getItem: refuse, setItem: refuse, removeItem: refuse};
+    }
+    return store || null;
+}
+
+/********************************************
+ *  A failure of the store that would repeat on every read is warned
+ *  once per key, until a read of the key goes well again.
  ********************************************/
 const local_storage_warned = new Set();
 
-function warn_local_storage_once(key, what)
+function warn_local_storage_once(key, msg)
 {
     if (local_storage_warned.has(key)) {
         return;
     }
     local_storage_warned.add(key);
-    log_warning(`kw_get_local_storage_value(): localStorage key "${key}" ${what}`);
+    log_warning(msg);
 }
 
+/********************************************
+ *  Get a local attribute
+ *
+ *  The json the entry holds, or `default_value` when there is none
+ *  (written there too with `create`). A json null is no value, as
+ *  json_absent() in C: the default. An entry that is not json (a
+ *  corrupt or foreign write) is a WARNING and is REMOVED, so the
+ *  next read finds no entry: it used to console.warn on every read,
+ *  for ever; a new corrupt entry is a new WARNING. Its text is never
+ *  shown (JSON.parse() quotes it in its error, and an entry can hold a
+ *  token). A store that cannot be read (blocked) is warned once per
+ *  key, and the default is NOT written there. Outside a browser: the
+ *  default.
+ ********************************************/
 function kw_get_local_storage_value(key, default_value, create = false)
 {
-    if (typeof window === "undefined" || !window.localStorage) {
+    const store = local_store();
+    if (!store) {
         return default_value; // No store outside the browser
     }
+    const where = `kw_get_local_storage_value(): localStorage key "${key}"`;
 
     let text;
     try {
-        text = window.localStorage.getItem(key);
+        text = store.getItem(key);
     } catch (e) {
-        warn_local_storage_once(key, "cannot be read (storage blocked?): the default is used");
+        warn_local_storage_once(key, `${where} cannot be read (storage blocked?): the default is used`);
         return default_value;
     }
 
@@ -3980,10 +4017,20 @@ function kw_get_local_storage_value(key, default_value, create = false)
         try {
             value = JSON.parse(text);
         } catch (e) {
-            warn_local_storage_once(key, "does not hold json: removed, the default is used");
-            kw_remove_local_storage_value(key);
             value = null;
+            try {
+                store.removeItem(key);
+                log_warning(`${where} does not hold json: removed, the default is used`);
+                local_storage_warned.delete(key);
+            } catch (e2) {
+                warn_local_storage_once(key,
+                    `${where} does not hold json and cannot be removed: the default is used`);
+            }
+            text = undefined;
         }
+    }
+    if (text !== undefined) {
+        local_storage_warned.delete(key);   // a read that went well: the next failure is news
     }
 
     if (value === null) {
@@ -4004,19 +4051,30 @@ function kw_get_local_storage_value(key, default_value, create = false)
  *  reported success on a store that had rejected the write: a full or blocked
  *  localStorage (quota, private mode) silently discarded the change while the
  *  UI showed it as saved.
+ *
+ *  A value with no json text is refused with an ERROR, as a typed writer
+ *  refuses it (json_text_of()): a function was stored as the text
+ *  "undefined", and a NaN, a Date or a Map as a text that reads back as
+ *  another value. Checked in Node.js too, where there is no store.
  ********************************************/
 function kw_set_local_storage_value(key, value)
 {
-    if (typeof window === "undefined" || !window.localStorage) {
-        return 0; // No store outside the browser: not a failure
+    if (!key) {
+        log_error(`kw_set_local_storage_value(): invalid key: key=${key}`);
+        return -1;
     }
-    if (!key || value === undefined) {
-        log_error(`kw_set_local_storage_value(): invalid key or value: key=${key}`);
+    const text = json_text_of(value);
+    if (text === undefined) {
+        log_error(`kw_set_local_storage_value(): cannot save "${key}": a value with no json text`);
         return -1;
     }
 
+    const store = local_store();
+    if (!store) {
+        return 0; // No store outside the browser: not a failure
+    }
     try {
-        window.localStorage.setItem(key, JSON.stringify(value));
+        store.setItem(key, text);
         return 0;
     } catch (e) {
         log_error(`kw_set_local_storage_value(): cannot save "${key}" ` +
@@ -4030,18 +4088,20 @@ function kw_set_local_storage_value(key, value)
  ********************************************/
 function kw_remove_local_storage_value(key)
 {
-    if (typeof window === "undefined" || !window.localStorage) {
-        return; // Prevents errors in Node.js
+    const store = local_store();
+    if (!store) {
+        return; // No store outside the browser
     }
     if (!key) {
-        window.console.warn(`Invalid key for localStorage removal: ${key}`);
+        log_error(`kw_remove_local_storage_value(): invalid key: key=${key}`);
         return;
     }
 
     try {
-        window.localStorage.removeItem(key);
+        store.removeItem(key);
     } catch (e) {
-        window.console.warn(`Error removing localStorage key "${key}":`, e);
+        log_warning(`kw_remove_local_storage_value(): cannot remove "${key}" ` +
+            `(storage blocked?): ${e && e.message ? e.message : e}`);
     }
 }
 
@@ -5793,11 +5853,24 @@ function node_uuid()
 {
     let uuid = "";
 
-    if (typeof window !== "undefined" && window.localStorage) {
-        uuid = window.localStorage.getItem("host_uuid");
+    const store = local_store();
+    if (store) {
+        try {
+            uuid = store.getItem("host_uuid");
+        } catch (e) {
+            uuid = null;
+            warn_local_storage_once("host_uuid",
+                "node_uuid(): localStorage cannot be read (storage blocked?): a uuid of this page only");
+        }
         if (!uuid && window.crypto?.randomUUID) {
             uuid = window.crypto.randomUUID();  // Generate a new UUID
-            window.localStorage.setItem("host_uuid", uuid);
+            try {
+                store.setItem("host_uuid", uuid);
+            } catch (e) {
+                warn_local_storage_once("host_uuid",
+                    "node_uuid(): localStorage cannot be written (storage full or blocked?): " +
+                    "a uuid of this page only");
+            }
         }
     } else if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
         uuid = globalThis.crypto.randomUUID();  // Node.js environment (if available)

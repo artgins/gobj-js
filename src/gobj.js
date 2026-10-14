@@ -3548,7 +3548,8 @@ function rc_walk_by_list(
     user_data2
 ) {
     /*
-     *  This let destroy the current item
+     *  A copy: a callback may destroy any gobj of the list, the current one
+     *  included. One it destroyed is stepped over, as the C walk does.
      */
     let iter = [...iter_];
 
@@ -3556,6 +3557,9 @@ function rc_walk_by_list(
     if(walk_type & walk_type_t.WALK_LAST2FIRST) {
         for(let i=iter.length; i>0; i--) {
             child = iter[i-1];
+            if(gobj_is_destroying(child)) {
+                continue;
+            }
             let ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
@@ -3564,6 +3568,9 @@ function rc_walk_by_list(
     } else {
         for(let i=0; i<iter.length; i++) {
             child = iter[i];
+            if(gobj_is_destroying(child)) {
+                continue;
+            }
             let ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
@@ -3584,12 +3591,14 @@ function rc_walk_by_list(
  *          WALK_LAST2FIRST
  ***************************************************************/
 function rc_walk_by_level(
-    iter,              // dl_list_t
+    iter_,              // dl_list_t
     walk_type,          // walk_type_t
     cb_walking,         // cb_walking_t
     user_data,
     user_data2
 ) {
+    let iter = [...iter_];  // see rc_walk_by_list()
+
     /*
      *  First my children
      */
@@ -3605,9 +3614,10 @@ function rc_walk_by_level(
     if(walk_type & walk_type_t.WALK_LAST2FIRST) {
         for(let i=iter.length; i>0; i--) {
             child = iter[i-1];
-
-            let dl_child_list = [...child.dl_children];
-            ret = rc_walk_by_level(dl_child_list, walk_type, cb_walking, user_data, user_data2);
+            if(gobj_is_destroying(child)) {
+                continue;
+            }
+            ret = rc_walk_by_level(child.dl_children, walk_type, cb_walking, user_data, user_data2);
             if(ret < 0) {
                 return ret;
             }
@@ -3615,9 +3625,10 @@ function rc_walk_by_level(
     } else {
         for(let i=0; i<iter.length; i++) {
             child = iter[i];
-
-            let dl_child_list = [...child.dl_children];
-            ret = rc_walk_by_level(dl_child_list, walk_type, cb_walking, user_data, user_data2);
+            if(gobj_is_destroying(child)) {
+                continue;
+            }
+            ret = rc_walk_by_level(child.dl_children, walk_type, cb_walking, user_data, user_data2);
             if(ret < 0) {
                 return ret;
             }
@@ -3643,28 +3654,35 @@ function rc_walk_by_level(
  *          WALK_LAST2FIRST
  ***************************************************************/
 function rc_walk_by_tree(
-    iter,              // dl_list_t
+    iter_,              // dl_list_t
     walk_type,          // walk_type_t
     cb_walking,         // cb_walking_t
     user_data,
     user_data2
 ) {
     if(walk_type & walk_type_t.WALK_BYLEVEL) {
-        return rc_walk_by_level(iter, walk_type, cb_walking, user_data, user_data2);
+        return rc_walk_by_level(iter_, walk_type, cb_walking, user_data, user_data2);
     }
+
+    let iter = [...iter_];  // see rc_walk_by_list()
 
     let ret;
     let child;
     if(walk_type & walk_type_t.WALK_BOTTOM2TOP) {
         for(let i=iter.length; i>0; i--) {
             child = iter[i-1];
+            if(gobj_is_destroying(child)) {
+                continue;
+            }
 
-            let dl_child_list = [...child.dl_children];
-            ret = rc_walk_by_tree(dl_child_list, walk_type, cb_walking, user_data, user_data2);
+            ret = rc_walk_by_tree(child.dl_children, walk_type, cb_walking, user_data, user_data2);
             if(ret < 0) {
                 return ret;
             }
 
+            if(gobj_is_destroying(child)) {
+                continue;   // its children's walk ended it
+            }
             ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
@@ -3674,18 +3692,20 @@ function rc_walk_by_tree(
     } else {
         for(let i=0; i<iter.length; i++) {
             child = iter[i];
+            if(gobj_is_destroying(child)) {
+                continue;
+            }
 
             ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
-            } else if(ret === 0) {
-                let dl_child_list = [...child.dl_children];
-                ret = rc_walk_by_tree(dl_child_list, walk_type, cb_walking, user_data, user_data2);
+            } else if(ret === 0 && !gobj_is_destroying(child)) {
+                ret = rc_walk_by_tree(child.dl_children, walk_type, cb_walking, user_data, user_data2);
                 if(ret < 0) {
                     return ret;
                 }
             } else {
-                // positive, continue next
+                // positive, or gone: continue next
             }
         }
     }
@@ -6265,6 +6285,7 @@ export {
     sdata_flag_t,
     command_parameter_from_text,
     command_parameter_from_json,
+    json_text_of,
     SDataDesc,
     SDATA,
     SDATACM,

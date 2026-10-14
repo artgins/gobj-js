@@ -38,6 +38,7 @@ import {
     clear_timeout,
     register_c_timer,
     command_parameter_from_json,
+    json_text_of,
     command_parameter_from_text,
     set_log_callback,
 } from "../src/index.js";
@@ -502,5 +503,24 @@ describe("a value is json, or it is refused: never thrown, never changed by its 
         expect(command_parameter_from_json(data_type_t.DTP_INTEGER, -(2 ** 63)).value).toBe(-(2 ** 63));
         expect(command_parameter_from_json(data_type_t.DTP_LIST, 2 ** 63).refused).toBe("a real");
         expect(command_parameter_from_json(data_type_t.DTP_LIST, -(2 ** 63)).refused).toBe("an integer");
+    });
+});
+
+describe("json_text_of(): the text a string attr and the local storage write", () => {
+    test("a value with a text that says it", () => {
+        expect(json_text_of({a: 1, b: undefined, c: () => 1})).toBe("{\"a\":1}");
+        expect(json_text_of("text")).toBe("\"text\"");
+        expect(json_text_of(null)).toBe("null");
+        expect(json_text_of([1, "x", {y: [true]}])).toBe("[1,\"x\",{\"y\":[true]}]");
+    });
+
+    test("no text: what the text would turn into another value", () => {
+        const circular = {};
+        circular.self = circular;
+        for(const v of [undefined, () => 1, Symbol("s"), 10n, NaN, Infinity, circular,
+                new Date(0), new Map(), {toJSON: () => 1}, {w: NaN}, [1, undefined],
+                [1, , 3], [() => 1], {get a() { throw new Error("boom"); }}]) {   // eslint-disable-line no-sparse-arrays
+            expect(json_text_of(v)).toBe(undefined);
+        }
     });
 });

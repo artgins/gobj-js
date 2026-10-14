@@ -7,6 +7,61 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.27
+
+- **fix: with the site's data blocked, the local storage helpers no longer
+  throw.** In Chrome with cookies blocked, or in a sandboxed iframe, READING
+  `window.localStorage` already throws a `SecurityError`, not only its
+  `getItem()`; the helpers read the property outside their `try`, so
+  `kw_get_local_storage_value()`, `kw_set_local_storage_value()`,
+  `kw_remove_local_storage_value()` and `node_uuid()` threw it -- and every app
+  reads its locale with `kw_get_local_storage_value("locale", ..., true)` at
+  start, so the app did not start. One accessor (`local_store()`) reads the
+  property in a `try` and answers a blocked store as one whose every call
+  throws: a read gives the default (one WARNING per key, and `create` does not
+  write it), a write -1 with an ERROR, a removal a WARNING, `node_uuid()` a uuid
+  of this page only (one WARNING). 7.26.26 said *"a store that cannot be read
+  is warned once per key"*, which held only when `getItem()` threw. Checked in
+  Chromium and Firefox with a sandboxed iframe. In every published version.
+  Test `local_storage`.
+- **fix: a second corrupt value in the same key is warned again.** 7.26.26
+  remembered a warned key for the life of the page, so a corrupt entry written
+  again after the first was removed was removed with no trace. A key is
+  forgotten when its corrupt entry is removed, and after a read that goes well;
+  a corrupt entry that cannot be removed is warned once. Only in 7.26.26. Test
+  `local_storage`.
+- **fix, BREAKING: `kw_set_local_storage_value()` refuses a value with no json
+  text**, with an ERROR and -1, as a typed writer refuses it (new public
+  `json_text_of()`, the rule of a string attribute): a function was stored as
+  the text `"undefined"` with an answer of 0 (and removed by the next read),
+  `{w: NaN}` as `{"w":null}`, a `Date` as a string, a `Map` as `{}`; a cycle or
+  a `BigInt` was refused as *"storage full or blocked?"*. Checked before the
+  store, so outside a browser too. A key whose value is `undefined` is still an
+  absent key. No consumer writes such a value (gobj-ui, the in-repo yunos,
+  wattyzer, estadodelaire, yunovatios: strings, numbers, booleans and plain
+  objects). In every published version. Tests `local_storage`, `attr_types`.
+- **fix(`C_IEVENT_CLI`): the first reconnect delay is at least 1000 ms.** A
+  `timeout_retry` of 0 never left 0 (0 doubled is 0), so with a
+  `timeout_retry_max` of 0 too a server that closes before the ack was
+  reconnected in a loop with no wait: 269 connections in one second on the dev
+  machine. A lower `timeout_retry` is raised to 1000 with one WARNING per link;
+  the age that makes a broken session "served" uses the raised values too. In
+  every published version. Tests `ievent_restart`, `ievent_peer_fault` (whose
+  backoff tests run on fake timers now, with delays from 1000 ms).
+- **fix: a walk of the tree steps over a gobj a callback destroyed, and no
+  longer skips or repeats a live one.** The walks went over a COPY of each
+  child list below the top, so a child an earlier callback had destroyed was
+  still handed to the callback (`gobj_walk_gobj_children_tree()`, any
+  order); and the TOP list was the live one walked by index, so a callback
+  that destroyed a child already passed moved the next one under the index:
+  `gobj_start_tree()` left it stopped and `gobj_stop_tree()` left it running,
+  and a bottom-to-top walk visited a gobj twice. Every list is copied now and
+  a destroyed gobj is stepped over, before its callback and before its
+  children, as the C walk does with the live list. `gobj_start_tree()` never
+  started a destroyed gobj (`gobj_is_disabled()` answers true for one), so
+  there was no *"gobj NULL or DESTROYED"*. In every published version. Test
+  `walk_destroyed`.
+
 ## 7.26.26
 
 - **fix: a getter or a `Proxy` trap that throws is refused, not thrown, by the
@@ -22,11 +77,12 @@ about which SDK it was built against.
   prototype to be THIS realm's `Object.prototype`, and refused it as *"a value
   with no json text"*; a `Map`, a `Date` or a class instance of another realm is
   still refused. Only in 7.26.25. Test `attr_types`.
-- **fix: a value whose json text says another value is refused for a string, a
-  `DTP_DICT` or a `DTP_LIST`**: an object with a `toJSON()`, `NaN` or `Infinity`
-  inside (its text says `null`, and jansson holds no such real), a function,
-  `undefined` or a symbol inside an ARRAY (its text says `null`; as the value of
-  a key it is still an absent key), and a value nested deeper than 2048 levels
+- **fix, BREAKING: a value whose json text says another value is refused for a
+  string, a `DTP_DICT` or a `DTP_LIST`** (one ERROR, -1, the attr keeps its
+  value; every published version wrote it): an object with a `toJSON()`, `NaN`
+  or `Infinity` inside (its text says `null`, and jansson holds no such real), a
+  function, `undefined`, a symbol or a hole (`[1, , 3]`) inside an ARRAY (its
+  text says `null`; as the value of a key it is still an absent key), and a value nested deeper than 2048 levels
   (a scalar is a level too) -- the depth C reads a text to, as a text is already
   refused; a value 200 000 levels deep passed and burst `JSON.stringify()` later.
   `NaN` or `Infinity` given to a string attribute was the text `"null"`. The
@@ -41,7 +97,8 @@ about which SDK it was built against.
   changed since its first check, and checking only some writes would leave the
   ones the check exists for. No consumer writes a large value to an attribute
   (gobj-ui writes `records` as `{}`); the kw of an event is not checked.
-- **fix: an integer attribute refuses 2^63, as text and as a number.** A JS number
+- **fix, BREAKING: an integer attribute refuses 2^63, as text and as a number**
+  (one ERROR, -1: every published version wrote the texts below). A JS number
   rounds the last 512 integers of int64 up to 2^63, which is out of int64, and
   JSON.parse() makes 2^63 of `9223372036854775807`, of `9223372036854775808` (too
   big for C) and of the real `9.223372036854775808e18` (out of range in C) alike.
@@ -66,8 +123,9 @@ about which SDK it was built against.
   service named and answers; a browser client does not run what its server
   asks. The session goes on (the protocol allows the ask). In every published
   version. Test `ievent_peer_logs`.
-- **fix: `kw_get_local_storage_value()` warns ONCE for an entry that is not
-  json, and removes it.** It console.warn'ed (with JSON.parse()'s error, which
+- **fix, BREAKING: `kw_get_local_storage_value()` warns ONCE for an entry that
+  is not json, and removes it; it answers the default where it answered `null`
+  or `undefined`.** It console.warn'ed (with JSON.parse()'s error, which
   quotes the text: an entry can hold a token) and answered the default on EVERY
   read, so every reader of a corrupt entry in gobj-ui (the dev window, the json
   viewer...) warned for ever; gobj-ui 7.26.47 worked around it in
@@ -87,7 +145,7 @@ about which SDK it was built against.
   then `EV_ON_OPEN_ERROR` (as the C transport: a subscriber that shows the first
   should not show the second), and doc.yuneta.io's `C_IEVENT_CLI` page gains the
   4002 close and the reconnection backoff.
-- **The masking's decoded view is built with fewer allocations** (`mark_decoded_view()`): two strings for each `%XX` made enough garbage to bend the time of a large text, and the linearity test failed under load for `%25253D` (slope 1.16-1.20). The view is built as character codes, a chunk at a time. Same output -- the views, their marks and the masked text on 441 008 texts --; 1 MB of `%25253D` takes 28 ms instead of 57, 4 MB 111 instead of 226.
+- **The masking's decoded view is built with fewer allocations** (`mark_decoded_view()`): two strings for each `%XX` made enough garbage to bend the time of a large text, and the linearity test failed under load for `%25253D` (slope 1.16-1.20). The view is built as character codes, a chunk at a time. Same output -- the views, their marks and the masked text on 441 008 texts (the 438 008 the C kernel is measured on, and 3 000 long ones built to cross the chunks of the view) --; 1 MB of `%25253D` takes 28 ms instead of 57, 4 MB 111 instead of 226.
 
 ## 7.26.25
 
