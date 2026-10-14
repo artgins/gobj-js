@@ -1223,8 +1223,8 @@ const READ_AS_7_26_9 = 2;
  *  write-attr of a secret attribute too; its value, quoted or not, runs
  *  to the next "word=" (inline_secret_value_end()). Return true if a
  *  name it took for a secret's is none of 7.26.19's. As the C kernel's
- *  mark_params(). With `judged`, a '=' whose name it judged no secret's,
- *  the same name that mark_query_params() would judge, is marked there:
+ *  mark_params(). With `judged`, a '=' whose name is the same name that
+ *  mark_query_params() would judge, is marked there with its verdict:
  *  that name is not asked about again.
  */
 function mark_params(str, value_is_secret, reading, marks, judged)
@@ -1265,16 +1265,19 @@ function mark_params(str, value_is_secret, reading, marks, judged)
         const name_from = word;
         word = p + 1;
         const secret = is_secret_name_tail(str, name_from, p, names);
-        if(secret && names === NAMES_NOW && !is_secret_name_tail(str, name_from, p, NAMES_7_26_9)) {
+        if(secret && names === NAMES_NOW && !not_7_26_9 && !is_secret_name_tail(str, name_from, p, NAMES_7_26_9)) {
             not_7_26_9 = true;
         }
         if(!(secret || (value_is_secret && p - name_from === 5 &&
                 ascii_case_equal(str, name_from, "value")))) {
             if(judged && query_name_from(str, p) === name_from) {
-                judged[p] = 1;
+                judged[p] = JUDGED_NOT_SECRET;
             }
             p++;
             continue;
+        }
+        if(judged && secret && query_name_from(str, p) === name_from) {
+            judged[p] = JUDGED_SECRET;
         }
         p++;    // the '='
         let end;
@@ -1390,41 +1393,188 @@ function query_name_from(str, eq)
 }
 
 /*
- *  The value of a name=value whose name -- the run of name characters
- *  (letters, digits, _ - .) before the '=', its last MASK_MAX_NAME -- is
- *  a secret's, as in a query string or a form body, marked: inside its
- *  quotes, or to a character of PARAM_VALUE_STOPS. The word before the
- *  '=' can hold more than the name: in
- *  "GET https://my-file-server.com/get?token=x" it holds a segment about
- *  a credential ("file"). As the C kernel's mark_query_params(); the
- *  names that mark_params() judged no secret's are not asked about
- *  again (`judged`).
+ *  What mark_params() judged of the name before a '=', when it is the
+ *  name that mark_query_params() judges (`judged`): that name is not
+ *  asked about again
  */
+const JUDGED_NOT_SECRET = 1;
+const JUDGED_SECRET = 2;
+
+function hex_digit_value(code)
+{
+    if(code >= 48 && code <= 57) {          // 0-9
+        return code - 48;
+    }
+    if(code >= 97 && code <= 102) {         // a-f
+        return code - 87;
+    }
+    if(code >= 65 && code <= 70) {          // A-F
+        return code - 55;
+    }
+    return -1;
+}
+
+function is_written_name_bracket_code(code)
+{
+    return code === 91 || code === 93 || code === 39 || code === 34;    // [ ] ' "
+}
+
+function is_written_name_code(code)
+{
+    return is_name_char_code(code) || code === 37 || is_written_name_bracket_code(code);   // %
+}
+
+/*
+ *  The name before the '=' at `eq` as a form or a query writes it: the run
+ *  of name characters, brackets, quotes and '%' before it (its last
+ *  MASK_MAX_NAME), its %XX decoded -- user[password], user%5Bpassword%5D,
+ *  t%6Fken, 'password'. Is one of its parts, between the brackets and the
+ *  quotes, a secret's name? Not its last part when that is a run of name
+ *  characters after a bracket or a quote (the "pin" of x"pin): that one is
+ *  query_name_from()'s, and so is a name of name characters only. A %XX
+ *  decodes to the byte it names, as in C: a byte over 0x7F is no letter of
+ *  a name. As the C kernel's written_name_is_secret().
+ */
+function written_name_is_secret(str, eq)
+{
+    let n = eq;
+    let plain = -1;     // where the run of name characters before `eq` begins
+    while(n > 0 && eq - n < MASK_MAX_NAME && is_written_name_code(str.charCodeAt(n - 1))) {
+        n--;
+        if(plain < 0 && !is_name_char_code(str.charCodeAt(n))) {
+            plain = n + 1;
+        }
+    }
+    if(plain < 0) {
+        return false;
+    }
+    const to = (str.charCodeAt(plain - 1) === 37)? eq : plain - 1;    // '%'
+    let encoded = false;
+    for(let s = n; s < to && !encoded; s++) {
+        encoded = (str.charCodeAt(s) === 37);
+    }
+    let name = str;
+    let from = n;
+    let end = to;
+    if(encoded) {
+        name = "";
+        for(let s = n; s < to; s++) {
+            const hi = (str.charCodeAt(s) === 37 && to - s > 2)? hex_digit_value(str.charCodeAt(s + 1)) : -1;
+            const lo = (hi >= 0)? hex_digit_value(str.charCodeAt(s + 2)) : -1;
+            if(lo >= 0) {
+                name += String.fromCharCode(hi*16 + lo);
+                s += 2;
+            } else {
+                name += str[s];
+            }
+        }
+        from = 0;
+        end = name.length;
+    }
+    let seg = from;
+    for(let i = from; i <= end; i++) {
+        if(i < end && !is_written_name_bracket_code(name.charCodeAt(i))) {
+            continue;
+        }
+        if(i - seg >= 3 && secret_name_check(name, seg, i, true, true)) {   // no name is shorter
+            return true;
+        }
+        seg = i + 1;
+    }
+    return false;
+}
+
+/*
+ *  The value of the name=value at `eq`, marked: inside its quotes, or to a
+ *  character of PARAM_VALUE_STOPS (a scheme and its credential whole).
+ *  Return where it ends.
+ */
+function mark_query_value(str, eq, marks)
+{
+    const v = eq + 1;
+    if(v < str.length && (str[v] === '"' || str[v] === "'")) {
+        return mark_run(str, v + 1, QUOTE_STOPS[str[v]], marks);
+    }
+    mark_scheme_value(str, v, PARAM_VALUE_STOPS, marks);
+    return mark_run(str, v, PARAM_VALUE_STOPS, marks);
+}
+
+/*
+ *  The value of a name=value whose name is a secret's, as in a query
+ *  string or a form body, marked: inside its quotes, or to a character of
+ *  PARAM_VALUE_STOPS. Two readings of the name, each with a frontier of
+ *  its own, as if each were a pass of its own (the C kernel's
+ *  mark_query_params() with NAME_PLAIN and with NAME_WRITTEN): the run of
+ *  name characters (letters, digits, _ - .) before the '=', its last
+ *  MASK_MAX_NAME; and the name as a form writes it
+ *  (written_name_is_secret()). The word before the '=' can hold more than
+ *  the name: in "GET https://my-file-server.com/get?token=x" it holds a
+ *  segment about a credential ("file"). The names that mark_params()
+ *  judged are not asked about again (`judged`).
+ */
+/*
+ *  A text with none of these holds no name as a form writes it
+ */
+const WRITTEN_NAME_MARKS = /[[\]%'"]/;
+
 function mark_query_params(str, marks, judged)
 {
-    let frontier = 0;
-    for(let p = 1; p < str.length; p++) {
-        if(p < frontier) {
-            p = frontier - 1;   // the value marked: the next '=' is past it
-            continue;
+    let frontier = 0;           // of the plain reading
+    let frontier_written = WRITTEN_NAME_MARKS.test(str)? 0 : str.length;    // of the written one
+    let p = str.indexOf("=", 1);
+    while(p > 0) {
+        if(p >= frontier) {
+            let secret = (judged[p] === JUDGED_SECRET);
+            if(!judged[p]) {
+                const n = query_name_from(str, p);
+                secret = (n < p && secret_name_check(str, n, p, true, true));
+            }
+            if(secret) {
+                frontier = mark_query_value(str, p, marks);
+            }
         }
-        if(str.charCodeAt(p) !== 61) {     // '='
-            continue;
+        if(p >= frontier_written && written_name_is_secret(str, p)) {
+            frontier_written = mark_query_value(str, p, marks);
         }
-        if(judged[p]) {
-            continue;
+        p = str.indexOf("=", p + 1);
+    }
+}
+
+/*
+ *  The password of the userinfo of a URL (scheme://user:password@host),
+ *  marked: from the first ':' of the authority to its last '@'. The
+ *  authority runs to a character of URL_AUTHORITY_STOPS. As the C
+ *  kernel's mark_url_passwords().
+ */
+const URL_AUTHORITY_STOPS = stop_table("/?#\"'<> \t");
+
+function mark_url_passwords(str, marks)
+{
+    let p = str.indexOf("://", 1);
+    while(p > 0) {
+        let next = p + 1;
+        if(is_ascii_alnum_code(str.charCodeAt(p - 1))) {
+            let colon = -1;
+            let at = -1;
+            let e = p + 3;
+            while(e < str.length) {
+                const code = str.charCodeAt(e);
+                if(code < 128 && URL_AUTHORITY_STOPS[code]) {
+                    break;
+                }
+                if(code === 64) {               // '@'
+                    at = e;
+                } else if(code === 58 && colon < 0) {   // ':'
+                    colon = e;
+                }
+                e++;
+            }
+            if(colon >= 0 && at > colon) {
+                mark_range(marks, colon + 1, at);
+            }
+            next = e - 1;   // the ':' of the next "://" may be the last character scanned
         }
-        const n = query_name_from(str, p);
-        if(n === p || !secret_name_check(str, n, p, true, true)) {
-            continue;
-        }
-        const v = p + 1;
-        if(v < str.length && (str[v] === '"' || str[v] === "'")) {
-            frontier = mark_run(str, v + 1, QUOTE_STOPS[str[v]], marks);
-        } else {
-            mark_scheme_value(str, v, PARAM_VALUE_STOPS, marks);
-            frontier = mark_run(str, v, PARAM_VALUE_STOPS, marks);
-        }
+        p = str.indexOf("://", next);
     }
 }
 
@@ -1535,6 +1685,7 @@ function mark_inline_secrets(str, marks)
         mark_params(str, value_is_secret, READ_AS_GOBJ_JS_7_26_20, marks, null);
     }
     mark_query_params(str, marks, judged);
+    mark_url_passwords(str, marks);
     mark_shapes(str, marks);
     mark_labels(str, marks);
 }

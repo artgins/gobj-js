@@ -43,6 +43,7 @@ import {
     gobj_read_attr,
     gobj_yuno_id,
     gobj_has_event,
+    gobj_find_event_type,
     gobj_find_service,
     gobj_change_state,
     gobj_read_bool_attr,
@@ -713,7 +714,7 @@ function close_websocket(gobj, code = 1000, reason = "")
  *  show its first characters). As the C kernel shows the name of an
  *  event that is not public (mask_secrets_inline_capped()).
  ***************************************************************/
-const PEER_NAME_SHOWN = 64;
+const PEER_NAME_SHOWN = 128;  // as the C transport
 const PEER_FRAME_SHOWN = 256;
 
 function peer_text_shown(text, max)
@@ -1076,11 +1077,14 @@ function ac_on_close(gobj, event, kw, src)
 
     set_remote_log_functions(); // clean remote log
 
-    /*  As the C transport: an ended session is EV_ON_CLOSE and nobody's
-     *  warning; only an open that failed is (below).  */
+    const reason_shown = peer_text_shown(kw.reason === undefined? "" : kw.reason, PEER_FRAME_SHOWN);
+
+    /*  A session that ENDS (a stop, a logout, the server going away) is
+     *  EV_ON_CLOSE and nobody's warning; one that is CUT is a warning
+     *  (below), as an open that failed is.  */
     if(is_traffic_tracing(gobj)) {
         trace_msg(`${gobj_short_name(gobj)}: WebSocket closed ${url} (Code: ${kw.code}, ` +
-            `Reason: "${peer_text_shown(kw.reason, PEER_FRAME_SHOWN)}", Clean: ${kw.was_clean})`);
+            `Reason: "${reason_shown}", Clean: ${kw.was_clean})`);
     }
 
     // Cleanup WebSocket event handlers
@@ -1101,6 +1105,13 @@ function ac_on_close(gobj, event, kw, src)
          *  ac_identity_card_ack on the next successful open.
          */
         priv.inform_on_close = false;
+        const cut = !kw.was_clean || (kw.code !== 1000 && kw.code !== 1001);
+        if(cut && gobj_is_running(gobj)) {     // a deliberate stop cut nothing
+            log_warning(
+                `${gobj_short_name(gobj)}: session closed ${url} (Code: ${kw.code}, ` +
+                `Reason: "${reason_shown}", Clean: ${kw.was_clean})`
+            );
+        }
         gobj_publish_event(
             gobj,
             'EV_ON_CLOSE',
@@ -1108,7 +1119,10 @@ function ac_on_close(gobj, event, kw, src)
                 url:                    url,
                 remote_yuno_name:       priv.remote_yuno_name,
                 remote_yuno_role:       priv.remote_yuno_role,
-                remote_yuno_service:    priv.remote_yuno_service
+                remote_yuno_service:    priv.remote_yuno_service,
+                code:                   kw.code,
+                reason:                 reason_shown,
+                was_clean:              kw.was_clean
             }
         );
     } else if(!gobj_is_running(gobj)) {
@@ -1144,7 +1158,7 @@ function ac_on_close(gobj, event, kw, src)
         log_warning(
             `${gobj_short_name(gobj)}: EV_ON_OPEN_ERROR cannot open ` +
             `${url} (Code: ${kw.code}, ` +
-            `Reason: "${peer_text_shown(kw.reason, PEER_FRAME_SHOWN)}", ` +
+            `Reason: "${reason_shown}", ` +
             `Clean: ${kw.was_clean})`
         );
         gobj_publish_event(
@@ -1156,7 +1170,7 @@ function ac_on_close(gobj, event, kw, src)
                 remote_yuno_role:       priv.remote_yuno_role,
                 remote_yuno_service:    priv.remote_yuno_service,
                 code:                   kw.code,
-                reason:                 kw.reason,
+                reason:                 reason_shown,
                 was_clean:              kw.was_clean
             }
         );
@@ -1346,19 +1360,20 @@ function ac_on_message(gobj, event, kw, src)
      *  Mainly process EV_IDENTITY_CARD_ACK
      *-----------------------------------------*/
     if(gobj_current_state(gobj) !== "ST_SESSION") {
-        if(gobj_has_event(gobj, iev_event, event_flag_t.EVF_PUBLIC_EVENT)) {
+        /*  Before the session the server says one thing only, as the C
+         *  transport reads it: anything else is its fault, a WARNING, and
+         *  the channel goes.  */
+        if(String(iev_event).toLowerCase() === "ev_identity_card_ack") {
             /*  Handled unless the action says it FAILED. Not `=== 0`: an
              *  action that simply returns nothing answers `undefined`, which
              *  is not `=== 0`, and the session was then closed on a message
              *  that had just been processed fine.  */
-            let ret = gobj_send_event(gobj, iev_event, iev_kw, gobj);
+            let ret = gobj_send_event(gobj, "EV_IDENTITY_CARD_ACK", iev_kw, gobj);
             if(!(ret < 0)) {
-                // iev_kw consumed
                 return 0;
             }
-            // iev_kw consumed
         } else {
-            log_error(`${gobj_short_name(gobj)}: event UNKNOWN in not-session state ` +
+            log_warning(`${gobj_short_name(gobj)}: event UNKNOWN in not-session state ` +
                 `${peer_text_shown(iev_event, PEER_NAME_SHOWN)}`);
         }
         close_websocket(gobj);
@@ -1380,13 +1395,26 @@ function ac_on_message(gobj, event, kw, src)
     /*----------------------------------------*
      *  Check dst role^name
      *----------------------------------------*/
+    /*  Both are optional in the protocol (an empty one is anybody's), as
+     *  the C transport reads them. A wrong one is the server's fault: a
+     *  WARNING, and the channel goes.  */
     let iev_dst_role = kw_get_str(gobj, event_id, "dst_role", "");
-    // Check yuno_name too
-
-    if(iev_dst_role.toLowerCase() !== gobj_yuno_role().toLowerCase()) {
-        log_error(`"It's not my role, dst_role: ${peer_text_shown(iev_dst_role, PEER_NAME_SHOWN)}, ` +
-            `my_role: ${gobj_yuno_role()}`);
-        return 0;
+    if(!empty_string(iev_dst_role) &&
+            iev_dst_role.toLowerCase() !== String(gobj_yuno_role()).toLowerCase()) {
+        log_warning(`${gobj_short_name(gobj)}: It's not my role, ` +
+            `dst_role: ${peer_text_shown(iev_dst_role, PEER_NAME_SHOWN)}, ` +
+            `my_role: ${gobj_yuno_role()}, event: ${peer_text_shown(iev_event, PEER_NAME_SHOWN)}`);
+        close_websocket(gobj);
+        return -1;
+    }
+    let iev_dst_yuno = kw_get_str(gobj, event_id, "dst_yuno", "");
+    if(!empty_string(iev_dst_yuno) &&
+            iev_dst_yuno.toLowerCase() !== String(gobj_yuno_name()).toLowerCase()) {
+        log_warning(`${gobj_short_name(gobj)}: It's not my name, ` +
+            `dst_yuno: ${peer_text_shown(iev_dst_yuno, PEER_NAME_SHOWN)}, ` +
+            `my_name: ${gobj_yuno_name()}, event: ${peer_text_shown(iev_event, PEER_NAME_SHOWN)}`);
+        close_websocket(gobj);
+        return -1;
     }
 
     /*----------------------------------------*
@@ -1470,7 +1498,7 @@ function ac_on_message(gobj, event, kw, src)
             return 0;
         }
         if(!gobj_has_event(gobj_service, iev_event, event_flag_t.EVF_PUBLIC_EVENT)) {
-            log_error(`${gobj_short_name(gobj)}: Service found but no event or not public, ` +
+            log_warning(`${gobj_short_name(gobj)}: Service found but no event or not public, DROPPED: ` +
                 `service '${gobj_short_name(gobj_service)}', ev '${peer_text_shown(iev_event, PEER_NAME_SHOWN)}'`);
             return -1;
         }
@@ -1482,8 +1510,20 @@ function ac_on_message(gobj, event, kw, src)
      *  SERVICE subscription model: the message names NO destination,
      *  so it belongs to whoever subscribed here. This is the path the
      *  check above protects, not one it replaces.
+     *
+     *  Only an event that some gclass declares: a name nobody declares
+     *  is the server's text, and published it reached the log raw
+     *  ("Publish event WITHOUT subscribers", "Event NOT DEFINED in
+     *  state"). The C transport refuses it when it reads the frame
+     *  (iev_create_from_gbuffer()).
      */
-    gobj_publish_event(gobj, iev_event, iev_kw);
+    let event_type = gobj_find_event_type(iev_event, 0, false);
+    if(!event_type) {
+        log_warning(`${gobj_short_name(gobj)}: event that no gclass declares, DROPPED: ` +
+            `ev '${peer_text_shown(iev_event, PEER_NAME_SHOWN)}'`);
+        return -1;
+    }
+    gobj_publish_event(gobj, event_type.event_name, iev_kw);
 
     return 0;
 }

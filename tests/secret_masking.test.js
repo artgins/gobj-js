@@ -115,6 +115,20 @@ const V24_SHAPES = [
     ["pin='token=qs4'hunter2 x", "pin=********"],
     ["password=Basic qs5hunter2==", "password=********"],
     ["eyJhIjoxfQ. eyJhIjoxfQ..", null],  // headers whose dots end them
+
+    /*
+     *  gobj-js 7.26.24: a query name as a form writes it -- in brackets,
+     *  %-encoded -- after a word that is no secret's name, and the password
+     *  of the userinfo of a URL
+     */
+    ["GET https://my-file-server.com/get?user[password]=wn1-hunter2&x=1",
+     "GET https://my-file-server.com/get?user[password]=********&x=1"],
+    ["GET https://my-file-server.com/get?t%6Fken=wn2-hunter2", "GET https://my-file-server.com/get?t%6Fken=********"],
+    ["GET https://my-file-server.com/f?user%5Bpin%5D=1234&a%5B0%5D=5",
+     "GET https://my-file-server.com/f?user%5Bpin%5D=********&a%5B0%5D=5"],
+    ["clone https://bob:wn3-hunter2@git.example/x.git", "clone https://bob:********@git.example/x.git"],
+    ["redis://:wn4-hunter2@[::1]:6379/0", "redis://:********@[::1]:6379/0"],
+    ["ssh://git@github.com:22/x http://[::1]:8080/y", null],     // a user, a port: no password
 ];
 
 let lines = [];
@@ -400,33 +414,78 @@ describe("only json is walked, and masking never throws", () => {
 
 describe("masking is linear and bounded", () => {
     /*
-     *  Each shape is masked at 256 KB and at 1 MB, the best of three runs
-     *  of each: linear, the 1 MB takes about 4 times as long; quadratic,
-     *  16 times. A ratio, not a time: a cap of 500 ms failed on a loaded
-     *  machine (815 ms), and a load slows both sizes alike. A run under
-     *  2 ms is taken as 2 ms, so that the noise of the smallest timer
-     *  readings is no ratio. On an idle machine 1 MB of the slowest shape
-     *  here ("abcd=") takes 50-80 ms; quadratic, it would not end in the
-     *  20 s of the test.
+     *  Each shape is masked at 64 KB, 256 KB and 1 MB, and the slope of
+     *  log(time) on log(size) is fitted over the three: 1 for a linear
+     *  masking, 2 for a quadratic one. A time is the best of five passes,
+     *  the three sizes taken in turn in each pass, so that a load slows a
+     *  pass and not one size; a call is repeated for 10 ms and its time is
+     *  the mean, so that the grain of the timer makes no slope. A shape is
+     *  measured up to three times and fails only if every measure is
+     *  steep: under load the compiler can be late for one size in all five
+     *  passes (1 MB of "a=" measured twice its time once in 20 runs of two
+     *  suites at a time), and a quadratic masking is steep every time.
+     *  Measured with the machine idle and with every core busy, on every
+     *  shape here: the masking gives 0.98 to 1.09; a copy of it that also
+     *  rescans to the end from every k-th character, k set so that the
+     *  rescans cost what the masking costs at 1 MB (twice the time there,
+     *  eight times at 4 MB), gives 1.16 to 1.45. The ratio of 1 MB to 256 KB that this test took
+     *  up to gobj-js 7.26.23 failed under load and let that copy pass (6.4
+     *  against a limit of 8). The slowest shapes here take some 50 ms for
+     *  1 MB on an idle machine; quadratic in earnest, a shape would not end
+     *  in the time of the test.
      */
-    function best_ms(fn)
+    const SIZES = [64*1024, 256*1024, 1024*1024];
+
+    function ms_per_call(mask, text)
     {
-        let best = Infinity;
-        for(let r = 0; r < 3; r++) {
-            const t0 = performance.now();
-            fn();
-            best = Math.min(best, performance.now() - t0);
+        let calls = 0;
+        let elapsed = 0;
+        const t0 = performance.now();
+        do {
+            mask(text);
+            calls++;
+            elapsed = performance.now() - t0;
+        } while(elapsed < 10);
+        return elapsed / calls;
+    }
+
+    function slope_of(mask, texts)
+    {
+        const best = SIZES.map(() => Infinity);
+        for(let pass = 0; pass < 5; pass++) {
+            for(let i = 0; i < SIZES.length; i++) {
+                best[i] = Math.min(best[i], ms_per_call(mask, texts[i]));
+            }
         }
-        return Math.max(best, 2);
+        const xs = SIZES.map((size) => Math.log(size));
+        const ys = best.map((ms) => Math.log(ms));
+        const mean_x = (xs[0] + xs[1] + xs[2]) / 3;
+        const mean_y = (ys[0] + ys[1] + ys[2]) / 3;
+        let num = 0;
+        let den = 0;
+        for(let i = 0; i < SIZES.length; i++) {
+            num += (xs[i] - mean_x) * (ys[i] - mean_y);
+            den += (xs[i] - mean_x) * (xs[i] - mean_x);
+        }
+        return {slope: num / den, best: best};
     }
 
     function check_linear(what, unit, mask)
     {
-        const small = unit.repeat(Math.floor(256*1024 / unit.length));
-        const large = unit.repeat(Math.floor(1024*1024 / unit.length));
-        mask(small);    // the first run compiles
-        const ratio = best_ms(() => mask(large)) / best_ms(() => mask(small));
-        expect(ratio, `${what} of "${unit}"`).toBeLessThan(8);
+        const texts = SIZES.map((size) => unit.repeat(Math.floor(size / unit.length)));
+        for(const text of texts) {
+            mask(text);     // the first runs compile
+        }
+        const seen = [];
+        let measure = null;
+        for(let attempt = 0; attempt < 3; attempt++) {
+            measure = slope_of(mask, texts);
+            seen.push(`${measure.slope.toFixed(2)} (${measure.best.map((ms) => ms.toFixed(2)).join(" / ")} ms)`);
+            if(measure.slope < 1.15) {
+                break;
+            }
+        }
+        expect(measure.slope, `${what} of "${unit}": ${seen.join(", ")}`).toBeLessThan(1.15);
     }
 
     test("a 1 MB a=a=... word and a 1 MB secret value take a time linear in their size", () => {
@@ -443,10 +502,15 @@ describe("masking is linear and bounded", () => {
             check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));
         }
 
+        // and of 7.26.24: names in brackets and %-encoded, the userinfo of a URL
+        for(const unit of ["[pin]=\"", "t%6Fken=x&", "a://b:c@"]) {
+            check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));
+        }
+
         const value = "password=" + "x".repeat(1024*1024);
         expect(mask_secrets_inline(value)).toBe("password=********");
         check_linear("a secret value", "x", (text) => mask_secrets_inline("password=" + text));
-    }, 20000);
+    }, 120000);
 
     test("a text over 4 MB is not shown, and nothing is shown past the cap", () => {
         const huge = "a=b " + "x".repeat(5*1024*1024);

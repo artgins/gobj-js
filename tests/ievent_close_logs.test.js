@@ -4,11 +4,17 @@
  *      What C_IEVENT_CLI logs when its websocket closes, as the C
  *      transport does:
  *
- *        - a session that ends (a deliberate stop, or the server
- *          closing it) is published as EV_ON_CLOSE and logged by
- *          nobody: up to 7.26.22 every close was a WARNING, also the
- *          clean one of a logout, which made a console check of an
- *          app pass or fail depending on when the close landed;
+ *        - a session that ends cleanly (a deliberate stop, or the
+ *          server closing it with 1000 or 1001) is published as
+ *          EV_ON_CLOSE and logged by nobody: up to 7.26.22 every close
+ *          was a WARNING, also the clean one of a logout, which made a
+ *          console check of an app pass or fail depending on when the
+ *          close landed;
+ *        - a session cut (not clean, or any other code: 1006, 1008,
+ *          1011) is one WARNING, its reason masked: 7.26.23 logged
+ *          nothing at all, so a cut session left no trace;
+ *        - EV_ON_CLOSE carries the code, the reason (masked) and
+ *          was_clean, so its subscriber can tell the two apart;
  *        - a socket that closes before it ever opened is the
  *          EV_ON_OPEN_ERROR WARNING, with the reason the server gives
  *          masked (it was logged raw).
@@ -62,15 +68,16 @@ class FakeWebSocket {
             this.onopen();
         }
     }
-    fire_close(code, reason) {
+    fire_close(code, reason, was_clean = true) {
         this.readyState = FakeWebSocket.CLOSED;
         if(this.onclose) {
-            this.onclose({code: code, reason: reason, wasClean: true});
+            this.onclose({code: code, reason: reason, wasClean: was_clean});
         }
     }
 }
 
 const published = [];
+const published_kw = {};
 let logged = [];
 let yuno = null;
 let seq = 0;
@@ -94,12 +101,14 @@ beforeAll(() => {
                 published.push(ev);
                 return 0;
             }, null],
-            ["EV_ON_CLOSE", (g, ev) => {
+            ["EV_ON_CLOSE", (g, ev, kw) => {
                 published.push(ev);
+                published_kw[ev] = kw;
                 return 0;
             }, null],
-            ["EV_ON_OPEN_ERROR", (g, ev) => {
+            ["EV_ON_OPEN_ERROR", (g, ev, kw) => {
                 published.push(ev);
+                published_kw[ev] = kw;
                 return 0;
             }, null],
         ]]],
@@ -113,6 +122,9 @@ beforeAll(() => {
 beforeEach(() => {
     logged = [];
     published.length = 0;
+    for(const k of Object.keys(published_kw)) {
+        delete published_kw[k];
+    }
 });
 
 /*  A started transport with a listener, and the socket it opened.  */
@@ -178,7 +190,34 @@ describe("the close of a session", () => {
         expect(warnings()).toEqual([]);
     });
 
-    test("the server closing the session publishes EV_ON_CLOSE and logs nothing", async () => {
+    test("a deliberate stop whose socket then closes badly logs nothing either", async () => {
+        const {ievent, ws} = make_link();
+        into_session(ievent, ws);
+        published.length = 0;
+        logged = [];
+        gobj_stop(ievent);
+        ws.fire_close(1006, "", false);
+        await settle();
+        expect(published).toContain("EV_ON_CLOSE");
+        expect(warnings()).toEqual([]);
+    });
+
+    test("the server closing the session with 1000 or 1001 publishes EV_ON_CLOSE and logs nothing", async () => {
+        for(const code of [1000, 1001]) {
+            const {ievent, ws} = make_link();
+            into_session(ievent, ws);
+            published.length = 0;
+            logged = [];
+            ws.fire_close(code, "going away");
+            await settle();
+            expect(published).toContain("EV_ON_CLOSE");
+            expect(warnings()).toEqual([]);
+            expect(published_kw.EV_ON_CLOSE).toMatchObject({code: code, reason: "going away", was_clean: true});
+            gobj_stop(ievent);
+        }
+    });
+
+    test("a session the server cuts with another code is one WARNING, its reason masked", async () => {
         const {ievent, ws} = make_link();
         into_session(ievent, ws);
         published.length = 0;
@@ -186,8 +225,38 @@ describe("the close of a session", () => {
         ws.fire_close(1008, "bad token=cs1-hunter2");
         await settle();
         expect(published).toContain("EV_ON_CLOSE");
-        expect(warnings()).toEqual([]);
+        expect(warnings().length).toBe(1);
+        expect(warnings()[0]).toMatch(/^warning: .*session closed.*Code: 1008/);
         expect(logged.some(l => l.includes("cs1-hunter2"))).toBe(false);
+        expect(published_kw.EV_ON_CLOSE.code).toBe(1008);
+        expect(published_kw.EV_ON_CLOSE.was_clean).toBe(true);
+        expect(published_kw.EV_ON_CLOSE.reason).toContain("bad token=");
+        expect(published_kw.EV_ON_CLOSE.reason).not.toContain("cs1-hunter2");
+        gobj_stop(ievent);
+    });
+
+    test("a session cut without a clean close (1006) is one WARNING", async () => {
+        const {ievent, ws} = make_link();
+        into_session(ievent, ws);
+        published.length = 0;
+        logged = [];
+        ws.fire_close(1006, "", false);
+        await settle();
+        expect(published).toContain("EV_ON_CLOSE");
+        expect(warnings().length).toBe(1);
+        expect(warnings()[0]).toMatch(/Code: 1006.*Clean: false/);
+        expect(published_kw.EV_ON_CLOSE).toMatchObject({code: 1006, reason: "", was_clean: false});
+        gobj_stop(ievent);
+    });
+
+    test("a clean code that was not a clean close (1000, was_clean false) is one WARNING too", async () => {
+        const {ievent, ws} = make_link();
+        into_session(ievent, ws);
+        published.length = 0;
+        logged = [];
+        ws.fire_close(1000, "", false);
+        await settle();
+        expect(warnings().length).toBe(1);
         gobj_stop(ievent);
     });
 });
@@ -200,6 +269,8 @@ describe("a socket that closes before it opened", () => {
         expect(published).toContain("EV_ON_OPEN_ERROR");
         expect(warnings().some(l => /EV_ON_OPEN_ERROR/.test(l))).toBe(true);
         expect(logged.some(l => l.includes("oe1-hunter2"))).toBe(false);
+        expect(published_kw.EV_ON_OPEN_ERROR.reason).toContain("bad token=");
+        expect(published_kw.EV_ON_OPEN_ERROR.reason).not.toContain("oe1-hunter2");
         gobj_stop(ievent);
     });
 });

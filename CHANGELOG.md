@@ -7,6 +7,86 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.24
+
+- **fix(`C_IEVENT_CLI`): a session that is CUT is a WARNING again, and
+  `EV_ON_CLOSE` says how it ended.** 7.26.23 made every close of a session
+  silent, so a 1006, a 1011 or a close of the server with 1008 left no trace
+  unless the `ievents` trace was on, and the subscriber could not tell it
+  either: `EV_ON_CLOSE` carried no code. A session that ends cleanly (a stop,
+  a logout, the server closing with 1000 or 1001) still logs nothing; one that
+  is not clean, or closes with any other code, is one WARNING with the code
+  and the reason masked. `EV_ON_CLOSE` carries `code`, `reason` (masked and
+  capped) and `was_clean`; `EV_ON_OPEN_ERROR` carries the reason masked too
+  (it published it raw, and gui_agent paints it on the screen). New keys of a
+  kw, nothing removed. The C transport's `EV_ON_CLOSE` has no code to give: its
+  TCP layer has none. Test `ievent_close_logs`.
+- **fix(`C_IEVENT_CLI`): an event name of the server no longer reaches the log
+  raw.** A message that names no service was published as it came, so a name
+  that no gclass declares showed unmasked in *"Publish event WITHOUT
+  subscribers"* or *"Event NOT DEFINED in state"*. It is published only when a
+  registered gclass declares its event (published under the declared name, as
+  C's `gclass_find_public_event()` gives it); any other is dropped with a
+  WARNING, its name masked. The C transport refuses such a frame when it reads
+  it. And what the server gets wrong is a WARNING, not an ERROR: an event out
+  of session, a role that is not this yuno's, an event the named service does
+  not take as public. In every published version. Test `ievent_peer_logs`.
+- **fix(`C_IEVENT_CLI`): a message is routed as the C transport routes it.**
+  An empty `dst_role` is legal in the protocol (a client that asked for no role
+  sends none), and JS refused it as *"It's not my role"*; it is accepted now, and
+  so is an empty `dst_yuno`, which JS never checked. A `dst_role` or `dst_yuno`
+  that is not this yuno's is a WARNING and the channel is CLOSED (JS dropped the
+  message and kept the session; it said nothing of a wrong `dst_yuno`). Before
+  the session only `EV_IDENTITY_CARD_ACK` is taken: any other event is a WARNING
+  and the channel goes (an `EV_MT_STATS` there was *"Event NOT DEFINED in
+  state"*, an ERROR). The server's names are shown masked and capped at 128
+  characters (64), as C. Test `ievent_peer_logs`.
+- **New `gobj_find_event_type(event, event_flag, verbose)`**: an event in ANY
+  registered gclass, any case, as the C kernel's `gobj_find_event_type()`.
+- **fix: a value with no json text is refused, not thrown.**
+  `gobj_write_str_attr()` of a circular object (a gobj, a DOM node) or a
+  `BigInt` threw the exception of `JSON.stringify()` since 7.26.22 (it wrote
+  `"[object Object]"` before); so did `gobj_write_attr()` and
+  `gobj_write_integer_attr()` of one to any typed attr (their refusal logged the
+  value with `JSON.stringify()`), and `gobj_write_attrs()` / the kw of
+  `gobj_create()` to a string attr (in every published version). Refused now
+  like any other value: one ERROR, -1, the attr keeps its value. Test
+  `attr_types`.
+- **fix: a json TEXT is read as the C parser reads it.** `JSON.parse()` reads
+  what jansson refuses: an escaped NUL (`{"a": "x\u0000"}`), a lone surrogate,
+  an integer out of int64, a real that overflows (`1e309` is `Infinity`). Such a
+  text for a dict or a list is refused, as in C; for a `DTP_JSON` it stays the
+  text (`command_parameter_from_json(DTP_JSON, "1e309")` gave `Infinity`, C the
+  string `"1e309"`). Two cases stay different, because a JS number cannot carry
+  them, and the parity table now says so for each kernel: an integer beyond 2^53
+  is rounded, and `2.0` is the integer 2 (`2.0` for a dict is refused as "an
+  integer", C says "a real"). The table has 92 cases (71), `DTP_JSON` among
+  them.
+- **fix: a dispatch always pops its frame.** `gobj_send_event()` changed the
+  state between pushing the frame of the action and the `try` that pops it:
+  had the change thrown, the frame stayed, and every later destroy of that gobj
+  from another action was reported as *"Destroying a gobj while one of its
+  actions is still running"*. The change of state is inside the `try`. Test
+  `destroy_under_dispatch`.
+- **fix: a query name as a form writes it, and the password of a URL, are
+  masked** (`mask_secrets_inline()`, `json_mask_secrets()`): `GET
+  https://my-file-server.com/get?user[password]=x`, `?user%5Bpassword%5D=x`,
+  `?t%6Fken=x` and `https://bob:hunter2@host` showed. As the C kernel of
+  7.26.10. In every published version. Nothing that 7.26.23 masked shows
+  (378 008 texts, position by position); C and JS give the same text on all of
+  them.
+- **The masking is faster than 7.26.23 on every hard shape but one** (1 MB,
+  best of 25 runs in 10 alternated rounds): `pin="` 10 % faster, the others 3
+  to 15 % faster, `abcd=` at par, `a=` 10 % slower. A name one reading judged
+  is not judged again. Correction of 7.26.22: on `pin="`, 7.26.22 and 7.26.23
+  take about twice the time of 7.26.20 (1.96x, not the "73 ms against 60"
+  written there); 7.26.24 takes 1.75x. `abcd=` takes what 7.26.20 takes.
+- **test: the linearity test fits a slope over three sizes** (64 KB, 256 KB,
+  1 MB; best of five interleaved passes; fails only if three measures are
+  steep). The ratio of two sizes failed under load and let a quadratic copy
+  pass; the new test catches it on 15 of 15 shapes and gives the masking 0.98
+  to 1.09, idle and with every core busy.
+
 ## 7.26.23
 
 - **fix(`C_IEVENT_CLI`): a session that ends is logged by nobody, as in the C
@@ -17,7 +97,9 @@ about which SDK it was built against.
   after the 7.26.22 round). An ended session is published as `EV_ON_CLOSE` and
   logged by nobody; a socket that closes before it ever opened is still the
   `EV_ON_OPEN_ERROR` warning. With the gclass's `ievents` trace on, every close
-  is traced. Test `ievent_close_logs` (red on 7.26.22).
+  is traced. Test `ievent_close_logs` (red on 7.26.22). *Too much was silenced:
+  a session CUT (1006, 1011, a close of the server with another code) left no
+  trace either; 7.26.24 warns for it again.*
 - **fix(`C_IEVENT_CLI`): the reason of a failed open is masked.** The
   `EV_ON_OPEN_ERROR` warning wrote the close reason the server gave as it
   came; 7.26.22 masked it in the other close log and not in this one. Masked
@@ -63,8 +145,8 @@ code that still runs on it.
   is a ratio of 1 MB to 256 KB, not a wall-clock cap (the cap of 500 ms failed
   under load). C and JS answer the same on 318 008 texts, 30 000 jsons and
   286 445 names.
-- **fix: a value written to an attribute is read as its type, the same way as
-  the C kernel** (`json2item()` and now `gobj_write_attr()`, which wrote its
+- **fix, BREAKING: a value written to an attribute is read as its type, the
+  same way as the C kernel** (`json2item()` and now `gobj_write_attr()`, which wrote its
   value raw; the kw of `gobj_create()`, `gobj_write_attrs()`, the persistent
   attrs; new `command_parameter_from_json()` / `command_parameter_from_text()`,
   the C parser's grammar). `parseInt("12abc")` wrote 12, `Number("")` 0, a
@@ -81,7 +163,13 @@ code that still runs on it.
   reads `"yes"` as `true`, and `gobj_write_str_attr()` writes
   `null`/`undefined` as `""` (they were the texts `"null"` and `"undefined"`).
   `set_timeout()` and `set_timeout_periodic()` round the time to whole
-  milliseconds (0.3 * 1000 is 300.00000000000006). A table of 71 cases
+  milliseconds (0.3 * 1000 is 300.00000000000006). **BREAKING: a refused
+  write keeps the value the attr had**, as C's `json2item()` does, also for NO
+  value: `gobj_write_bool_attr(g, "b", undefined | null | "" | "maybe")` wrote
+  `false` and returned 0 up to 7.26.21; it returns -1 with an ERROR and `b`
+  does not change. `gobj_write_attr()` of `null` or `""` to a `DTP_REAL` (or
+  any typed attr) wrote it; it is refused now. A caller whose value can be
+  absent computes it before the write (`kw.x === true`). A table of 71 cases
   (`tests/fixtures/attr_types_parity.json`) is read by the tests of both
   kernels, with the same outcome for each. Measured on the test suites of
   gobj-ui, gui_agent, gui_treedb, wattyzer and estadodelaire: no value
@@ -100,21 +188,31 @@ code that still runs on it.
   `mt_start`/`mt_stop`. Cost: +7 ns per `gobj_send_event()` (15 -> 22 ns
   median, Node 24); a publication to 4 subscribers unchanged within noise.
   Test `destroy_under_dispatch`.
-- **fix(`C_TIMER`): a pure child PUBLISHES its timeout to its parent, which it
-  subscribes in `mt_create`, as the C timer does.** Up to 7.26.21 it SENT it to
-  its parent, also when it had a `subscriber`, so a host that ended its timer
-  in the timer's `EV_TIMEOUT` broke the kernel's rule in C and said nothing in
-  JS.
-- **fix(`C_IEVENT_CLI`): a pure child PUBLISHES its events, to its parent,
-  which it subscribes in `mt_create` -- the C transport's contract.** Up to
+- **fix(`C_TIMER`), BREAKING: a pure child PUBLISHES its timeout to its
+  parent, which it subscribes in `mt_create`, as the C timer does.** Up to
+  7.26.21 it SENT it to its parent, also when it had a `subscriber`, so a host
+  that ended its timer in the timer's `EV_TIMEOUT` broke the kernel's rule in C
+  and said nothing in JS. Now the host's `EV_TIMEOUT` action runs inside the
+  timer's publication: destroying the timer or the host there is the ERROR
+  above (defer it with `gobj_post_event()`), and a timer given a `subscriber`
+  is heard by it alone. 26 consumers create a `C_TIMER` as a pure child (13
+  in gui_agent, 2 in gui_treedb, 2 in estadodelaire, 5 in the yunovatios
+  GUIs, 1 in wattyzer, 3 in hidraulia; plus 2 in gobj-js itself, and none in
+  gobj-ui): none destroys the timer or its host in `EV_TIMEOUT`, and none gives
+  the timer a `subscriber` -- checked one by one for this note.
+- **fix(`C_IEVENT_CLI`), BREAKING for a host of a pure child: it PUBLISHES its
+  events, to its parent, which it subscribes in `mt_create` -- the C
+  transport's contract.** Up to
   7.26.21 it SENT `EV_ON_ID_NAK`, `EV_ON_OPEN` and every message that names no
   service to its parent and subscribed nobody: the parent never heard
   `EV_ON_CLOSE` / `EV_ON_OPEN_ERROR`, a `subscriber` other than the parent
   never heard the three, and a host ending the transport in its
   `EV_ON_ID_NAK` was not reported as C reports it. One subscription (the
   `subscriber` attr, else the parent), so a parent that is also the subscriber
-  hears each event once. No consumer hosts it as a pure child. Test
-  `ievent_pure_child`.
+  hears each event once. Such a host must now declare `EV_ON_CLOSE` and
+  `EV_ON_OPEN_ERROR` in its FSM, or each is *"Event NOT DEFINED in state"*. No
+  consumer hosts it as a pure child (all of them create it with
+  `gobj_create()` / `gobj_create_service()`). Test `ievent_pure_child`.
 - Deploy note: this version reaches the apps in the same round as gobj-ui
   7.26.43 and gui_agent 0.29.54 / gui_treedb 0.17.120, which defer the five
   destroys it would otherwise report in the console.

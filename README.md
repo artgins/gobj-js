@@ -286,6 +286,29 @@ const attrs_table = [
 
 **A value is read as the attribute's type, as in C** (`gobj_write_attr()`, the kw of `gobj_create()`, `gobj_write_attrs()`, the persistent attrs; 7.26.22+): a string for a boolean, integer, real, list or dict is read from its text by the C command parser's grammar (`command_parameter_from_json()`: `"yes"` is `true`, `"42"` is 42, `"007"` and `"12abc"` are refused), a number or a boolean as the exact type (`2.7` to an integer is refused). A refused value is not written: one `log_error` names the attr, its type, why and the value (masked, capped; a `SDF_SECRET` one never shown). A key of a kw whose value is `undefined` is an absent key; `gobj_write_attr()` of `undefined` to a typed attr is refused. The typed writers read the value as THEIR type by the same grammar (`gobj_write_integer_attr(g, "x", 2.5)` is refused, `gobj_write_bool_attr(g, "on", "yes")` is `true`), and `gobj_write_str_attr()` writes `null`/`undefined` as `""`, never the text `"null"`.
 
+**A refused write keeps the value the attribute had** (BREAKING in 7.26.22, kept
+by decision: the C kernel's `json2item()` does the same). `undefined`, `null`, an
+empty text or a text that is not a boolean, given to `gobj_write_bool_attr()`, is
+not `false`: the function returns -1, logs one ERROR, and the attribute does not
+change. The same for `gobj_write_attr()` of `null` or `""` to a `DTP_REAL`.
+Compute the value before the write when it can be absent:
+
+```javascript
+gobj_write_bool_attr(gobj, "selectable", true);
+gobj_write_bool_attr(gobj, "selectable", kw.selectable);          // kw has none: -1, ERROR,
+                                                                   // "selectable" is still true
+gobj_write_bool_attr(gobj, "selectable", kw.selectable === true);  // false
+```
+
+A value with no json text (a circular object such as a gobj or a DOM node, a
+`BigInt`) given to a string attribute is refused the same way, and is never
+thrown (7.26.24). A json TEXT is read as the C parser reads it: one that C
+refuses is refused in JS too -- an escaped NUL (`"\u0000"`), a lone surrogate,
+an integer out of int64, a real that overflows (`1e309`; to a `DTP_JSON` it is
+the text `"1e309"`, not `Infinity`). Two differences remain, because a JS number
+cannot carry them: an integer beyond 2^53 is rounded, and `2.0` is the integer
+2 (see `tests/fixtures/attr_types_parity.json`).
+
 ### Events & Pub-Sub
 
 GObjects communicate via events with JSON payloads:
@@ -463,6 +486,7 @@ gobj_current_state(gobj)                         // → state name string
 gobj_change_state(gobj, new_state)               // trigger FSM transition
 gobj_has_event(gobj, event, event_flag)          // → boolean; pass 0 to ignore flag
 gobj_has_output_event(gobj, event, event_flag)   // same; checks EVF_OUTPUT_EVENT
+gobj_find_event_type(event, event_flag, verbose) // the event type in ANY registered gclass, or null
 ```
 
 ### Attribute Access
@@ -720,6 +744,8 @@ mask_secrets_inline("sent Bearer mF_9.B5f-4.1JqM")  // → "sent Bearer ********
 mask_secrets_inline("the bearer of this letter")    // → null: prose
 mask_secrets_inline("\"password\": hunter2")        // → "\"password\": ********"
 mask_secrets_inline("GET https://h/get?token=abc&x=1")  // → "GET https://h/get?token=********&x=1"
+mask_secrets_inline("a=1&user%5Bpassword%5D=x")     // → "a=1&user%5Bpassword%5D=********"
+mask_secrets_inline("https://bob:hunter2@host/x")   // → "https://bob:********@host/x"
 json_mask_secrets({user: "a", password: "x"})  // → {user: "a", password: "********"}
 json_mask_secrets({note: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"})
                                           // → {note: "********"}: a JWT under any key
@@ -960,7 +986,11 @@ Events published: `EV_TIMEOUT`, `EV_TIMEOUT_PERIODIC`. They go to the
 `subscriber` attr, else, for a pure child, to its parent, which the timer
 subscribes in `mt_create` — the C timer's rule. Up to 7.26.21 a pure child
 SENT the timeout to its parent instead of publishing it (and to its parent
-even when it had a `subscriber`).
+even when it had a `subscriber`). BREAKING in 7.26.22: the parent's
+`EV_TIMEOUT` action now runs inside the timer's publication, so destroying
+the timer or the parent there is the ERROR *"Destroying a gobj while its tree
+is publishing"*. Defer it with `gobj_post_event()` to yourself; re-arming or
+clearing the timer in the action is fine.
 
 Attributes: `subscriber`, `periodic`, `msec`
 
@@ -982,7 +1012,18 @@ let remote = gobj_create_service("backend", "C_IEVENT_CLI", {
 
 Key attributes: `url`, `jwt`, `wanted_yuno_role`, `wanted_yuno_name`, `wanted_yuno_service`, `remote_yuno_role`, `remote_yuno_name`, `remote_yuno_service`, `required_services`, `timeout_retry`, `timeout_retry_max`
 
-Its events (`EV_ON_OPEN`, `EV_ON_CLOSE`, `EV_ON_OPEN_ERROR`, `EV_ON_ID_NAK` and every message that names no service) are PUBLISHED: to the `subscriber` attr, else, for a pure child, to its parent, which it subscribes in `mt_create` — one subscription, as the C transport. Up to 7.26.21 a pure child SENT three of them to its parent and subscribed nobody, so its parent never heard `EV_ON_CLOSE` / `EV_ON_OPEN_ERROR`.
+Its events (`EV_ON_OPEN`, `EV_ON_CLOSE`, `EV_ON_OPEN_ERROR`, `EV_ON_ID_NAK` and every message that names no service) are PUBLISHED: to the `subscriber` attr, else, for a pure child, to its parent, which it subscribes in `mt_create` — one subscription, as the C transport. Up to 7.26.21 a pure child SENT three of them to its parent and subscribed nobody, so its parent never heard `EV_ON_CLOSE` / `EV_ON_OPEN_ERROR`: a host of a pure child must declare both in its FSM (BREAKING in 7.26.22).
+
+A message that names no service is published only when its event is declared by some registered gclass (`gobj_find_event_type()`); any other is dropped with a WARNING, its name masked (7.26.24). What the server gets wrong is a WARNING, never an ERROR. Before the session only `EV_IDENTITY_CARD_ACK` is taken; a `dst_role` or `dst_yuno` that is not this yuno's closes the channel too (an empty one is legal: anybody's), as the C transport does; an event that the named service does not take as public is dropped (7.26.24).
+
+`EV_ON_CLOSE` carries `code`, `reason` (masked) and `was_clean`, and so does `EV_ON_OPEN_ERROR` (7.26.24). A session that ends cleanly (a stop, a logout, the server closing with 1000 or 1001) is logged by nobody; a session CUT -- not clean, or any other code (1006, 1008, 1011) -- is one WARNING with the code and the reason masked:
+
+```javascript
+// in the subscriber's EV_ON_CLOSE action
+if(!kw.was_clean || (kw.code !== 1000 && kw.code !== 1001)) {
+    show_banner(t("connection lost"));      // the WARNING is already logged
+}
+```
 
 **`required_services`** (default `[]`) is the list this link advertises in its
 identity_card, which the remote's `C_AUTHZ` uses to authorize commands. It is

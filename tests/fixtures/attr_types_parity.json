@@ -1,5 +1,5 @@
 {
-    "__description__": "What a value given as json becomes for each attribute type: the same in C (command_parameter_from_json(), json2item(); yunetas tests/c/attr_types) and in JS (gobj-js tests/attr_types.test.js). 'expect' is the value written; 'refused' why it is refused, null when there is no value. A real is written with its decimal point, so that C reads it as a real.",
+    "__description__": "What a value given as json becomes for each attribute type: the same in C (command_parameter_from_json(), json2item(); yunetas tests/c/attr_types) and in JS (gobj-js tests/attr_types.test.js). 'expect' is the value written; 'refused' why it is refused, null when there is no value. A real is written with its decimal point, so that C reads it as a real. 'expect'/'refused' are C's outcome; a case where JS cannot give it carries 'js' with JS's outcome and 'note' with why: a JS number does not tell 2.0 from 2, and holds an integer exactly only up to 2^53.",
     "cases": [
         {"type": "integer", "value": "42",                      "expect": 42},
         {"type": "integer", "value": "-5",                      "expect": -5},
@@ -20,6 +20,10 @@
         {"type": "integer", "value": 1e19,                      "refused": "a number out of its range"},
         {"type": "integer", "value": true,                      "expect": 1},
         {"type": "integer", "value": false,                     "expect": 0},
+        {"type": "integer", "value": "9007199254740993",        "expect": 9007199254740993,
+            "js": {"expect": 9007199254740992}, "note": "beyond 2^53 a JS number rounds it, as JSON.parse() does"},
+        {"type": "integer", "value": 9007199254740993,          "expect": 9007199254740993,
+            "js": {"expect": 9007199254740992}, "note": "rounded by JSON.parse() before it is read"},
         {"type": "integer", "value": {},                        "refused": "an object"},
         {"type": "integer", "value": [1],                       "refused": "an array"},
 
@@ -66,6 +70,12 @@
         {"type": "list",    "value": {"a": 1},                  "refused": "an object"},
         {"type": "list",    "value": 5,                         "refused": "an integer"},
         {"type": "list",    "value": null,                      "refused": null},
+        {"type": "list",    "value": "[\"x\\u0000y\"]",          "refused": "a text that does not read as one"},
+        {"type": "list",    "value": "[\"\\ud800\"]",              "refused": "a text that does not read as one"},
+        {"type": "list",    "value": "[\"\\ud83d\\ude00\"]",       "expect": ["\ud83d\ude00"]},
+        {"type": "list",    "value": "[1e309]",                 "refused": "a text that does not read as one"},
+        {"type": "list",    "value": "[1e-400]",                "expect": [0.0]},
+        {"type": "list",    "value": "[99999999999999999999]",  "refused": "a text that does not read as one"},
 
         {"type": "dict",    "value": "{\"a\": 1}",              "expect": {"a": 1}},
         {"type": "dict",    "value": "[1]",                     "refused": "a text that does not read as one"},
@@ -75,6 +85,21 @@
         {"type": "dict",    "value": 2.5,                       "refused": "a real"},
         {"type": "dict",    "value": true,                      "refused": "a boolean"},
         {"type": "dict",    "value": [],                        "refused": "an array"},
-        {"type": "dict",    "value": null,                      "refused": null}
+        {"type": "dict",    "value": null,                      "refused": null},
+        {"type": "dict",    "value": "{\"a\": \"x\\u0000y\"}",    "refused": "a text that does not read as one"},
+        {"type": "dict",    "value": "{\"x\\u0000\": 1}",          "refused": "a text that does not read as one"},
+        {"type": "dict",    "value": "{\"a\": 1e309}",            "refused": "a text that does not read as one"},
+        {"type": "dict",    "value": 2.0,                       "refused": "a real",
+            "js": {"refused": "an integer"}, "note": "a JS number does not tell 2.0 from 2"},
+
+        {"type": "json",    "value": "1e309",                   "expect": "1e309"},
+        {"type": "json",    "value": "-1e309",                  "expect": "-1e309"},
+        {"type": "json",    "value": "[1e309]",                 "expect": "[1e309]"},
+        {"type": "json",    "value": "99999999999999999999",    "expect": "99999999999999999999"},
+        {"type": "json",    "value": "\"x\\u0000y\"",            "expect": "\"x\\u0000y\""},
+        {"type": "json",    "value": "[\"\\ud800\"]",              "expect": "[\"\\ud800\"]"},
+        {"type": "json",    "value": "{\"a\": 1}",              "expect": {"a": 1}},
+        {"type": "json",    "value": "word",                    "expect": "word"},
+        {"type": "json",    "value": "12",                      "expect": 12}
     ]
 }

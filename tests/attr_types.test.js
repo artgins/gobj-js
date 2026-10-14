@@ -50,6 +50,7 @@ const TYPES = {
     real:       data_type_t.DTP_REAL,
     list:       data_type_t.DTP_LIST,
     dict:       data_type_t.DTP_DICT,
+    json:       data_type_t.DTP_JSON,
 };
 
 const errors = [];
@@ -87,12 +88,13 @@ describe("the parity table: the same inputs, the same outcomes as in C", () => {
         const shown = JSON.stringify(c.value);
         test(`${c.type} given ${shown}`, () => {
             const r = command_parameter_from_json(TYPES[c.type], c.value);
-            if(Object.prototype.hasOwnProperty.call(c, "expect")) {
+            const outcome = c.js || c;     // the outcome of C, unless JS cannot give it
+            if(Object.prototype.hasOwnProperty.call(outcome, "expect")) {
                 expect(r.refused).toBe(null);
-                expect(r.value).toEqual(c.expect);
+                expect(r.value).toEqual(outcome.expect);
             } else {
                 expect(r.value).toBe(undefined);
-                expect(r.refused).toBe(c.refused);
+                expect(r.refused).toBe(outcome.refused);
             }
         });
     }
@@ -241,6 +243,46 @@ describe("json2item(): the kw of gobj_create(), gobj_write_attrs()", () => {
             expect(errors.length).toBe(1);
             expect(errors[0]).toContain(`Attribute value of the wrong type, not written: attr '${attr}'`);
             expect(errors[0]).not.toContain("hunter2");
+        }
+    });
+
+    test("a value with no json text (circular, a BigInt) is refused, not thrown", () => {
+        const gobj = gobj_create("circular", "C_TEST_ATTR_TYPES", {name: "kept", count: 3}, yuno);
+        const circular = {};
+        circular.self = circular;
+        for(const [label, write, attr, kept] of [
+            ["gobj_write_str_attr", () => gobj_write_str_attr(gobj, "name", circular), "name", "kept"],
+            ["gobj_write_str_attr BigInt", () => gobj_write_str_attr(gobj, "name", 10n), "name", "kept"],
+            ["gobj_write_attr string", () => gobj_write_attr(gobj, "name", circular), "name", "kept"],
+            ["gobj_write_attrs string", () => gobj_write_attrs(gobj, {name: circular}, -1, gobj), "name", "kept"],
+            ["gobj_write_integer_attr", () => gobj_write_integer_attr(gobj, "count", circular), "count", 3],
+            ["gobj_write_attr integer", () => gobj_write_attr(gobj, "count", circular), "count", 3],
+        ]) {
+            errors.length = 0;
+            let ret;
+            expect(() => {
+                ret = write();
+            }, label).not.toThrow();
+            expect(ret, label).toBeLessThan(0);
+            expect(gobj_read_attr(gobj, attr), label).toBe(kept);
+            expect(errors.length, label).toBe(1);
+            expect(errors[0], label).toContain(`attr '${attr}'`);
+        }
+    });
+
+    test("an explicit write of no value to a boolean or a real is refused, the attr keeps its value", () => {
+        const gobj = gobj_create("absent_values", "C_TEST_ATTR_TYPES", {flag: true, ratio: 1.5}, yuno);
+        for(const value of [undefined, null, "", "maybe"]) {
+            errors.length = 0;
+            expect(gobj_write_bool_attr(gobj, "flag", value)).toBeLessThan(0);
+            expect(gobj_read_attr(gobj, "flag")).toBe(true);
+            expect(errors.length).toBe(1);
+        }
+        for(const value of [null, ""]) {
+            errors.length = 0;
+            expect(gobj_write_attr(gobj, "ratio", value)).toBeLessThan(0);
+            expect(gobj_read_attr(gobj, "ratio")).toBe(1.5);
+            expect(errors.length).toBe(1);
         }
     });
 

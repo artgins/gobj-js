@@ -118,6 +118,15 @@ beforeAll(() => {
         ],
         {}, null, null, null, 0
     );
+    gclass_create(
+        "C_TEST_DSP_NEXT",
+        [["EV_PING", 0]],
+        [
+            ["ST_IDLE", [["EV_PING", ac_hook, "ST_BUSY"]]],
+            ["ST_BUSY", [["EV_PING", ac_hook, "ST_IDLE"]]],
+        ],
+        {}, null, [SDATA_END()], {}, null, null, null, 0
+    );
     yuno = gobj_create_yuno("test_yuno", "C_TEST_YUNO", {});
 });
 
@@ -407,5 +416,32 @@ describe("a C_TIMER ended by its parent in the timer's own EV_TIMEOUT", () => {
         expect(logged).toEqual([]);
 
         gobj_destroy(host);
+    });
+});
+
+describe("a dispatch that throws before its action runs", () => {
+    test("the change of state is inside the frame's try: the frame is popped all the same", () => {
+        reset();
+        const host = gobj_create("throws_in_change", "C_TEST_DSP_NEXT", {}, yuno);
+        Object.defineProperty(host, "last_state", {
+            configurable: true,
+            set() {
+                throw new Error("change of state threw");
+            },
+        });
+        expect(() => gobj_send_event(host, "EV_PING", {}, host)).toThrow("change of state threw");
+        delete host.last_state;
+
+        /*  A frame of `host` left on the chain would make this destroy,
+         *  from another gobj's action, one under host's running action.  */
+        const other = gobj_create("destroys_the_thrower", "C_TEST_DSP", {}, yuno);
+        hooks["destroys_the_thrower:EV_DIE"] = () => {
+            gobj_destroy(host);
+            return 0;
+        };
+        logged.length = 0;
+        gobj_send_event(other, "EV_DIE", {}, other);
+        expect(logged.filter(line => line.includes(RULE_ACTION))).toEqual([]);
+        gobj_destroy(other);
     });
 });

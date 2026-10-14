@@ -1048,6 +1048,108 @@ const JSON_NUMBER_TEXT = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/;
 const INT64_MIN = -(2n ** 63n);
 const INT64_MAX = 2n ** 63n - 1n;
 const REFUSED_TEXT = "a text that does not read as one";
+const JSON_NUMBER_TOKEN = /-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/y;
+
+/*
+ *  Does the C parser refuse a json text that JSON.parse() accepts? jansson
+ *  refuses, where JSON.parse() reads on: an escaped NUL ("\u0000", without
+ *  JSON_ALLOW_NUL), a lone surrogate, an integer out of int64 ("too big
+ *  integer") and a real that overflows (1e309 is Infinity to JSON.parse()).
+ *  `s` is a text JSON.parse() accepted: only strings and numbers are read.
+ */
+function is_surrogate_pair(high, low)
+{
+    return high >= 0xD800 && high <= 0xDBFF && low >= 0xDC00 && low <= 0xDFFF;
+}
+
+function json_text_refused_by_c(s)
+{
+    const n = s.length;
+    let i = 0;
+    while(i < n) {
+        const c = s.charCodeAt(i);
+        if(c === 0x22) {
+            i++;
+            while(i < n) {
+                const d = s.charCodeAt(i);
+                if(d === 0x22) {
+                    i++;
+                    break;
+                }
+                if(d === 0x5C && s[i + 1] === "u") {
+                    const u = parseInt(s.substring(i + 2, i + 6), 16);
+                    if(u === 0) {
+                        return true;
+                    }
+                    if(u >= 0xD800 && u <= 0xDFFF) {
+                        const low = (s[i + 6] === "\\" && s[i + 7] === "u")?
+                            parseInt(s.substring(i + 8, i + 12), 16) : -1;
+                        if(!is_surrogate_pair(u, low)) {
+                            return true;
+                        }
+                        i += 12;
+                        continue;
+                    }
+                    i += 6;
+                    continue;
+                }
+                if(d === 0x5C) {
+                    i += 2;
+                    continue;
+                }
+                if(d >= 0xD800 && d <= 0xDFFF) {
+                    if(!is_surrogate_pair(d, s.charCodeAt(i + 1))) {
+                        return true;    // not encodable in UTF-8
+                    }
+                    i += 2;
+                    continue;
+                }
+                i++;
+            }
+            continue;
+        }
+        if(c === 0x2D || (c >= 0x30 && c <= 0x39)) {
+            JSON_NUMBER_TOKEN.lastIndex = i;
+            const m = JSON_NUMBER_TOKEN.exec(s);
+            if(!m) {
+                return true;    // JSON.parse() accepted it: cannot be
+            }
+            const token = m[0];
+            if(/[.eE]/.test(token)) {
+                if(!Number.isFinite(Number(token))) {
+                    return true;
+                }
+            } else {
+                const big = BigInt(token);
+                if(big < INT64_MIN || big > INT64_MAX) {
+                    return true;
+                }
+            }
+            i += token.length;
+            continue;
+        }
+        i++;
+    }
+    return false;
+}
+
+/*
+ *  JSON.parse() of a text, as the C parser reads it: undefined when either
+ *  refuses it.
+ */
+function parse_json_text_as_c(s)
+{
+    let jn;
+    try {
+        jn = JSON.parse(s);
+    } catch (e) {
+        return undefined;
+    }
+    if(json_text_refused_by_c(s)) {
+        return undefined;
+    }
+    return jn;
+}
 
 function value_has_shape(type, value)
 {
@@ -1162,27 +1264,22 @@ function text2parameter(type, s, from_kw)
         return {value: Number(n), refused: null};   // beyond 2^53 a JS number rounds it, as JSON.parse()
     }
     if(DTP_IS_DICT(type) || DTP_IS_LIST(type)) {
-        let jn;
-        try {
-            jn = JSON.parse(s);
-        } catch (e) {
-            return {value: undefined, refused: REFUSED_TEXT};
-        }
-        if(!value_has_shape(type, jn)) {
+        const jn = parse_json_text_as_c(s);
+        if(jn === undefined || !value_has_shape(type, jn)) {
             return {value: undefined, refused: REFUSED_TEXT};
         }
         return {value: jn, refused: null};
     }
     if(DTP_IS_JSON(type)) {
-        try {
-            return {value: JSON.parse(s), refused: null};
-        } catch (e) {
-            const t = s.replace(/^[ \t]+/, "");
-            if(t.startsWith("{") || t.startsWith("[") || t.startsWith("\"")) {
-                return {value: undefined, refused: REFUSED_TEXT};  // json written wrong, not a text
-            }
-            return {value: s, refused: null};   // a bare word, a date: text
+        const jn = parse_json_text_as_c(s);
+        if(jn !== undefined) {
+            return {value: jn, refused: null};
         }
+        const t = s.replace(/^[ \t]+/, "");
+        if(t.startsWith("{") || t.startsWith("[") || t.startsWith("\"")) {
+            return {value: undefined, refused: REFUSED_TEXT};  // json written wrong, not a text
+        }
+        return {value: s, refused: null};   // a bare word, a date, a number out of range: text
     }
     return {value: undefined, refused: REFUSED_TEXT};
 }
@@ -1261,9 +1358,27 @@ const TYPES_READ = [
     data_type_t.DTP_DICT,
 ];
 
+/*
+ *  The json text of a value, undefined when it has none: a circular
+ *  object (a gobj, a DOM node), a BigInt, a function. JSON.stringify()
+ *  throws for the first two.
+ */
+const NO_JSON_TEXT = "a value with no json text";
+
+function json_text_of(value)
+{
+    try {
+        const s = JSON.stringify(value);
+        return is_string(s)? s : undefined;
+    } catch(e) {
+        return undefined;
+    }
+}
+
 function log_attr_value_refused(gobj, it, value, refused)
 {
     const types = {
+        [data_type_t.DTP_STRING]:   "a string",
         [data_type_t.DTP_BOOLEAN]:  "a boolean",
         [data_type_t.DTP_INTEGER]:  "an integer",
         [data_type_t.DTP_REAL]:     "a real",
@@ -1274,7 +1389,10 @@ function log_attr_value_refused(gobj, it, value, refused)
     if(it.flag & sdata_flag_t.SDF_SECRET) {
         shown = "********";
     } else {
-        shown = is_string(value)? value : String(JSON.stringify(value === undefined? null : value));
+        shown = is_string(value)? value : json_text_of(value === undefined? null : value);
+        if(shown === undefined) {
+            shown = `<${NO_JSON_TEXT}>`;
+        }
         const masked = mask_secrets_inline(shown);
         if(masked !== null) {
             shown = masked;
@@ -1315,9 +1433,10 @@ function json2item(gobj, sdata, it, jn_value_)
             } else if(is_string(jn_value_)) {
                 jn_value2 = String(jn_value_);
             } else {
-                let s = JSON.stringify(jn_value_);
-                if(s) {
-                    jn_value2 = String(s);
+                jn_value2 = json_text_of(jn_value_);
+                if(jn_value2 === undefined) {
+                    log_attr_value_refused(gobj, it, jn_value_, NO_JSON_TEXT);
+                    return -1;
                 }
             }
             break;
@@ -3859,18 +3978,24 @@ function write_attr_value(gobj, key, value)
  *  The value a typed writer writes, read as ITS type by the grammar of
  *  json2item() (a C writer takes its C type: a string is never read as a
  *  number there). Return {value} or {refused} (logged): the attr keeps its
- *  value. A string writer never refuses: null and undefined are "", any
- *  other json its text, as a DTP_STRING attr reads them.
+ *  value. A string writer takes null and undefined as "", any other json
+ *  as its text, as a DTP_STRING attr reads them; it refuses only a value
+ *  with no json text (circular, a BigInt).
  ***************************************************************************/
 function typed_writer_value(gobj, name, type, value)
 {
+    let r;
     if(DTP_IS_STRING(type)) {
         if(value === null || value === undefined) {
             return {value: ""};
         }
-        return {value: is_string(value)? value : String(JSON.stringify(value))};
+        if(is_string(value)) {
+            return {value: value};
+        }
+        r = {value: json_text_of(value), refused: NO_JSON_TEXT};
+    } else {
+        r = command_parameter_from_json(type, value);
     }
-    const r = command_parameter_from_json(type, value);
     if(r.value === undefined) {
         let holder = gobj;
         while(holder && !gobj_has_attr(holder, name)) {
@@ -4673,12 +4798,11 @@ function gobj_send_event(dst, event, kw, src)
      */
     const frame = push_dispatch_frame(dst, event, frame_kind_t.FRAME_ACTION);
 
-    if(event_action.next_state) {
-        gobj_change_state(dst, event_action.next_state);
-    }
-
     let ret = -1;
     try {
+        if(event_action.next_state) {
+            gobj_change_state(dst, event_action.next_state);
+        }
         if(event_action.action) {
             // Execute the action
             ret = (event_action.action)(dst, event, kw, src);
@@ -4734,20 +4858,29 @@ __own_event__           : 0x00000004,   // If gobj_send_event return -1 don't co
 });
 
 /***************************************************************************
- *  The event type of `event_name` in any registered gclass, null if none.
- *  The C kernel's gobj_find_event_type(): any case, gclasses only.
+ *  The event type of `event_name` in any registered gclass whose flags
+ *  hold one of `event_flag` (0: any), null if none. The C kernel's
+ *  gobj_find_event_type(): any case, gclasses only. With `verbose` a miss
+ *  is logged, with the name as it was given: never verbose for a name
+ *  that came from a peer.
  ***************************************************************************/
-function _find_event_type_in_gclasses(event_name)
+function gobj_find_event_type(event_name, event_flag, verbose)
 {
     let lower = String(event_name).toLowerCase();
     for(let gclass_name in _gclass_register) {
         let dl = _gclass_register[gclass_name].dl_events;
         for(let i=0; i<dl.length; i++) {
             let event_type = dl[i];
+            if(event_flag && !(event_type.event_flag & event_flag)) {
+                continue;
+            }
             if(event_type.event_name && event_type.event_name.toLowerCase() === lower) {
                 return event_type;
             }
         }
+    }
+    if(verbose) {
+        log_error(`EVENT NOT FOUND: ${event_name}`);
     }
     return null;
 }
@@ -4810,7 +4943,7 @@ function _create_subscription(
              */
             let renamed_event = kw_get_str(publisher, kw_clone, "__rename_event_name__", "");
             if(!empty_string(renamed_event)) {
-                let event_type = _find_event_type_in_gclasses(renamed_event);
+                let event_type = gobj_find_event_type(renamed_event, 0, false);
                 if(event_type) {
                     json_object_set_new(subs, "renamed_event", event_type.event_name);
                     delete kw_clone.__rename_event_name__;
@@ -4899,7 +5032,7 @@ function _subscription_match_kw(kw, event)
 
     let rename = config_match.__rename_event_name__;
     let event_type = (typeof rename === "string" && !empty_string(rename)) ?
-        _find_event_type_in_gclasses(rename) : null;
+        gobj_find_event_type(rename, 0, false) : null;
     if(event_type) {
         renamed_event = event_type.event_name;
         delete config_match.__rename_event_name__;
@@ -6060,6 +6193,7 @@ export {
     gobj_change_parent,
 
     gobj_has_event,
+    gobj_find_event_type,
     gobj_has_output_event,
     gobj_post_event,
     gobj_posted_events_size,

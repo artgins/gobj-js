@@ -9,13 +9,24 @@
  *          masking can tell it; the frame dropped was logged raw;
  *        - the name of an event, and of the service it is addressed to,
  *          are the server's text: masked, as the C kernel masks the name
- *          of an event that is not public.
+ *          of an event that is not public;
+ *        - what the server got wrong is a WARNING, not an ERROR: bad
+ *          bytes from a peer are not a broken invariant of ours;
+ *        - a message addressed to no service, of an event that no gclass
+ *          declares, is dropped with a WARNING, its name masked: it was
+ *          published as it came, and its name reached the log raw in
+ *          "Publish event WITHOUT subscribers" or "Event NOT DEFINED in
+ *          state".
  *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
  ***********************************************************************/
 import { describe, test, expect, beforeAll, beforeEach } from "vitest";
 import {
+    SDATA_END,
+    gclass_create,
+    gobj_subscribe_event,
+    gobj_create_pure_child,
     gobj_start_up,
     gobj_create_yuno,
     gobj_create_service,
@@ -32,6 +43,7 @@ import {
 const YUNO_ROLE = "peer_logs_role";
 
 let logged = [];
+const heard = [];
 let yuno = null;
 
 beforeAll(() => {
@@ -42,13 +54,51 @@ beforeAll(() => {
     register_c_yuno();
     register_c_timer();
     register_c_ievent_cli();
+    gclass_create(
+        "C_PROBE_PEER_LISTENER",
+        [["EV_PEER_DECLARED", 0], ["EV_PEER_NOT_PUBLIC", 0]],
+        [["ST_IDLE", [
+            ["EV_PEER_DECLARED", (g, ev, kw) => {
+                heard.push(ev);
+                return 0;
+            }, null],
+            ["EV_PEER_NOT_PUBLIC", (g, ev, kw) => {
+                heard.push(ev);
+                return 0;
+            }, null],
+        ]]],
+        {}, 0, [SDATA_END()], {}, 0, 0, 0, 0
+    );
     yuno = gobj_create_yuno("peer_logs_yuno", "C_YUNO", {yuno_role: YUNO_ROLE});
     gobj_start(yuno);
 });
 
 beforeEach(() => {
     logged = [];
+    heard.length = 0;
 });
+
+function iev_kw(dst_service, dst_role = YUNO_ROLE, dst_yuno = "peer_logs_yuno")
+{
+    return {
+        __md_iev__: {
+            ievent_gate_stack: [{
+                dst_yuno:    dst_yuno,
+                dst_role:    dst_role,
+                dst_service: dst_service,
+                src_yuno:    "remote_yuno",
+                src_role:    "remote_role",
+                src_service: "remote_service",
+            }],
+            __msg_type__: "__message__",
+        },
+    };
+}
+
+function errors()
+{
+    return logged.filter(l => /^error/.test(l));
+}
 
 function make_transport(name, in_session)
 {
@@ -59,6 +109,22 @@ function make_transport(name, in_session)
     }, yuno);
     gobj_change_state(ievent, in_session? "ST_SESSION" : "ST_WAIT_IDENTITY_CARD_ACK");
     return ievent;
+}
+
+/*  An open socket that records its close: the server's faults close it.  */
+function attach_socket(ievent)
+{
+    const ws = {
+        readyState: 1,
+        closed: false,
+        close() {
+            this.closed = true;
+            this.readyState = 2;
+        },
+        send() {},
+    };
+    ievent.priv.websocket = ws;
+    return ws;
 }
 
 function receive(ievent, data)
@@ -91,7 +157,8 @@ describe("the names the server sends", () => {
     test("an event out of session: its name masked", () => {
         const ievent = make_transport("t_not_session", false);
         receive(ievent, JSON.stringify({event: "EV_X password=ev1-hunter2", kw: {}}));
-        expect(logged.some(l => /not-session/.test(l))).toBe(true);
+        expect(logged.some(l => /^warning: .*not-session/.test(l))).toBe(true);
+        expect(errors()).toEqual([]);
         expect(shown("ev1-hunter2")).toEqual([]);
     });
 
@@ -153,8 +220,111 @@ describe("the names the server sends", () => {
             },
         };
         receive(ievent, JSON.stringify({event: "EV_R", kw: kw}));
-        expect(logged.some(l => /not my role/.test(l))).toBe(true);
+        expect(logged.some(l => /^warning: .*not my role/.test(l))).toBe(true);
+        expect(errors()).toEqual([]);
         expect(shown("rl1-hunter2")).toEqual([]);
+    });
+});
+
+describe("what the server gets wrong is a warning, and what no gclass declares is dropped", () => {
+    test("an event the service it names does not take as public: a WARNING, its name masked", () => {
+        const ievent = make_transport("t_not_public", true);
+        const svc = gobj_create_service("peer_svc_not_public", "C_PROBE_PEER_LISTENER", {}, yuno);
+        gobj_start(svc);
+        receive(ievent, JSON.stringify({event: "EV_N token=np1-hunter2", kw: iev_kw("peer_svc_not_public")}));
+        receive(ievent, JSON.stringify({event: "EV_PEER_NOT_PUBLIC", kw: iev_kw("peer_svc_not_public")}));
+        expect(logged.filter(l => /^warning: .*no event or not public/.test(l)).length).toBe(2);
+        expect(errors()).toEqual([]);
+        expect(heard).toEqual([]);
+        expect(shown("np1-hunter2")).toEqual([]);
+    });
+
+    test("a message to no service, of an event no gclass declares: dropped, a WARNING, its name masked", () => {
+        const ievent = make_transport("t_undeclared", true);
+        const listener = gobj_create_pure_child("t_undeclared_listener", "C_PROBE_PEER_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        receive(ievent, JSON.stringify({event: "EV_U password=ud1-hunter2", kw: iev_kw("")}));
+        expect(heard).toEqual([]);
+        expect(logged.filter(l => /^warning: .*no gclass declares.*DROPPED/.test(l)).length).toBe(1);
+        expect(errors()).toEqual([]);
+        expect(logged.some(l => /WITHOUT subscribers|NOT DEFINED/.test(l))).toBe(false);
+        expect(shown("ud1-hunter2")).toEqual([]);
+    });
+
+    test("the same with nobody subscribed: no raw name in a 'WITHOUT subscribers'", () => {
+        const ievent = make_transport("t_undeclared_alone", true);
+        receive(ievent, JSON.stringify({event: "EV_U token=ud2-hunter2", kw: iev_kw("")}));
+        expect(logged.some(l => /WITHOUT subscribers/.test(l))).toBe(false);
+        expect(shown("ud2-hunter2")).toEqual([]);
+    });
+
+    test("a message to no service, of an event some gclass declares: published", () => {
+        const ievent = make_transport("t_declared", true);
+        const listener = gobj_create_pure_child("t_declared_listener", "C_PROBE_PEER_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        receive(ievent, JSON.stringify({event: "EV_PEER_DECLARED", kw: iev_kw("")}));
+        expect(heard).toEqual(["EV_PEER_DECLARED"]);
+        expect(errors()).toEqual([]);
+    });
+});
+
+describe("the routing of a message, as the C transport checks it", () => {
+    test("before the session only EV_IDENTITY_CARD_ACK: any other event is a WARNING and the channel goes", () => {
+        const ievent = make_transport("t_pre_session", false);
+        const ws = attach_socket(ievent);
+        receive(ievent, JSON.stringify({event: "EV_MT_STATS", kw: iev_kw("")}));
+        expect(logged.filter(l => /^warning: .*not-session state EV_MT_STATS/.test(l)).length).toBe(1);
+        expect(errors()).toEqual([]);
+        expect(ws.closed).toBe(true);
+    });
+
+    test("an empty dst_role is legal: the message is routed", () => {
+        const ievent = make_transport("t_empty_role", true);
+        const listener = gobj_create_pure_child("t_empty_role_listener", "C_PROBE_PEER_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        const ws = attach_socket(ievent);   // after: a subscription in session goes to the server
+        receive(ievent, JSON.stringify({event: "EV_PEER_DECLARED", kw: iev_kw("", "", "")}));
+        expect(heard).toEqual(["EV_PEER_DECLARED"]);
+        expect(logged.filter(l => /^(warning|error)/.test(l))).toEqual([]);
+        expect(ws.closed).toBe(false);
+    });
+
+    test("a role that is not mine: a WARNING, the names masked, and the channel goes", () => {
+        const ievent = make_transport("t_role_close", true);
+        const ws = attach_socket(ievent);
+        receive(ievent, JSON.stringify({event: "EV_PEER_DECLARED password=rc1-hunter2",
+            kw: iev_kw("", "other token=rc2-hunter2")}));
+        expect(logged.filter(l => /^warning: .*not my role/.test(l)).length).toBe(1);
+        expect(errors()).toEqual([]);
+        expect(shown("rc1-hunter2")).toEqual([]);
+        expect(shown("rc2-hunter2")).toEqual([]);
+        expect(ws.closed).toBe(true);
+    });
+
+    test("a yuno name that is not mine: a WARNING, masked, and the channel goes", () => {
+        const ievent = make_transport("t_name_close", true);
+        const listener = gobj_create_pure_child("t_name_close_listener", "C_PROBE_PEER_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        const ws = attach_socket(ievent);
+        receive(ievent, JSON.stringify({event: "EV_PEER_DECLARED",
+            kw: iev_kw("", YUNO_ROLE, "other_yuno pwd=nm1-hunter2")}));
+        expect(heard).toEqual([]);
+        expect(logged.filter(l => /^warning: .*not my name/.test(l)).length).toBe(1);
+        expect(shown("nm1-hunter2")).toEqual([]);
+        expect(ws.closed).toBe(true);
+    });
+
+    test("a name is shown capped at 128 characters, as C", () => {
+        const ievent = make_transport("t_role_cap", true);
+        attach_socket(ievent);
+        receive(ievent, JSON.stringify({event: "EV_PEER_DECLARED", kw: iev_kw("", "r".repeat(300))}));
+        const line = logged.find(l => /not my role/.test(l));
+        expect(line).toContain("r".repeat(128));
+        expect(line).not.toContain("r".repeat(129));
     });
 });
 
