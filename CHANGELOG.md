@@ -7,6 +7,59 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.25
+
+- **fix(`C_IEVENT_CLI`): a message that names no service is taken only for an
+  event some gclass declares PUBLIC, and never for an event the transport says
+  itself.** 7.26.24 took any declaration, so a server that sent `{"event":
+  "EV_ON_OPEN"}` (or `EV_ON_CLOSE`, `EV_TIMEOUT`) with no service had it
+  published to the app as if the transport had said it, with whatever kw the
+  server chose (`username`, `services_roles`), and without a line of log; a
+  declared but not public name ended in *"Event NOT DEFINED in state"*, an
+  ERROR a peer provoked. Now the lookup asks `EVF_PUBLIC_EVENT`, as C's
+  `gclass_find_public_event()`, and the transport's own names (`EV_ON_OPEN`,
+  `EV_ON_CLOSE`, `EV_ON_OPEN_ERROR`, `EV_ON_ID_NAK`, `EV_TIMEOUT`,
+  `EV_ON_MESSAGE`, and `EV_IDENTITY_CARD_ACK` in session, where it was an
+  ERROR too) are refused from the server in any case of letters and whatever
+  service the message names: a WARNING, the name masked, dropped. The other
+  public events of the transport (`EV_MT_STATS`, `EV_MT_COMMAND`) are found in
+  any case of letters, as C finds them. `EV_ON_ID_NAK` is no longer declared
+  public (it is an output event, as in C). In every published version. No
+  consumer of the ecosystem receives an event by this path (every requester is
+  a named service, its answers arrive by name). Tests `ievent_peer_logs`.
+- **fix(`C_IEVENT_CLI`): a session closed for a fault of the server is closed
+  with 4002, and the backoff goes on.** A message for a role or a yuno that is
+  not this one, or an event before the session, closed the channel with a clean
+  1000, so `EV_ON_CLOSE` said the session had ended well; and the ack of that
+  session had reset the reconnect backoff, so a server that broke every session
+  was reconnected at `timeout_retry` (5 s) for ever, with a WARNING, an
+  `EV_ON_OPEN` and an `EV_ON_CLOSE` in the app per round. The close is 4002 (a
+  browser may close only with 1000 or 3000-4999: 1002 throws there, and the
+  socket stayed open), and the backoff the ack reset is put back, so it doubles
+  as for a failed open. The routing closes are of 7.26.24, the event out of
+  session of every published version. Test `ievent_peer_fault`.
+- **fix: a value that is not json all the way down is refused for a string, a
+  `DTP_DICT` or a `DTP_LIST`, at the write.** The shape check looked only at
+  the top: a circular object, a gobj, a `Map`, a `Set`, a `Date`, a typed array
+  or `[1n]` was written to a dict or a list, and burst (or changed) when the
+  value was serialized, far from the write; a `Map` written to a string attr
+  became the text `"{}"`, silently. Refused now with *"a value with no json
+  text"*, one ERROR, -1, the attr keeps its value. A key of `undefined` or of a
+  function is still taken (`JSON.stringify()` drops it). `DTP_JSON` is not
+  checked. In every published version. Test `attr_types`.
+- **fix: the json text and the numbers of the parity edges are read as C reads
+  them.** A text nested deeper than 2048 levels (a scalar is a level too) is
+  refused for a dict or a list, as jansson refuses it ("maximum parsing
+  depth"), and stays the text for a `DTP_JSON` (JS parsed it). A number beyond
+  int64 given to a dict or a list is refused as "a real", as in C (`1e20`,
+  `1.5e300` were "an integer"). `9223372036854775807` given as a json number to
+  an integer is taken (JSON.parse() makes it 2^63, which JS refused as out of
+  range). `-0.0`, like `2.0`, stays "an integer" in JS. The parity table has
+  105 cases (92), each with C's outcome and, where JS cannot give it, JS's; the
+  C test `tests/c/attr_types` passes all 105.
+- **fix(masking): a URL or a query %-encoded inside a value is read decoded** (`mask_secrets_inline()`, `json_mask_secrets()`): `next=%2Flogin%3Fpassword%3Dx`, `url=https%3A%2F%2Fbob%3Ax%40host`, `redirect_uri=...%3Ftoken%3Dx` and `%2570assword=x` showed `x`. Decoded twice at most, ASCII only, as the C kernel. In every published version.
+- **fix(masking): `pass`, `pin` and `otp` before the last `&`, `?` or `;` of the word before a `=` or `:` no longer make it a secret's name**: `GET /search?q=boarding+pass&lang=es` gave `lang=********` (7.26.22 to 7.26.24). Measured position by position against 7.26.24 on 438 008 generated texts: what shows is that value and nothing else (1 816 texts); against 7.26.19 nothing more shows than in 7.26.24; C and JS give the same text on all of them and on 30 000 jsons. Tests `secret_masking`.
+
 ## 7.26.24
 
 - **fix(`C_IEVENT_CLI`): a session that is CUT is a WARNING again, and
@@ -25,9 +78,10 @@ about which SDK it was built against.
   raw.** A message that names no service was published as it came, so a name
   that no gclass declares showed unmasked in *"Publish event WITHOUT
   subscribers"* or *"Event NOT DEFINED in state"*. It is published only when a
-  registered gclass declares its event (published under the declared name, as
-  C's `gclass_find_public_event()` gives it); any other is dropped with a
-  WARNING, its name masked. The C transport refuses such a frame when it reads
+  registered gclass declares its event (published under the declared name);
+  any other is dropped with a WARNING, its name masked. (Unlike C's
+  `gclass_find_public_event()`, which this line named, it did not require the
+  declaration to be PUBLIC: fixed in 7.26.25.) The C transport refuses such a frame when it reads
   it. And what the server gets wrong is a WARNING, not an ERROR: an event out
   of session, a role that is not this yuno's, an event the named service does
   not take as public. In every published version. Test `ievent_peer_logs`.

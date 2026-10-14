@@ -684,6 +684,57 @@ function is_secret_name_tail(str, from, to, names)
     return secret_name_check(str, i, to, true, by_segments);
 }
 
+/*
+ *  Is the word from `from` to `to` of `str`, before a '=' or a ':', a
+ *  secret's name, as `names` judges it (its last MASK_MAX_NAME bytes)?
+ *  pass, pin and otp only in its part after its last '&', '?' or ';':
+ *  before it they are words of the value of another parameter
+ *  ("q=boarding+pass&lang=es" masked `es` in gobj-js 7.26.22 to 7.26.24).
+ *  As the C kernel's is_param_name_secret().
+ */
+function param_name_tail_from(str, from, to)
+{
+    let bytes = 0;
+    let i = to;
+    while(i > from) {
+        const code = str.charCodeAt(i - 1);
+        let n = 3;
+        let units = 1;
+        if(code < 0x80) {
+            n = 1;
+        } else if(code < 0x800) {
+            n = 2;
+        } else if(code >= 0xDC00 && code <= 0xDFFF && i - 2 >= from) {
+            const high = str.charCodeAt(i - 2);
+            if(high >= 0xD800 && high <= 0xDBFF) {
+                n = 4;
+                units = 2;
+            }
+        }
+        if(bytes + n > MASK_MAX_NAME) {
+            return -1;      // before the bytes the C kernel judges
+        }
+        if(code === 38 || code === 63 || code === 59) {    // & ? ;
+            return i;
+        }
+        bytes += n;
+        i -= units;
+    }
+    return -1;
+}
+
+function is_param_name_secret(str, from, to, names)
+{
+    const tail = (names === NAMES_NOW)? param_name_tail_from(str, from, to) : -1;
+    if(tail < 0) {
+        return is_secret_name_tail(str, from, to, names);
+    }
+    if(is_secret_name_tail(str, from, to, NAMES_7_26_9)) {
+        return true;
+    }
+    return is_secret_name_tail(str, from, to, NAMES_NOW) && secret_name_check(str, tail, to, false, true);
+}
+
 /************************************************************
  *  Where an unquoted secret value that begins at `p` ends: at
  *  the end, at the quote that closes an outer quoted value, or
@@ -1264,7 +1315,7 @@ function mark_params(str, value_is_secret, reading, marks, judged)
         }
         const name_from = word;
         word = p + 1;
-        const secret = is_secret_name_tail(str, name_from, p, names);
+        const secret = is_param_name_secret(str, name_from, p, names);
         if(secret && names === NAMES_NOW && !not_7_26_9 && !is_secret_name_tail(str, name_from, p, NAMES_7_26_9)) {
             not_7_26_9 = true;
         }
@@ -1617,7 +1668,7 @@ function mark_labels(str, marks)
             p++;
             continue;
         }
-        if(!is_secret_name_tail(str, word, p, NAMES_NOW)) {
+        if(!is_param_name_secret(str, word, p, NAMES_NOW)) {
             p++;
             word = p;
             continue;
@@ -1667,10 +1718,91 @@ function inline_value_is_secret(str, names)
 }
 
 /*
+ *  The rules of now of mask_secrets_inline() -- not the readings of
+ *  released versions --: what a decoded view of the text is judged by
+ *  (mark_decoded_view())
+ */
+function mark_inline_rules_of_now(str, marks)
+{
+    const value_is_secret = inline_value_is_secret(str, NAMES_NOW);
+    const judged = new Uint8Array(str.length);
+    mark_params(str, value_is_secret, READ_NOW, marks, judged);
+    mark_query_params(str, marks, judged);
+    mark_url_passwords(str, marks);
+    mark_shapes(str, marks);
+    mark_labels(str, marks);
+}
+
+/*
+ *  A URL or a query %-encoded inside the value of a parameter
+ *  (redirect_uri=, next=, url=: "next=%2Flogin%3Fpassword%3Dx") is read
+ *  decoded too: a view of `str` with each %XX of an ASCII character (no
+ *  NUL) decoded is judged by the rules of now, and what they mark in it is
+ *  marked on the characters it came from, a %XX whole. Decoded
+ *  MASK_MAX_DECODINGS times at most -- once, and once more for a value
+ *  encoded inside an encoded value ("%253D") --: a bound keeps it linear.
+ *  As the C kernel's mark_decoded_view().
+ */
+const MASK_MAX_DECODINGS = 2;
+
+function encoded_ascii_at(str, p)
+{
+    if(p + 3 > str.length || str.charCodeAt(p) !== 37) {   // '%'
+        return -1;
+    }
+    const hi = hex_digit_value(str.charCodeAt(p + 1));
+    const lo = (hi >= 0)? hex_digit_value(str.charCodeAt(p + 2)) : -1;
+    if(lo < 0) {
+        return -1;
+    }
+    const c = hi*16 + lo;
+    return (c > 0 && c < 0x80)? c : -1;
+}
+
+function mark_decoded_view(str, marks, decodings)
+{
+    if(decodings >= MASK_MAX_DECODINGS) {
+        return;
+    }
+    const pieces = [];
+    let last = 0;
+    let p = str.indexOf("%");
+    while(p >= 0) {
+        const c = encoded_ascii_at(str, p);
+        if(c >= 0) {
+            pieces.push(str.substring(last, p), String.fromCharCode(c));
+            last = p + 3;
+            p = str.indexOf("%", last);
+        } else {
+            p = str.indexOf("%", p + 1);
+        }
+    }
+    if(pieces.length === 0) {
+        return;     // nothing encoded
+    }
+    pieces.push(str.substring(last));
+    const view = pieces.join("");
+
+    const view_marks = new Uint8Array(view.length);
+    mark_inline_rules_of_now(view, view_marks);
+    mark_decoded_view(view, view_marks, decodings + 1);
+
+    let q = 0;
+    for(let i = 0; i < view.length; i++) {
+        const n = (encoded_ascii_at(str, q) >= 0)? 3 : 1;
+        if(view_marks[i]) {
+            mark_range(marks, q, q + n);
+        }
+        q += n;
+    }
+}
+
+/*
  *  The characters of `str` that mask_secrets_inline() masks, marked: each
  *  rule on the text as it came, and the readings of 7.26.19 and of
- *  7.26.20 whole, each one where it can differ from READ_NOW. As the C
- *  kernel's mark_inline_secrets().
+ *  7.26.20 whole, each one where it can differ from READ_NOW; and a view
+ *  of it decoded (mark_decoded_view()). As the C kernel's
+ *  mark_inline_secrets().
  */
 function mark_inline_secrets(str, marks)
 {
@@ -1688,6 +1820,7 @@ function mark_inline_secrets(str, marks)
     mark_url_passwords(str, marks);
     mark_shapes(str, marks);
     mark_labels(str, marks);
+    mark_decoded_view(str, marks, 0);
 }
 
 /************************************************************
@@ -1700,17 +1833,18 @@ function mark_inline_secrets(str, marks)
  *  same for a "name: value", its name in quotes or not (a json, a
  *  header, a label: "password": x, Authorization: Basic x, bearer:
  *  tok); and a JWT or the credential after "Bearer " or "Basic ",
- *  wherever they are, whatever names them. Each rule judges the text
- *  as it came. Return null when there was nothing to mask. As the C
- *  kernel's mask_secrets_inline().
+ *  wherever they are, whatever names them; in a URL or a query
+ *  %-encoded inside a value, the same read decoded (mark_decoded_view()).
+ *  Each rule judges the text as it came. Return null when there was
+ *  nothing to mask. As the C kernel's mask_secrets_inline().
  ************************************************************/
 function mask_secrets_inline(str)
 {
     if(typeof str !== "string") {
         return null;
     }
-    if(str.indexOf("=") < 0 && str.indexOf(":") < 0 && str.indexOf("eyJ") < 0 &&
-            !/bearer|basic/i.test(str)) {
+    if(str.indexOf("=") < 0 && str.indexOf(":") < 0 && str.indexOf("%") < 0 &&
+            str.indexOf("eyJ") < 0 && !/bearer|basic/i.test(str)) {
         return null;    // nothing a secret can begin with
     }
     if(str.length > MASK_MAX_BYTES) {

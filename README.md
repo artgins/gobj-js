@@ -302,12 +302,31 @@ gobj_write_bool_attr(gobj, "selectable", kw.selectable === true);  // false
 
 A value with no json text (a circular object such as a gobj or a DOM node, a
 `BigInt`) given to a string attribute is refused the same way, and is never
-thrown (7.26.24). A json TEXT is read as the C parser reads it: one that C
+thrown (7.26.24). So is a value that is not json ALL THE WAY DOWN given to a
+string, a `DTP_DICT` or a `DTP_LIST` (7.26.25): a cycle anywhere inside, a
+`BigInt` inside (`[1n]`), a `Map`, a `Set`, a `Date`, a typed array, an instance
+of a class. They were written, and burst (or turned into `"{}"`) when the value
+was serialized, far from the write. A key whose value is `undefined` or a
+function is dropped, as `JSON.stringify()` drops it:
+
+```javascript
+gobj_write_attr(gobj, "settings", {a: 1, b: undefined});    // 0: b goes when serialized
+gobj_write_attr(gobj, "settings", new Map([["a", 1]]));     // -1, ERROR "a value with no json text"
+gobj_write_str_attr(gobj, "name", new Map());               // -1: it was the text "{}"
+```
+
+A `DTP_JSON` attribute is not checked: it takes any value, as before.
+
+A json TEXT is read as the C parser reads it: one that C
 refuses is refused in JS too -- an escaped NUL (`"\u0000"`), a lone surrogate,
 an integer out of int64, a real that overflows (`1e309`; to a `DTP_JSON` it is
-the text `"1e309"`, not `Infinity`). Two differences remain, because a JS number
-cannot carry them: an integer beyond 2^53 is rounded, and `2.0` is the integer
-2 (see `tests/fixtures/attr_types_parity.json`).
+the text `"1e309"`, not `Infinity`), a text nested deeper than 2048 levels (a
+scalar is a level too; 7.26.25). A number beyond int64 is "a real" to a dict,
+as in C (`1e20`), and `9223372036854775807` is taken by an integer (JSON.parse()
+makes it 2^63, kept as such). Two differences remain, because a JS number
+cannot carry them: an integer beyond 2^53 is rounded, and `2.0` (and `-0.0`) is
+the integer (see `tests/fixtures/attr_types_parity.json`, which the C test
+`tests/c/attr_types` of yunetas reads too).
 
 ### Events & Pub-Sub
 
@@ -1014,7 +1033,14 @@ Key attributes: `url`, `jwt`, `wanted_yuno_role`, `wanted_yuno_name`, `wanted_yu
 
 Its events (`EV_ON_OPEN`, `EV_ON_CLOSE`, `EV_ON_OPEN_ERROR`, `EV_ON_ID_NAK` and every message that names no service) are PUBLISHED: to the `subscriber` attr, else, for a pure child, to its parent, which it subscribes in `mt_create` — one subscription, as the C transport. Up to 7.26.21 a pure child SENT three of them to its parent and subscribed nobody, so its parent never heard `EV_ON_CLOSE` / `EV_ON_OPEN_ERROR`: a host of a pure child must declare both in its FSM (BREAKING in 7.26.22).
 
-A message that names no service is published only when its event is declared by some registered gclass (`gobj_find_event_type()`); any other is dropped with a WARNING, its name masked (7.26.24). What the server gets wrong is a WARNING, never an ERROR. Before the session only `EV_IDENTITY_CARD_ACK` is taken; a `dst_role` or `dst_yuno` that is not this yuno's closes the channel too (an empty one is legal: anybody's), as the C transport does; an event that the named service does not take as public is dropped (7.26.24).
+A message that names no service is published only when its event is declared PUBLIC by some registered gclass (`gobj_find_event_type(name, EVF_PUBLIC_EVENT)`, as C's `gclass_find_public_event()`; 7.26.24 took any declaration, 7.26.25 requires it public); any other is dropped with a WARNING, its name masked. The events the transport says itself (`EV_ON_OPEN`, `EV_ON_CLOSE`, `EV_ON_OPEN_ERROR`, `EV_ON_ID_NAK`, `EV_TIMEOUT`, `EV_ON_MESSAGE`, and `EV_IDENTITY_CARD_ACK` in session) are never taken from the server, in any case of letters and whatever service the message names: a WARNING, dropped (7.26.25). A backend event an app receives must therefore be declared `EVF_PUBLIC_EVENT` in the gclass that receives it:
+
+```javascript
+const event_types = [
+    ["EV_MT_COMMAND_ANSWER",    event_flag_t.EVF_PUBLIC_EVENT],
+    ["EV_REALTIME_ALARM",       event_flag_t.EVF_PUBLIC_EVENT],
+];
+``` What the server gets wrong is a WARNING, never an ERROR. Before the session only `EV_IDENTITY_CARD_ACK` is taken; a `dst_role` or `dst_yuno` that is not this yuno's closes the channel too (an empty one is legal: anybody's), as the C transport does; an event that the named service does not take as public is dropped (7.26.24). A channel closed for a fault of the server is closed with **4002**, not 1000 (a browser may send only 1000 or 3000-4999, so 1002 cannot be used), so `EV_ON_CLOSE` says the session was cut (7.26.25).
 
 `EV_ON_CLOSE` carries `code`, `reason` (masked) and `was_clean`, and so does `EV_ON_OPEN_ERROR` (7.26.24). A session that ends cleanly (a stop, a logout, the server closing with 1000 or 1001) is logged by nobody; a session CUT -- not clean, or any other code (1006, 1008, 1011) -- is one WARNING with the code and the reason masked:
 
@@ -1038,7 +1064,9 @@ naming services it does not host.
 what breaks lockstep, so N links that dropped together do not stampede a backend
 that is just coming back. The backoff resets when a session is actually reached,
 and on `mt_start` — a deliberate reconnect never inherits a previous run's
-penalty. For the old fixed-interval behaviour set `timeout_retry_max` equal to
+penalty. A session the transport closes for a fault of the server (4002) does not
+count as reached: the backoff goes on from where it was (7.26.25), so a server
+that breaks every session is not reconnected at the first delay for ever. For the old fixed-interval behaviour set `timeout_retry_max` equal to
 `timeout_retry`.
 
 ---

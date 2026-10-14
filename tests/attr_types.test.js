@@ -85,7 +85,10 @@ beforeAll(() => {
 
 describe("the parity table: the same inputs, the same outcomes as in C", () => {
     for(const c of parity.cases) {
-        const shown = JSON.stringify(c.value);
+        let shown = JSON.stringify(c.value);
+        if(shown.length > 60) {
+            shown = `${shown.substring(0, 40)}... (${shown.length} characters)`;
+        }
         test(`${c.type} given ${shown}`, () => {
             const r = command_parameter_from_json(TYPES[c.type], c.value);
             const outcome = c.js || c;     // the outcome of C, unless JS cannot give it
@@ -268,6 +271,75 @@ describe("json2item(): the kw of gobj_create(), gobj_write_attrs()", () => {
             expect(errors.length, label).toBe(1);
             expect(errors[0], label).toContain(`attr '${attr}'`);
         }
+    });
+
+    test("a value that is not json is refused for a dict, a list or a string, at the write", () => {
+        const gobj = gobj_create("not_json", "C_TEST_ATTR_TYPES",
+            {name: "kept", items: [1], settings: {a: 1}}, yuno);
+        const circular = {};
+        circular.self = circular;
+        const deep_circular = {a: [{}]};
+        deep_circular.a[0].back = deep_circular;
+        const values = [
+            ["a circular object", circular],
+            ["a cycle deep inside", deep_circular],
+            ["a gobj", gobj],
+            ["a Map", new Map([["a", 1]])],
+            ["a Set", new Set([1])],
+            ["a Date", new Date(0)],
+            ["a BigInt inside", [1n]],
+            ["a Map inside", {m: new Map()}],
+        ];
+        for(const [label, value] of values) {
+            for(const [attr, kept, write] of [
+                ["settings", {a: 1}, () => gobj_write_attr(gobj, "settings", value)],
+                ["items", [1], () => gobj_write_attrs(gobj, {items: value}, -1, gobj)],
+                ["name", "kept", () => gobj_write_str_attr(gobj, "name", value)],
+                ["name", "kept", () => gobj_write_attr(gobj, "name", value)],
+            ]) {
+                if(attr === "settings" && Array.isArray(value)) {
+                    continue;   // the wrong shape: refused as "an array"
+                }
+                if(attr === "items" && !Array.isArray(value)) {
+                    continue;
+                }
+                errors.length = 0;
+                let ret;
+                expect(() => {
+                    ret = write();
+                }, `${label} to ${attr}`).not.toThrow();
+                expect(ret, `${label} to ${attr}`).toBeLessThan(0);
+                expect(gobj_read_attr(gobj, attr), `${label} to ${attr}`).toEqual(kept);
+                expect(errors.length, `${label} to ${attr}`).toBe(1);
+                expect(errors[0], `${label} to ${attr}`).toContain("got a value with no json text");
+            }
+        }
+
+        errors.length = 0;
+        const shared = {x: 1};
+        expect(gobj_write_attr(gobj, "settings", {a: shared, b: shared, c: undefined})).toBe(0);
+        expect(gobj_write_attr(gobj, "items", [shared, [shared]])).toBe(0);
+        expect(gobj_write_attr(gobj, "settings", Object.assign(Object.create(null), {n: 1}))).toBe(0);
+        expect(errors).toEqual([]);
+    });
+
+    test("a json text deeper than 2048 levels is refused for a dict or a list, as jansson refuses it", () => {
+        const nest = (n, inner) => "[".repeat(n) + inner + "]".repeat(n);
+        const at_limit = nest(2048, "");
+        const over = nest(2049, "");
+        const scalar_over = nest(2048, "1");    // a scalar is a level too
+        expect(command_parameter_from_json(data_type_t.DTP_LIST, at_limit).refused).toBe(null);
+        expect(command_parameter_from_json(data_type_t.DTP_LIST, nest(2047, "1")).refused).toBe(null);
+        expect(command_parameter_from_json(data_type_t.DTP_LIST, over).refused)
+            .toBe("a text that does not read as one");
+        expect(command_parameter_from_json(data_type_t.DTP_LIST, scalar_over).refused)
+            .toBe("a text that does not read as one");
+        const dict_over = "{\"a\": ".repeat(2048) + "1" + "}".repeat(2048);
+        const dict_at = "{\"a\": ".repeat(2047) + "1" + "}".repeat(2047);
+        expect(command_parameter_from_json(data_type_t.DTP_DICT, dict_over).refused)
+            .toBe("a text that does not read as one");
+        expect(command_parameter_from_json(data_type_t.DTP_DICT, dict_at).refused).toBe(null);
+        expect(command_parameter_from_json(data_type_t.DTP_JSON, over).value).toBe(over);
     });
 
     test("an explicit write of no value to a boolean or a real is refused, the attr keeps its value", () => {

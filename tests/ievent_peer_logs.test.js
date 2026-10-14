@@ -16,7 +16,13 @@
  *          declares, is dropped with a WARNING, its name masked: it was
  *          published as it came, and its name reached the log raw in
  *          "Publish event WITHOUT subscribers" or "Event NOT DEFINED in
- *          state".
+ *          state";
+ *        - and so is one of an event no gclass declares PUBLIC, as the C
+ *          transport refuses it (gclass_find_public_event()): it was
+ *          published to the app as if the transport had said it;
+ *        - the events the transport says ITSELF (EV_ON_OPEN, EV_ON_CLOSE,
+ *          EV_ON_ID_NAK, EV_TIMEOUT...) are never taken from the server,
+ *          in any case of letters, whoever else declares them public.
  *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
@@ -24,6 +30,7 @@
 import { describe, test, expect, beforeAll, beforeEach } from "vitest";
 import {
     SDATA_END,
+    event_flag_t,
     gclass_create,
     gobj_subscribe_event,
     gobj_create_pure_child,
@@ -56,7 +63,12 @@ beforeAll(() => {
     register_c_ievent_cli();
     gclass_create(
         "C_PROBE_PEER_LISTENER",
-        [["EV_PEER_DECLARED", 0], ["EV_PEER_NOT_PUBLIC", 0]],
+        [
+            ["EV_PEER_DECLARED", event_flag_t.EVF_PUBLIC_EVENT],
+            ["EV_PEER_NOT_PUBLIC", 0],
+            ["EV_ON_OPEN", 0], ["EV_ON_CLOSE", 0], ["EV_ON_OPEN_ERROR", 0],
+            ["EV_ON_ID_NAK", 0], ["EV_TIMEOUT", 0], ["EV_ON_MESSAGE", 0],
+        ],
         [["ST_IDLE", [
             ["EV_PEER_DECLARED", (g, ev, kw) => {
                 heard.push(ev);
@@ -66,6 +78,11 @@ beforeAll(() => {
                 heard.push(ev);
                 return 0;
             }, null],
+            ...["EV_ON_OPEN", "EV_ON_CLOSE", "EV_ON_OPEN_ERROR", "EV_ON_ID_NAK", "EV_TIMEOUT", "EV_ON_MESSAGE"]
+                .map(name => [name, (g, ev, kw) => {
+                    heard.push(ev);
+                    return 0;
+                }, null]),
         ]]],
         {}, 0, [SDATA_END()], {}, 0, 0, 0, 0
     );
@@ -259,7 +276,46 @@ describe("what the server gets wrong is a warning, and what no gclass declares i
         expect(shown("ud2-hunter2")).toEqual([]);
     });
 
-    test("a message to no service, of an event some gclass declares: published", () => {
+    test("a message to no service, of an event declared but not public: dropped, a WARNING", () => {
+        const ievent = make_transport("t_not_public_no_svc", true);
+        const listener = gobj_create_pure_child("t_not_public_no_svc_listener", "C_PROBE_PEER_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        receive(ievent, JSON.stringify({event: "EV_PEER_NOT_PUBLIC", kw: iev_kw("")}));
+        expect(heard).toEqual([]);
+        expect(logged.filter(l => /^warning: .*no gclass declares public.*DROPPED/.test(l)).length).toBe(1);
+        expect(errors()).toEqual([]);
+    });
+
+    test("the events the transport says itself are never taken from the server", () => {
+        gclass_create(
+            "C_PROBE_PUBLIC_ON_OPEN",   // as C's C_PROT_HTTP_SR declares them
+            [["EV_ON_OPEN", event_flag_t.EVF_PUBLIC_EVENT], ["EV_ON_CLOSE", event_flag_t.EVF_PUBLIC_EVENT]],
+            [["ST_IDLE", [
+                ["EV_ON_OPEN", () => 0, null],
+                ["EV_ON_CLOSE", () => 0, null],
+            ]]],
+            {}, 0, [SDATA_END()], {}, 0, 0, 0, 0
+        );
+        logged = [];
+        const ievent = make_transport("t_own_events", true);
+        const listener = gobj_create_pure_child("t_own_events_listener", "C_PROBE_PEER_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        const names = ["EV_ON_OPEN", "EV_ON_CLOSE", "EV_ON_OPEN_ERROR", "EV_ON_ID_NAK", "EV_TIMEOUT",
+            "EV_ON_MESSAGE", "ev_on_open", "Ev_On_Close", "EV_IDENTITY_CARD_ACK"];
+        for(const name of names) {
+            receive(ievent, JSON.stringify({event: name,
+                kw: {...iev_kw(""), username: "intruder", services_roles: {all: ["root"]}}}));
+        }
+        expect(heard).toEqual([]);
+        expect(logged.filter(l => /^warning: .*event of the transport itself.*DROPPED/.test(l)).length)
+            .toBe(names.length);
+        expect(errors()).toEqual([]);
+        expect(ievent.priv.inform_on_close).toBeFalsy();
+    });
+
+    test("a message to no service, of an event some gclass declares public: published", () => {
         const ievent = make_transport("t_declared", true);
         const listener = gobj_create_pure_child("t_declared_listener", "C_PROBE_PEER_LISTENER", {}, ievent);
         gobj_start(listener);

@@ -1054,21 +1054,65 @@ const JSON_NUMBER_TOKEN = /-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/y;
  *  Does the C parser refuse a json text that JSON.parse() accepts? jansson
  *  refuses, where JSON.parse() reads on: an escaped NUL ("\u0000", without
  *  JSON_ALLOW_NUL), a lone surrogate, an integer out of int64 ("too big
- *  integer") and a real that overflows (1e309 is Infinity to JSON.parse()).
- *  `s` is a text JSON.parse() accepted: only strings and numbers are read.
+ *  integer"), a real that overflows (1e309 is Infinity to JSON.parse()),
+ *  and a text nested deeper than 2048 levels ("maximum parsing depth
+ *  reached"). `s` is a text JSON.parse() accepted: its structure is right.
  */
 function is_surrogate_pair(high, low)
 {
     return high >= 0xD800 && high <= 0xDBFF && low >= 0xDC00 && low <= 0xDFFF;
 }
 
+const JSON_MAX_DEPTH = 2048;   // jansson's JSON_PARSER_MAX_DEPTH: a scalar is a level too
+
 function json_text_refused_by_c(s)
 {
     const n = s.length;
     let i = 0;
+    let depth = 0;
+    const in_object = [];
+    let key_next = false;
     while(i < n) {
         const c = s.charCodeAt(i);
+        if(c === 0x7B || c === 0x5B) {     // { [
+            depth++;
+            if(depth > JSON_MAX_DEPTH) {
+                return true;
+            }
+            in_object.push(c === 0x7B);
+            key_next = (c === 0x7B);
+            i++;
+            continue;
+        }
+        if(c === 0x7D || c === 0x5D) {     // } ]
+            depth--;
+            in_object.pop();
+            key_next = false;
+            i++;
+            continue;
+        }
+        if(c === 0x2C) {                   // ,
+            key_next = in_object.length > 0 && in_object[in_object.length - 1];
+            i++;
+            continue;
+        }
+        if(c === 0x3A) {                   // :
+            key_next = false;
+            i++;
+            continue;
+        }
+        if(c === 0x74 || c === 0x66 || c === 0x6E) {   // true false null
+            if(depth + 1 > JSON_MAX_DEPTH) {
+                return true;
+            }
+            i += (c === 0x66)? 5 : 4;
+            continue;
+        }
         if(c === 0x22) {
+            if(!key_next && depth + 1 > JSON_MAX_DEPTH) {
+                return true;
+            }
+            key_next = false;
             i++;
             while(i < n) {
                 const d = s.charCodeAt(i);
@@ -1109,6 +1153,9 @@ function json_text_refused_by_c(s)
             continue;
         }
         if(c === 0x2D || (c >= 0x30 && c <= 0x39)) {
+            if(depth + 1 > JSON_MAX_DEPTH) {
+                return true;
+            }
             JSON_NUMBER_TOKEN.lastIndex = i;
             const m = JSON_NUMBER_TOKEN.exec(s);
             if(!m) {
@@ -1180,7 +1227,9 @@ function shape_of_value(value)
         return REFUSED_TEXT;
     }
     if(typeof value === "number") {
-        return Number.isInteger(value)? "an integer" : "a real";
+        /*  Beyond int64 a json number is a real to C, whatever its digits  */
+        return (Number.isInteger(value) && Math.abs(value) <= 9223372036854775808)?
+            "an integer" : "a real";
     }
     if(typeof value === "boolean") {
         return "a boolean";
@@ -1207,7 +1256,8 @@ function number_as_type(type, value)
     if(typeof value === "boolean") {
         return {value: value? 1 : 0, refused: null};
     }
-    if(!(value >= -9223372036854775808 && value < 9223372036854775808)) {
+    /*  2^63 included: it is what JSON.parse() makes of 9223372036854775807  */
+    if(!(value >= -9223372036854775808 && value <= 9223372036854775808)) {
         return {value: undefined, refused: "a number out of its range"};
     }
     if(!Number.isInteger(value)) {
@@ -1341,6 +1391,9 @@ function command_parameter_from_json(type, value)
     if(DTP_IS_NUMBER(type)) {
         return number_as_type(type, value);
     }
+    if(!is_json_value(value)) {
+        return {value: undefined, refused: NO_JSON_TEXT};
+    }
     return {value: value, refused: null};
 }
 
@@ -1359,14 +1412,71 @@ const TYPES_READ = [
 ];
 
 /*
+ *  Is `value` json, all the way down: plain objects (or of no prototype),
+ *  arrays, strings, numbers, booleans and null, with no cycle. Its keys of
+ *  undefined or of a function are dropped by JSON.stringify(), as an absent
+ *  key. A cycle, a BigInt, a Map, a Set, a Date, a typed array or an
+ *  instance of a class (a gobj, a DOM node) is not: it bursts, or changes,
+ *  when it is serialized, far from the write. Walked without recursion,
+ *  so no depth overflows the check itself.
+ */
+const LEAVE_NODE = Symbol("leave");
+
+function is_json_value(value)
+{
+    const on_path = new Set();
+    const stack = [value];
+    while(stack.length) {
+        const v = stack.pop();
+        if(v === LEAVE_NODE) {
+            on_path.delete(stack.pop());
+            continue;
+        }
+        if(typeof v === "bigint") {
+            return false;
+        }
+        if(v === null || typeof v !== "object") {
+            continue;
+        }
+        if(on_path.has(v)) {
+            return false;
+        }
+        const array = Array.isArray(v);
+        if(!array) {
+            const proto = Object.getPrototypeOf(v);
+            if(proto !== Object.prototype && proto !== null) {
+                return false;
+            }
+        }
+        on_path.add(v);
+        stack.push(v, LEAVE_NODE);
+        if(array) {
+            for(let i = 0; i < v.length; i++) {
+                stack.push(v[i]);
+            }
+        } else {
+            for(const key of Object.keys(v)) {
+                stack.push(v[key]);
+            }
+        }
+    }
+    return true;
+}
+
+/*
  *  The json text of a value, undefined when it has none: a circular
- *  object (a gobj, a DOM node), a BigInt, a function. JSON.stringify()
- *  throws for the first two.
+ *  object (a gobj, a DOM node), a BigInt, a function, an object that is
+ *  not a plain one (a Map or a Set is "{}" to JSON.stringify(), a Date a
+ *  string: neither is the value). JSON.stringify() throws for the first
+ *  two.
  */
 const NO_JSON_TEXT = "a value with no json text";
 
 function json_text_of(value)
 {
+    if(!is_json_value(value)) {
+        return undefined;
+    }
     try {
         const s = JSON.stringify(value);
         return is_string(s)? s : undefined;

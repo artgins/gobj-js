@@ -151,6 +151,7 @@ let PRIVATE_DATA = {
     inside_on_open:     false,  // avoid duplicates, no subscriptions while in on_open,
                                 // they will send in resend_subscriptions
     retry_ms:           0,      // current backoff (0 = none yet); see next_retry()
+    retry_ms_before_session: 0, // the backoff the ack reset; see close_for_peer_fault()
 };
 
 let __gclass__ = null;
@@ -233,6 +234,7 @@ function mt_start(gobj)
     /*  Starting is a deliberate act (the operator pressed connect): it must
      *  not inherit the backoff a previous run had escalated to.  */
     priv.retry_ms = 0;
+    priv.retry_ms_before_session = 0;
 
     if(gobj_current_state(gobj) !== "ST_DISCONNECTED") {
         /*
@@ -705,6 +707,32 @@ function close_websocket(gobj, code = 1000, reason = "")
     } catch (e) {
         log_error(`${gobj_short_name(gobj)}: Error closing WebSocket: ${e.message}`);
     }
+}
+
+/***************************************************************
+ *  Close the channel for a fault of the server: a message for a role
+ *  or a yuno that is not this one, an event out of its place.
+ *
+ *  Not with 1000: EV_ON_CLOSE would say the session ended well. A
+ *  browser closes a WebSocket only with 1000 or 3000-4999 (1002, the
+ *  protocol error, throws there), so it is 4002 -- and the server
+ *  echoes it, so EV_ON_CLOSE carries it.
+ *
+ *  And a session the server broke was not a session reached: the
+ *  backoff the ack reset is put back, or a server that breaks every
+ *  session is reconnected at the first delay for ever, with an
+ *  EV_ON_OPEN and an EV_ON_CLOSE in the app per round.
+ ***************************************************************/
+const CLOSE_PEER_FAULT = 4002;
+
+function close_for_peer_fault(gobj, reason)
+{
+    let priv = gobj.priv;
+
+    if(gobj_current_state(gobj) === "ST_SESSION") {
+        priv.retry_ms = priv.retry_ms_before_session;
+    }
+    close_websocket(gobj, CLOSE_PEER_FAULT, reason);
 }
 
 /***************************************************************
@@ -1199,7 +1227,8 @@ function ac_on_close(gobj, event, kw, src)
  *
  *  Reset to zero when a session is actually reached
  *  (ac_identity_card_ack), so a link that flaps once does not carry a
- *  minute-long penalty into its next real drop.
+ *  minute-long penalty into its next real drop -- and put back when the
+ *  server breaks that session (close_for_peer_fault()).
  ***************************************************************/
 function next_retry(gobj)
 {
@@ -1285,7 +1314,9 @@ function ac_identity_card_ack(gobj, event, kw, src)
         /*
          *  A session was reached: the backoff starts over. A link that flaps
          *  once must not carry a minute-long penalty into its next real drop.
+         *  Kept, for a session the server breaks (close_for_peer_fault()).
          */
+        priv.retry_ms_before_session = priv.retry_ms;
         priv.retry_ms = 0;
 
         if(!priv.inform_on_close) {
@@ -1376,7 +1407,7 @@ function ac_on_message(gobj, event, kw, src)
             log_warning(`${gobj_short_name(gobj)}: event UNKNOWN in not-session state ` +
                 `${peer_text_shown(iev_event, PEER_NAME_SHOWN)}`);
         }
-        close_websocket(gobj);
+        close_for_peer_fault(gobj, "event out of session");
         return -1;
     }
 
@@ -1404,7 +1435,7 @@ function ac_on_message(gobj, event, kw, src)
         log_warning(`${gobj_short_name(gobj)}: It's not my role, ` +
             `dst_role: ${peer_text_shown(iev_dst_role, PEER_NAME_SHOWN)}, ` +
             `my_role: ${gobj_yuno_role()}, event: ${peer_text_shown(iev_event, PEER_NAME_SHOWN)}`);
-        close_websocket(gobj);
+        close_for_peer_fault(gobj, "not my role");
         return -1;
     }
     let iev_dst_yuno = kw_get_str(gobj, event_id, "dst_yuno", "");
@@ -1413,7 +1444,7 @@ function ac_on_message(gobj, event, kw, src)
         log_warning(`${gobj_short_name(gobj)}: It's not my name, ` +
             `dst_yuno: ${peer_text_shown(iev_dst_yuno, PEER_NAME_SHOWN)}, ` +
             `my_name: ${gobj_yuno_name()}, event: ${peer_text_shown(iev_event, PEER_NAME_SHOWN)}`);
-        close_websocket(gobj);
+        close_for_peer_fault(gobj, "not my name");
         return -1;
     }
 
@@ -1454,12 +1485,27 @@ function ac_on_message(gobj, event, kw, src)
 
     /*-------------------------------------------------------*
      *  Filter public events of this gobj
+     *
+     *  The transport's own names, in any case of letters: of them
+     *  the server sends only the public ones this state takes
+     *  (EV_MT_STATS, EV_MT_COMMAND). What the transport says ITSELF
+     *  (EV_ON_OPEN, EV_ON_CLOSE, EV_ON_ID_NAK, EV_TIMEOUT...) was
+     *  published to the app as if it came from here, with the kw
+     *  the server chose -- whoever else declares it public.
      *-------------------------------------------------------*/
-    if(gobj_has_event(gobj, iev_event, event_flag_t.EVF_PUBLIC_EVENT)) {
+    const declared = gobj_find_event_type(iev_event, 0, false);
+    if(declared && gobj_has_event(gobj, declared.event_name, 0)) {
+        const own_event = declared.event_name;
+        if(!gobj_has_event(gobj, own_event, event_flag_t.EVF_PUBLIC_EVENT) ||
+                own_event === "EV_IDENTITY_CARD_ACK") {     // the ack belongs before the session
+            log_warning(`${gobj_short_name(gobj)}: event of the transport itself, or out of its place, ` +
+                `DROPPED: ev '${peer_text_shown(iev_event, PEER_NAME_SHOWN)}'`);
+            return -1;
+        }
         /*
          *  It's mine (I manage inter-command and inter-stats)
          */
-        gobj_send_event(gobj, iev_event, iev_kw, gobj);
+        gobj_send_event(gobj, own_event, iev_kw, gobj);
         return 0;
     }
 
@@ -1511,15 +1557,16 @@ function ac_on_message(gobj, event, kw, src)
      *  so it belongs to whoever subscribed here. This is the path the
      *  check above protects, not one it replaces.
      *
-     *  Only an event that some gclass declares: a name nobody declares
-     *  is the server's text, and published it reached the log raw
-     *  ("Publish event WITHOUT subscribers", "Event NOT DEFINED in
-     *  state"). The C transport refuses it when it reads the frame
-     *  (iev_create_from_gbuffer()).
+     *  Only an event that some gclass declares PUBLIC, as the C
+     *  transport reads the frame (gclass_find_public_event() in
+     *  iev_create_from_gbuffer()): a name nobody declares is the
+     *  server's text, and published it reached the log raw ("Publish
+     *  event WITHOUT subscribers", "Event NOT DEFINED in state"); one
+     *  declared but not public is not the API of anybody.
      */
-    let event_type = gobj_find_event_type(iev_event, 0, false);
+    let event_type = gobj_find_event_type(iev_event, event_flag_t.EVF_PUBLIC_EVENT, false);
     if(!event_type) {
-        log_warning(`${gobj_short_name(gobj)}: event that no gclass declares, DROPPED: ` +
+        log_warning(`${gobj_short_name(gobj)}: event that no gclass declares public, DROPPED: ` +
             `ev '${peer_text_shown(iev_event, PEER_NAME_SHOWN)}'`);
         return -1;
     }
@@ -1650,7 +1697,7 @@ function create_gclass(gclass_name)
     const event_types = [
         ["EV_ON_MESSAGE",           event_flag_t.EVF_OUTPUT_EVENT],
         ["EV_IDENTITY_CARD_ACK",    event_flag_t.EVF_PUBLIC_EVENT],
-        ["EV_ON_ID_NAK",            event_flag_t.EVF_PUBLIC_EVENT|event_flag_t.EVF_OUTPUT_EVENT],
+        ["EV_ON_ID_NAK",            event_flag_t.EVF_OUTPUT_EVENT],
 
         ["EV_MT_STATS",             event_flag_t.EVF_PUBLIC_EVENT],
         ["EV_MT_COMMAND",           event_flag_t.EVF_PUBLIC_EVENT],
