@@ -74,7 +74,8 @@ const V24_SHAPES = [
     ["bearer: tok", "bearer: ********"],
     ["x eyJhbGciOiJSU0EtT0FFUCJ9.OKOawDo.48V1_ALb.5eym8TW.XFBoMYUZ y", "x ******** y"],
     ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0ZX", "********"],
-    ["the jwt eyJhbGciOiJIUzI1NiJ9.", "the jwt ********."],
+    ["the jwt eyJhbGciOiJIUzI1NiJ9.", null],     // its only dot ends the sentence: a header
+    ["the jwt eyJhbGciOiJIUzI1NiJ9.eyJ", "the jwt ********"],     // cut after its header
     ["eyJhbGciOiJIUzI1NiJ9", null],
     ["token=Bearer abc x=1", "token=******** x=1"],
     ["password=Basic xyz", "password=********"],
@@ -100,6 +101,20 @@ const V24_SHAPES = [
     ["password12:30command='sr5-hunter2' y", "password12:******** y"],
     ["update-node x='{\\\"password\\\":\\\"sr6-hunter2\\\"}'",
      "update-node x='{\\\"password\\\":********}'"],
+
+    /*
+     *  gobj-js 7.26.22: a secret's name in a query string, after a word
+     *  that is no secret's name ("file" is about a credential); what
+     *  7.26.19 masked after the value of a name of a segment (pass, pin);
+     *  a scheme and its credential under a secret's name, whole
+     */
+    ["GET https://my-file-server.com/get?token=qs1-hunter2&x=1",
+     "GET https://my-file-server.com/get?token=********&x=1"],
+    ["https://cdn.public.example/x?access_token=qs2-hunter2", "https://cdn.public.example/x?access_token=********"],
+    ["db_pass='password'=qs3-hunter2", "db_pass=********=********"],
+    ["pin='token=qs4'hunter2 x", "pin=********"],
+    ["password=Basic qs5hunter2==", "password=********"],
+    ["eyJhIjoxfQ. eyJhIjoxfQ..", null],  // headers whose dots end them
 ];
 
 let lines = [];
@@ -275,6 +290,26 @@ describe("a secret by its value, and pass/pin/otp as whole segments (the C kerne
         expect(shown.nul).toBe("a password=********");     // as C: the NUL shown as a blank
     });
 
+    test("json_mask_secrets(): a token in the query of a url", () => {
+        const shown = json_mask_secrets({url: "https://cdn.public.example/x?access_token=urljson-hunter2"});
+        expect(shown.url).toBe("https://cdn.public.example/x?access_token=********");
+    });
+
+    test("a name is judged as the C kernel judges it: its last 128 BYTES, its case folded in ASCII", () => {
+        // 5 + 124 + 9 bytes: C judges the last 128, without "file_"
+        const long_name = "file_" + "\u00e9".repeat(62) + "_password";
+        expect(mask_secrets_inline(long_name + "=hunter2")).toBe(long_name + "=********");
+        expect(json_mask_secrets({[long_name]: "hunter2"})[long_name]).toBe("********");
+        // 2 + 5 + 116 + 6 bytes: the cut falls inside the e-acute, and what
+        // is left of it is no joiner: "<byte>file" is no segment "file"
+        const cut_name = "\u00e9file_" + "a".repeat(116) + "_token";
+        expect(mask_secrets_inline(cut_name + "=hunter2")).toBe(cut_name + "=********");
+        // the Kelvin sign is no 'k' (C folds ASCII only)
+        expect(is_secret_name("to\u212aen")).toBe(false);
+        expect(mask_secrets_inline("to\u212aen=hunter2")).toBe(null);
+        expect(is_secret_name("TOKEN")).toBe(true);
+    });
+
     test("json_mask_secrets(): a key with a NUL is judged by all of it, as C (V24.4)", () => {
         const shown = json_mask_secrets({"a\u0000password": "nulkey-hunter2", note: "visible"});
         expect(shown["a\u0000password"]).toBe("********");
@@ -365,37 +400,53 @@ describe("only json is walked, and masking never throws", () => {
 
 describe("masking is linear and bounded", () => {
     /*
-     *  Linear, these take ~20-50 ms; quadratic, tens of seconds. The bound
-     *  (500 ms) leaves room for a loaded machine, not for a quadratic walk.
+     *  Each shape is masked at 256 KB and at 1 MB, the best of three runs
+     *  of each: linear, the 1 MB takes about 4 times as long; quadratic,
+     *  16 times. A ratio, not a time: a cap of 500 ms failed on a loaded
+     *  machine (815 ms), and a load slows both sizes alike. A run under
+     *  2 ms is taken as 2 ms, so that the noise of the smallest timer
+     *  readings is no ratio. On an idle machine 1 MB of the slowest shape
+     *  here ("abcd=") takes 50-80 ms; quadratic, it would not end in the
+     *  20 s of the test.
      */
-    test("a 1 MB a=a=... word and a 1 MB secret value take milliseconds", () => {
-        for(const word of ["a=".repeat(512*1024), "abcd=".repeat(210*1024)]) {
-            let t0 = performance.now();
-            expect(mask_secrets_inline(word)).toBe(null);
-            let t1 = performance.now();
-            expect(t1 - t0).toBeLessThan(500);
-            t0 = performance.now();
-            json_mask_secrets({anything: word});
-            t1 = performance.now();
-            expect(t1 - t0).toBeLessThan(500);
+    function best_ms(fn)
+    {
+        let best = Infinity;
+        for(let r = 0; r < 3; r++) {
+            const t0 = performance.now();
+            fn();
+            best = Math.min(best, performance.now() - t0);
+        }
+        return Math.max(best, 2);
+    }
+
+    function check_linear(what, unit, mask)
+    {
+        const small = unit.repeat(Math.floor(256*1024 / unit.length));
+        const large = unit.repeat(Math.floor(1024*1024 / unit.length));
+        mask(small);    // the first run compiles
+        const ratio = best_ms(() => mask(large)) / best_ms(() => mask(small));
+        expect(ratio, `${what} of "${unit}"`).toBeLessThan(8);
+    }
+
+    test("a 1 MB a=a=... word and a 1 MB secret value take a time linear in their size", () => {
+        expect(mask_secrets_inline("a=".repeat(512*1024))).toBe(null);
+        expect(mask_secrets_inline("abcd=".repeat(210*1024))).toBe(null);
+        for(const unit of ["a=", "abcd=", " attribute=", "pin=\"", "abc?token=x&"]) {
+            check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));
+            check_linear("json_mask_secrets()", unit, (text) => json_mask_secrets({anything: text}));
         }
 
         // and the shapes of V24.4, as in C: a scheme word repeated, ':' after
-        // secrets' names, a container that does not close
-        for(const pattern of ["Bearer ", "basic ", "token:", "\"pin\": {["]) {
-            const text = pattern.repeat(Math.floor(1024*1024 / pattern.length));
-            let t0 = performance.now();
-            mask_secrets_inline(text);
-            let t1 = performance.now();
-            expect(t1 - t0, pattern).toBeLessThan(500);
+        // secrets' names, a container that does not close, a JWT's dots
+        for(const unit of ["Bearer ", "basic ", "token:", "\"pin\": {[", "eyJ.", "x-auth-token: \\\""]) {
+            check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));
         }
 
         const value = "password=" + "x".repeat(1024*1024);
-        let t0 = performance.now();
         expect(mask_secrets_inline(value)).toBe("password=********");
-        let t1 = performance.now();
-        expect(t1 - t0).toBeLessThan(500);
-    }, 10000);
+        check_linear("a secret value", "x", (text) => mask_secrets_inline("password=" + text));
+    }, 20000);
 
     test("a text over 4 MB is not shown, and nothing is shown past the cap", () => {
         const huge = "a=b " + "x".repeat(5*1024*1024);

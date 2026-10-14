@@ -94,10 +94,14 @@ function mt_create(gobj)
     let priv = gobj.priv;
 
     /*
-     *  SERVICE subscription model
+     *  SERVICE subscription model, and a pure child subscribes its parent:
+     *  the C timer's.
      */
-    const subscriber = gobj_read_pointer_attr(gobj, "subscriber");
+    let subscriber = gobj_read_pointer_attr(gobj, "subscriber");
     if(subscriber) {
+        gobj_subscribe_event(gobj, null, {}, subscriber);
+    } else if(gobj_is_pure_child(gobj)) {
+        subscriber = gobj_parent(gobj);
         gobj_subscribe_event(gobj, null, {}, subscriber);
     }
 
@@ -220,13 +224,12 @@ function ac_timeout(gobj, event, kw, src)
     }
 
     /*
-     *  SERVICE subscription model
+     *  PUBLISHED, to the parent of a pure child too, as C does. Up to
+     *  gobj-js 7.26.21 a pure child SENT it to its parent: the same parent
+     *  that ended the timer in its EV_TIMEOUT broke the kernel's rule in C
+     *  (a subscriber destroying its publisher) and said nothing here.
      */
-    if (gobj_is_pure_child(gobj)) {
-        gobj_send_event(gobj_parent(gobj), ev, {}, gobj);
-    } else {
-        gobj_publish_event(gobj, ev, {});
-    }
+    gobj_publish_event(gobj, ev, {});
 
     /*
      *  A one-shot is spent: it stops itself, so nobody has to stop it.
@@ -336,6 +339,17 @@ function register_c_timer()
 
 
 /***************************************************************************
+ *  A number of milliseconds as the integer `msec` holds it: C takes an
+ *  integer, and a time computed in JS can carry a float error (0.3 * 1000
+ *  is 300.00000000000006, which an integer attr refuses). Anything that is
+ *  not a number goes as it is, to be refused loudly by the attr.
+ ***************************************************************************/
+function whole_msec(msec)
+{
+    return (typeof msec === "number" && Number.isFinite(msec))? Math.round(msec) : msec;
+}
+
+/***************************************************************************
  *  Set timeout
  ***************************************************************************/
 function set_timeout(gobj, msec)
@@ -350,7 +364,7 @@ function set_timeout(gobj, msec)
     }
 
     gobj_write_bool_attr(gobj, "periodic", false);
-    gobj_write_integer_attr(gobj, "msec", msec);    // This write launches the timer
+    gobj_write_integer_attr(gobj, "msec", whole_msec(msec));    // This write launches the timer
 }
 
 /***************************************************************************
@@ -368,7 +382,7 @@ function set_timeout_periodic(gobj, msec)
     }
 
     gobj_write_bool_attr(gobj, "periodic", true);
-    gobj_write_integer_attr(gobj, "msec", msec);    // This write launches the timer
+    gobj_write_integer_attr(gobj, "msec", whole_msec(msec));    // This write launches the timer
 }
 
 /***************************************************************************

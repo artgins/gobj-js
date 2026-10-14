@@ -81,6 +81,28 @@ let __yuno__ = null;
 let __default_service__ = null;
 let __inside__ = 0;
 
+/*
+ *  Code running on a gobj: an action of it (gobj_send_event), a publication
+ *  of it delivering to its subscribers (gobj_publish_event), one of its
+ *  framework methods (mt_start, mt_stop, mt_play, mt_pause); or a call that
+ *  only watches whether a gobj survives what it calls (the walks of
+ *  gobj_start_tree() / gobj_stop_tree()). Chained innermost first, the same
+ *  frames as the C kernel's (gobj.c, 7.26.10).
+ *
+ *  gobj_destroy() asks them first who is running, and then marks those of
+ *  what it destroys: a gobj destroyed under code that is still running on it
+ *  -- a publication of its tree, an outer action of it -- is an ERROR, as it
+ *  is in C (check_destroy_under_running_code()). That code goes on when the
+ *  inner dispatch returns, on a gobj that is gone.
+ */
+const frame_kind_t = Object.freeze({
+    FRAME_ACTION:       0,  // event: the event of the action
+    FRAME_PUBLICATION:  1,  // event: the event published
+    FRAME_METHOD:       2,  // event: the name of the framework method
+    FRAME_WATCH:        3,  // event: what is called; no gclass code of its own
+});
+let __dispatch_top__ = null;    // innermost dispatch in progress
+
 /**************************************************************************
  *              SData - Structured Data
  **************************************************************************/
@@ -129,7 +151,8 @@ const sdata_flag_t = Object.freeze({
     SDF_AUTHZ_X:    0x00020000,
     SDF_AUTHZ_P:    0x00040000,
     SDF_AUTHZ_S:    0x00080000,
-    SDF_AUTHZ_RS:   0x00100000
+    SDF_AUTHZ_RS:   0x00100000,
+    SDF_SECRET:     0x00200000      // a secret: read and saved as usual, never SHOWN (as in C)
 });
 
 const SDF_PUBLIC_ATTR = sdata_flag_t.SDF_RD | sdata_flag_t.SDF_WR | sdata_flag_t.SDF_STATS |
@@ -1014,6 +1037,263 @@ function set_default(gobj, sdata, it)
 }
 
 /***************************************************************************
+ *  A value of a type, written as text or given as json, read as the C
+ *  command parser reads a parameter (command_parser.c): the same grammar,
+ *  the same refusals, so that a C client and a JS client read an attribute
+ *  value the same way (json2item()). A refusal says why in a short phrase,
+ *  never the value: it may be a secret.
+ ***************************************************************************/
+const JSON_INTEGER_TEXT = /^-?(0|[1-9][0-9]*)$/;
+const JSON_NUMBER_TEXT = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+const REFUSED_TEXT = "a text that does not read as one";
+
+function value_has_shape(type, value)
+{
+    if(DTP_IS_STRING(type)) {
+        return is_string(value);
+    }
+    if(DTP_IS_DICT(type)) {
+        return is_object(value);
+    }
+    if(DTP_IS_LIST(type)) {
+        return is_array(value);
+    }
+    if(DTP_IS_NUMBER(type)) {
+        return typeof value === "number" || typeof value === "boolean";
+    }
+    return true;
+}
+
+function shape_of_value(value)
+{
+    if(is_array(value)) {
+        return "an array";
+    }
+    if(is_object(value)) {
+        return "an object";
+    }
+    if(is_string(value)) {
+        return REFUSED_TEXT;
+    }
+    if(typeof value === "number") {
+        return Number.isInteger(value)? "an integer" : "a real";
+    }
+    if(typeof value === "boolean") {
+        return "a boolean";
+    }
+    return "null";
+}
+
+/*
+ *  A number or a boolean as the EXACT type of a number parameter. A JS
+ *  number does not tell 2.0 from 2: an integral number is an integer, as
+ *  C reads json_real(2.0).
+ */
+function number_as_type(type, value)
+{
+    if(typeof value === "number" && !Number.isFinite(value)) {
+        return {value: undefined, refused: "a number out of its range"};
+    }
+    if(DTP_IS_BOOLEAN(type)) {
+        return {value: (typeof value === "boolean")? value : value !== 0, refused: null};
+    }
+    if(DTP_IS_REAL(type)) {
+        return {value: (typeof value === "boolean")? (value? 1 : 0) : value, refused: null};
+    }
+    if(typeof value === "boolean") {
+        return {value: value? 1 : 0, refused: null};
+    }
+    if(!(value >= -9223372036854775808 && value < 9223372036854775808)) {
+        return {value: undefined, refused: "a number out of its range"};
+    }
+    if(!Number.isInteger(value)) {
+        return {value: undefined, refused: "a real with decimals"};
+    }
+    return {value: value, refused: null};
+}
+
+/*
+ *  The value of a parameter written as text. `from_kw`: an empty text for a
+ *  number is no value (a form field left empty); on a command line it is 0.
+ */
+function text2parameter(type, s, from_kw)
+{
+    if(!is_string(s)) {
+        s = "";
+    }
+    if(DTP_IS_STRING(type)) {
+        return {value: s, refused: null};
+    }
+    if(DTP_IS_NUMBER(type)) {
+        if(s.length === 0) {
+            if(from_kw) {
+                return {value: undefined, refused: null};
+            }
+            return {value: DTP_IS_BOOLEAN(type)? false : 0, refused: null};
+        }
+        if(DTP_IS_BOOLEAN(type)) {
+            const lower = s.toLowerCase();
+            if(lower === "true" || lower === "yes" || lower === "on") {
+                return {value: true, refused: null};
+            }
+            if(lower === "false" || lower === "no" || lower === "off") {
+                return {value: false, refused: null};
+            }
+        }
+        if(!(DTP_IS_REAL(type)? JSON_NUMBER_TEXT : JSON_INTEGER_TEXT).test(s)) {
+            return {value: undefined, refused: REFUSED_TEXT};
+        }
+        if(DTP_IS_REAL(type)) {
+            const d = Number(s);
+            if(!Number.isFinite(d)) {
+                return {value: undefined, refused: "a number out of its range"};
+            }
+            return {value: d, refused: null};
+        }
+        const n = BigInt(s);
+        if(n < INT64_MIN || n > INT64_MAX) {
+            return {value: undefined, refused: "a number out of its range"};
+        }
+        if(DTP_IS_BOOLEAN(type)) {
+            return {value: n !== 0n, refused: null};
+        }
+        return {value: Number(n), refused: null};   // beyond 2^53 a JS number rounds it, as JSON.parse()
+    }
+    if(DTP_IS_DICT(type) || DTP_IS_LIST(type)) {
+        let jn;
+        try {
+            jn = JSON.parse(s);
+        } catch (e) {
+            return {value: undefined, refused: REFUSED_TEXT};
+        }
+        if(!value_has_shape(type, jn)) {
+            return {value: undefined, refused: REFUSED_TEXT};
+        }
+        return {value: jn, refused: null};
+    }
+    if(DTP_IS_JSON(type)) {
+        try {
+            return {value: JSON.parse(s), refused: null};
+        } catch (e) {
+            const t = s.replace(/^[ \t]+/, "");
+            if(t.startsWith("{") || t.startsWith("[") || t.startsWith("\"")) {
+                return {value: undefined, refused: REFUSED_TEXT};  // json written wrong, not a text
+            }
+            return {value: s, refused: null};   // a bare word, a date: text
+        }
+    }
+    return {value: undefined, refused: REFUSED_TEXT};
+}
+
+/***************************************************************************
+ *  A value of `type` written as TEXT, read as the C parser reads a
+ *  parameter on the command line (command_parameter_from_text()): an empty
+ *  text is 0 or false. Return {value, refused}: `value` undefined when the
+ *  text does not read as one, `refused` saying why.
+ ***************************************************************************/
+function command_parameter_from_text(type, text)
+{
+    const r = text2parameter(type, text, false);
+    if(r.value === undefined && !r.refused) {
+        r.refused = REFUSED_TEXT;
+    }
+    return r;
+}
+
+/***************************************************************************
+ *  A value of `type` given as JSON, read as the C parser reads a
+ *  parameter given in kw (command_parameter_from_json()): a string as
+ *  command_parameter_from_text() reads a text (a string with a NUL inside
+ *  refused), a number or a boolean as the EXACT type (an integer to a
+ *  DTP_REAL is its real, a boolean to a DTP_INTEGER 1 or 0, 2.7 to a
+ *  DTP_INTEGER refused), an object or a list of its shape as it is, any
+ *  other shape refused. Return {value, refused}: `value` undefined and
+ *  `refused` saying why, or `refused` null when there is NO value (a null,
+ *  undefined, or an empty text given to a number).
+ ***************************************************************************/
+function command_parameter_from_json(type, value)
+{
+    if(value === undefined || value === null) {
+        if(DTP_IS_JSON(type) && value === null) {
+            return {value: null, refused: null};
+        }
+        return {value: undefined, refused: null};
+    }
+    const nul_inside = is_string(value) && value.indexOf("\u0000") >= 0;
+    if(DTP_IS_JSON(type)) {
+        if(!is_string(value) || nul_inside) {
+            return {value: value, refused: null};
+        }
+        const r = text2parameter(type, value, true);
+        return (r.value === undefined)? {value: value, refused: null} : r;   // a string is a json too
+    }
+    if(!(DTP_IS_STRING(type) || DTP_IS_DICT(type) || DTP_IS_LIST(type) || DTP_IS_NUMBER(type))) {
+        return {value: value, refused: null};
+    }
+    if(nul_inside) {
+        return {value: undefined, refused: "a text with a NUL in it"};
+    }
+    if(is_string(value) && !DTP_IS_STRING(type)) {
+        return text2parameter(type, value, true);
+    }
+    if(!value_has_shape(type, value)) {
+        return {value: undefined, refused: shape_of_value(value)};
+    }
+    if(DTP_IS_NUMBER(type)) {
+        return number_as_type(type, value);
+    }
+    return {value: value, refused: null};
+}
+
+/***************************************************************************
+ *  A value json2item() refuses: the attr, its type and why, and the value
+ *  as a log may show it (a SDF_SECRET one never; any other masked, then
+ *  capped on a whole character, as in C)
+ ***************************************************************************/
+const ATTR_VALUE_SHOWN = 64;
+const TYPES_READ = [
+    data_type_t.DTP_BOOLEAN,
+    data_type_t.DTP_INTEGER,
+    data_type_t.DTP_REAL,
+    data_type_t.DTP_LIST,
+    data_type_t.DTP_DICT,
+];
+
+function log_attr_value_refused(gobj, it, value, refused)
+{
+    const types = {
+        [data_type_t.DTP_BOOLEAN]:  "a boolean",
+        [data_type_t.DTP_INTEGER]:  "an integer",
+        [data_type_t.DTP_REAL]:     "a real",
+        [data_type_t.DTP_LIST]:     "a json array",
+        [data_type_t.DTP_DICT]:     "a json object",
+    };
+    let shown;
+    if(it.flag & sdata_flag_t.SDF_SECRET) {
+        shown = "********";
+    } else {
+        shown = is_string(value)? value : String(JSON.stringify(value === undefined? null : value));
+        const masked = mask_secrets_inline(shown);
+        if(masked !== null) {
+            shown = masked;
+        }
+        if(shown.length > ATTR_VALUE_SHOWN) {
+            let n = ATTR_VALUE_SHOWN;
+            const code = shown.charCodeAt(n);
+            if(code >= 0xDC00 && code <= 0xDFFF) {
+                n--;    // not half of a pair of surrogates
+            }
+            shown = shown.substring(0, n);
+        }
+    }
+    log_error(`${gobj_short_name(gobj)}: Attribute value of the wrong type, not written: ` +
+        `attr '${it.name}', type ${types[it.type] || "a value of its type"}, ` +
+        `got ${refused || "no value (a null, or an empty text)"}, value '${shown}'`);
+}
+
+/***************************************************************************
  *  Set array values to sdata, from json or binary
  ***************************************************************************/
 function json2item(gobj, sdata, it, jn_value_)
@@ -1042,51 +1322,21 @@ function json2item(gobj, sdata, it, jn_value_)
             }
             break;
         case data_type_t.DTP_BOOLEAN:
-            jn_value2 = parseBoolean(jn_value_);
-            break;
         case data_type_t.DTP_INTEGER:
-            jn_value2 = parseInt(jn_value_);
-            if(isNaN(jn_value2)) {
-                log_error(`${gobj_short_name(gobj)}: attr NaN: ${it.name}`);
-                return -1;      // the attr keeps its value, NaN is not one
-            }
-            break;
         case data_type_t.DTP_REAL:
-            jn_value2 = Number(jn_value_);
-            if(isNaN(jn_value2)) {
-                log_error(`${gobj_short_name(gobj)}: attr NaN: ${it.name}`);
-                return -1;      // the attr keeps its value, NaN is not one
-            }
-            break;
         case data_type_t.DTP_LIST:
-            if(is_string(jn_value_)) {
-                try {
-                    jn_value2 = JSON.parse(jn_value_);
-                } catch (error) {
-                    log_error(`JSON parse error: ${error.message}`);
-                }
-            } else {
-                jn_value2 = jn_value_;
-            }
-            if(!is_array(jn_value2)) {
-                log_error(`attr must be an array: ${it.name}`);
-                return -1;
-            }
-            break;
-
         case data_type_t.DTP_DICT:
-            if(is_string(jn_value_)) {
-                try {
-                    jn_value2 = JSON.parse(jn_value_);
-                } catch (error) {
-                    log_error(`JSON parse error: ${error.message}`);
+            {
+                if(jn_value_ === undefined) {
+                    return 0;   // an undefined key is an absent one: on the wire, to C, it is not there
                 }
-            } else {
-                jn_value2 = jn_value_;
-            }
-            if(!is_object(jn_value2)) {
-                log_error(`attr must be an object: ${it.name}`);
-                return -1;
+                // A text read by its value, a number as the exact type: the grammar of the C parser
+                const r = command_parameter_from_json(it.type, jn_value_);
+                if(r.value === undefined) {
+                    log_attr_value_refused(gobj, it, jn_value_, r.refused);
+                    return -1;
+                }
+                jn_value2 = r.value;
             }
             break;
 
@@ -2172,6 +2422,19 @@ function gobj_destroy(gobj)
     if(gobj.__refs__ > 0) {
         log_error(`${gobj_short_name(gobj)}: gobj DESTROYING with references: ${gobj.__refs__}`);
     }
+
+    /*--------------------------------------------------------*
+     *  The dispatches in progress of this gobj learn it now,
+     *  before anything of it is dismantled. The check looks at
+     *  the tree as it is, once, from the root of what is
+     *  destroyed: a child that goes with its parent is part of
+     *  that same destroy.
+     *--------------------------------------------------------*/
+    if(!(gobj.parent && gobj_is_destroying(gobj.parent))) {
+        check_destroy_under_running_code(gobj);
+    }
+    mark_dispatch_frames_destroyed(gobj);
+
     /*--------------------------------------------------------*
      *      Pause and Stop
      *
@@ -2356,9 +2619,45 @@ function gobj_start(gobj)
 
     let ret = 0;
     if(gobj.gclass.gmt.mt_start) {
-        ret = gobj.gclass.gmt.mt_start(gobj);
+        const frame = push_dispatch_frame(gobj, "mt_start", frame_kind_t.FRAME_METHOD);
+        try {
+            ret = gobj.gclass.gmt.mt_start(gobj);
+        } finally {
+            pop_dispatch_frame(frame);
+        }
     }
     return ret;
+}
+
+/***************************************************************************
+ *  Start a gobj in a walk of its tree, and say whether that destroyed it.
+ *
+ *  A gclass may end itself in its own mt_start or mt_stop, and a walk of
+ *  the tree must not go down into the children of a gobj that is gone.
+ ***************************************************************************/
+function start_destroys_it(gobj)
+{
+    const frame = push_dispatch_frame(gobj, "gobj_start", frame_kind_t.FRAME_WATCH);
+    try {
+        gobj_start(gobj);
+    } finally {
+        pop_dispatch_frame(frame);
+    }
+    return frame.destroyed;
+}
+
+/***************************************************************************
+ *  Stop a gobj in a walk of its tree, and say whether that destroyed it.
+ ***************************************************************************/
+function stop_destroys_it(gobj)
+{
+    const frame = push_dispatch_frame(gobj, "gobj_stop", frame_kind_t.FRAME_WATCH);
+    try {
+        gobj_stop(gobj);
+    } finally {
+        pop_dispatch_frame(frame);
+    }
+    return frame.destroyed;
 }
 
 /***************************************************************************
@@ -2396,7 +2695,9 @@ function cb_start_child_tree(child, user_data, user_data2)
         return 1;
     }
     if(!gobj_is_running(child)) {
-        gobj_start(child);
+        if(start_destroys_it(child)) {
+            return 1;   // gone: no children of it to walk
+        }
     }
     return 0;
 }
@@ -2420,7 +2721,9 @@ function gobj_start_tree(gobj)
         return 0;
     } else {
         if(!gobj.running) {
-            gobj_start(gobj);
+            if(start_destroys_it(gobj)) {
+                return 0;   // gone: no children of it to walk
+            }
         }
     }
     return gobj_walk_gobj_children_tree(gobj, walk_type_t.WALK_TOP2BOTTOM, cb_start_child_tree, 0, 0);
@@ -2456,7 +2759,12 @@ function gobj_stop(gobj)
 
     let ret = 0;
     if(gobj.gclass.gmt.mt_stop) {
-        ret = gobj.gclass.gmt.mt_stop(gobj);
+        const frame = push_dispatch_frame(gobj, "mt_stop", frame_kind_t.FRAME_METHOD);
+        try {
+            ret = gobj.gclass.gmt.mt_stop(gobj);
+        } finally {
+            pop_dispatch_frame(frame);
+        }
     }
 
     return ret;
@@ -2468,7 +2776,9 @@ function gobj_stop(gobj)
 function cb_stop_child(child, user_data, user_data2)
 {
     if(gobj_is_running(child)) {
-        gobj_stop(child);
+        if(stop_destroys_it(child)) {
+            return 1;   // gone: no children of it to walk
+        }
     }
     return 0;
 }
@@ -2500,7 +2810,9 @@ function gobj_stop_tree(gobj)
     }
 
     if(gobj_is_running(gobj)) {
-        gobj_stop(gobj);
+        if(stop_destroys_it(gobj)) {
+            return 0;   // gone: no children of it to walk
+        }
     }
     return gobj_walk_gobj_children_tree(gobj, walk_type_t.WALK_TOP2BOTTOM, cb_stop_child, 0, 0);
 }
@@ -2544,12 +2856,17 @@ function gobj_play(gobj)
 
     let ret = 0;
     if(gobj.gclass.gmt.mt_play) {
-        ret = gobj.gclass.gmt.mt_play(gobj);
+        const frame = push_dispatch_frame(gobj, "mt_play", frame_kind_t.FRAME_METHOD);
+        try {
+            ret = gobj.gclass.gmt.mt_play(gobj);
+        } finally {
+            pop_dispatch_frame(frame);
+        }
         /*  `ret === false` too: the C contract is an int and -1 is the
          *  failure, but a javascript mt_play says it with `false` — and
          *  `false < 0` is FALSE, so the gobj was left PLAYING after a play
          *  that failed.  */
-        if(ret < 0 || ret === false) {
+        if((ret < 0 || ret === false) && !frame.destroyed) {
             gobj.playing = false;
         }
     }
@@ -2580,7 +2897,12 @@ function gobj_pause(gobj)
     gobj.playing = false;
 
     if(gobj.gclass.gmt.mt_pause) {
-        return gobj.gclass.gmt.mt_pause(gobj);
+        const frame = push_dispatch_frame(gobj, "mt_pause", frame_kind_t.FRAME_METHOD);
+        try {
+            return gobj.gclass.gmt.mt_pause(gobj);
+        } finally {
+            pop_dispatch_frame(frame);
+        }
     } else {
         return 0;
     }
@@ -3482,21 +3804,7 @@ function gobj_write_attr(
         let key = path;
         if(key in jn_attrs) {
             if(Object.prototype.hasOwnProperty.call(jn_attrs, key)) {
-                jn_attrs[key] = value;
-
-                // New, write automatically the defined private data, in JS is possible do it
-                if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, key)) {
-                    gobj.priv[key] = value;
-                }
-
-                // Avoid call to mt_writing before mt_create or destroyed!
-                if((gobj.obflag & obflag_t.obflag_created) && !(gobj.obflag & obflag_t.obflag_destroyed)) {
-                    // Now mt_writing is only informative, not needed to update priv
-                    if(gobj.gclass.gmt.mt_writing) {
-                        gobj.gclass.gmt.mt_writing(gobj, key);
-                    }
-                }
-                return 0;
+                return write_attr_value(gobj, key, value);
             }
         }
         log_error(sprintf("gobj_write_attr(%s): attr not found '%s'", gobj_short_name(gobj), key));
@@ -3518,21 +3826,7 @@ function gobj_write_attr(
 
         if(key in jn_attrs) {
             if(Object.prototype.hasOwnProperty.call(jn_attrs, key)) {
-                jn_attrs[key] = value;
-
-                // New, write automatically the defined private data, in JS is possible do it
-                if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, key)) {
-                    gobj.priv[key] = value;
-                }
-
-                // Avoid call to mt_writing before mt_create or destroyed!
-                if((gobj.obflag & obflag_t.obflag_created) && !(gobj.obflag & obflag_t.obflag_destroyed)) {
-                    // Now mt_writing is only informative, not needed to update priv
-                    if(gobj.gclass.gmt.mt_writing) {
-                        gobj.gclass.gmt.mt_writing(gobj, key);
-                    }
-                }
-                return 0;
+                return write_attr_value(gobj, key, value);
             }
         }
         break;
@@ -3540,6 +3834,53 @@ function gobj_write_attr(
 
     log_error(sprintf("gobj_write_attr(%s): attr not found '%s'", gobj_short_name(gobj), key));
     return -1;
+}
+
+/***************************************************************************
+ *  The value written to the attr `key` of `gobj`, read as its type as the C
+ *  kernel reads it (json2item(): it writes priv and calls mt_writing too).
+ *  Up to 7.26.21 gobj_write_attr() wrote it raw.
+ ***************************************************************************/
+function write_attr_value(gobj, key, value)
+{
+    const it = gobj_attr_desc(gobj, key, false);
+    if(!it) {
+        log_error(sprintf("gobj_write_attr(%s): attr without description '%s'", gobj_short_name(gobj), key));
+        return -1;
+    }
+    if(value === undefined && TYPES_READ.includes(it.type)) {
+        log_attr_value_refused(gobj, it, value, null);  // an explicit write of nothing; in a kw it is an absent key
+        return -1;
+    }
+    return json2item(gobj, gobj.jn_attrs, it, value);
+}
+
+/***************************************************************************
+ *  The value a typed writer writes, read as ITS type by the grammar of
+ *  json2item() (a C writer takes its C type: a string is never read as a
+ *  number there). Return {value} or {refused} (logged): the attr keeps its
+ *  value. A string writer never refuses: null and undefined are "", any
+ *  other json its text, as a DTP_STRING attr reads them.
+ ***************************************************************************/
+function typed_writer_value(gobj, name, type, value)
+{
+    if(DTP_IS_STRING(type)) {
+        if(value === null || value === undefined) {
+            return {value: ""};
+        }
+        return {value: is_string(value)? value : String(JSON.stringify(value))};
+    }
+    const r = command_parameter_from_json(type, value);
+    if(r.value === undefined) {
+        let holder = gobj;
+        while(holder && !gobj_has_attr(holder, name)) {
+            holder = holder.bottom_gobj;
+        }
+        const it = holder? gobj_attr_desc(holder, name, false) : null;
+        log_attr_value_refused(gobj, {name: name, type: type, flag: it? it.flag : 0}, value, r.refused);
+        return {refused: true};
+    }
+    return {value: r.value};
 }
 
 /***************************************************************************
@@ -3630,7 +3971,11 @@ function gobj_write_bool_attr(gobj, name, value)
 {
     let hs = gobj_hsdata2(gobj, name, false);
     if(hs) {
-        hs[name] = parseBoolean(value);
+        const v = typed_writer_value(gobj, name, data_type_t.DTP_BOOLEAN, value);
+        if(v.refused) {
+            return -1;  // Error already logged, the attr keeps its value
+        }
+        hs[name] = v.value;
 
         // New, write automatically the defined private data, in JS is possible do it
         if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, name)) {
@@ -3658,7 +4003,11 @@ function gobj_write_integer_attr(gobj, name, value)
 {
     let hs = gobj_hsdata2(gobj, name, false);
     if(hs) {
-        hs[name] = parseInt(value);
+        const v = typed_writer_value(gobj, name, data_type_t.DTP_INTEGER, value);
+        if(v.refused) {
+            return -1;  // Error already logged, the attr keeps its value
+        }
+        hs[name] = v.value;
 
         // New, write automatically the defined private data, in JS is possible do it
         if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, name)) {
@@ -3686,7 +4035,11 @@ function gobj_write_str_attr(gobj, name, value)
 {
     let hs = gobj_hsdata2(gobj, name, false);
     if(hs) {
-        hs[name] = String(value);
+        const v = typed_writer_value(gobj, name, data_type_t.DTP_STRING, value);
+        if(v.refused) {
+            return -1;  // Error already logged, the attr keeps its value
+        }
+        hs[name] = v.value;
 
         // New, write automatically the defined private data, in JS is possible do it
         if(is_object(gobj.priv) && Object.prototype.hasOwnProperty.call(gobj.priv, name)) {
@@ -4048,6 +4401,137 @@ function purge_posted_events(gobj)
 }
 
 /************************************************************
+ *  A dispatch begins: its frame goes on top of the chain.
+ *  Every push is paired with a pop in a `finally`: an action
+ *  that throws must not leave its frame on the chain.
+ ************************************************************/
+function push_dispatch_frame(gobj, event, kind)
+{
+    const frame = {
+        prev:       __dispatch_top__,
+        gobj:       gobj,
+        event:      event,
+        kind:       kind,
+        destroyed:  false   // gobj_destroy() of `gobj` ran while the frame was live
+    };
+    __dispatch_top__ = frame;
+    return frame;
+}
+
+function pop_dispatch_frame(frame)
+{
+    __dispatch_top__ = frame.prev;
+}
+
+/************************************************************
+ *  Every dispatch in progress of `gobj` learns that it is
+ *  destroyed. Only its own frames: each child destroyed with
+ *  it marks its own, in its own gobj_destroy().
+ ************************************************************/
+function mark_dispatch_frames_destroyed(gobj)
+{
+    for(let f = __dispatch_top__; f; f = f.prev) {
+        if(f.gobj === gobj) {
+            f.destroyed = true;
+        }
+    }
+}
+
+/************************************************************
+ *  Is the innermost live publication of `gobj` its EV_STOPPED?
+ *  Then the stop contract holds for it: that is the last thing
+ *  it does with itself.
+ ************************************************************/
+function said_farewell(gobj)
+{
+    for(let f = __dispatch_top__; f; f = f.prev) {
+        if(f.kind === frame_kind_t.FRAME_PUBLICATION && !f.destroyed && f.gobj === gobj) {
+            return f.event === "EV_STOPPED";
+        }
+    }
+    return false;
+}
+
+/************************************************************
+ *  A gobj must not be destroyed under code that is still
+ *  running on it -- the C kernel's check, with its exemptions
+ *  and its fields, so both runtimes report the same defect the
+ *  same way.
+ *
+ *  `gobj` is about to be destroyed, and with it its whole
+ *  subtree. Every live frame of a gobj of that subtree is code
+ *  that goes on when the destroy returns, on a gobj that is gone
+ *  (C_TIMER right after its EV_TIMEOUT). It is an ERROR, except
+ *  for:
+ *
+ *  - the innermost frame: it is the code that destroys, and
+ *    knows it (a gobj that destroys itself in its own action);
+ *
+ *  - the frames of a gobj whose innermost publication is
+ *    EV_STOPPED: the stop contract, its host destroys it there;
+ *
+ *  - the watch frames, which run no gclass code of their own.
+ *
+ *  The destroy goes on: this only says it, once. The fix is to
+ *  defer the destroy with gobj_post_event().
+ ************************************************************/
+function check_destroy_under_running_code(gobj)
+{
+    const top = __dispatch_top__;
+    if(!top) {
+        return;
+    }
+
+    for(let f = top.prev; f; f = f.prev) {
+        if(f.destroyed || f.kind === frame_kind_t.FRAME_WATCH) {
+            continue;
+        }
+
+        let in_tree = false;
+        for(let p = f.gobj; p; p = p.parent) {
+            if(p === gobj) {
+                in_tree = true;
+                break;
+            }
+        }
+        if(!in_tree) {
+            continue;
+        }
+
+        if(said_farewell(f.gobj)) {
+            continue;
+        }
+
+        const destroyer = top.destroyed? "(destroyed)" : gobj_full_name(top.gobj);
+        const stack = String(new Error().stack || "").split("\n").slice(2).join("\n");
+        if(f.kind === frame_kind_t.FRAME_PUBLICATION) {
+            log_error(
+                `Destroying a gobj while its tree is publishing: ` +
+                `destroying ${gobj_full_name(gobj)}, ` +
+                `publisher ${gobj_full_name(f.gobj)}, ` +
+                `event ${f.event || ""}, ` +
+                `destroyer ${destroyer}, ` +
+                `inner_event ${top.event || ""}. ` +
+                `Defer it with gobj_post_event(): a subscriber must not destroy ` +
+                `the tree of its publisher synchronously. stack:\n${stack}`
+            );
+        } else {
+            log_error(
+                `Destroying a gobj while one of its actions is still running: ` +
+                `destroying ${gobj_full_name(gobj)}, ` +
+                `running ${gobj_full_name(f.gobj)}, ` +
+                `event ${f.event || ""}, ` +
+                `destroyer ${destroyer}, ` +
+                `inner_event ${top.event || ""}. ` +
+                `Defer it with gobj_post_event(): an inner dispatch must not destroy ` +
+                `a gobj that an outer one is running on. stack:\n${stack}`
+            );
+        }
+        return;
+    }
+}
+
+/************************************************************
  *      send_event
  ************************************************************/
 function gobj_send_event(dst, event, kw, src)
@@ -4105,7 +4589,14 @@ function gobj_send_event(dst, event, kw, src)
                     }
                 }
             }
-            return dst.gclass.gmt.mt_inject_event(dst, event, kw, src);
+            /*  A frame of its own too: a destroy the injection makes must
+             *  know which gobj is running.  */
+            const frame = push_dispatch_frame(dst, event, frame_kind_t.FRAME_ACTION);
+            try {
+                return dst.gclass.gmt.mt_inject_event(dst, event, kw, src);
+            } finally {
+                pop_dispatch_frame(frame);
+            }
         }
 
         if(tracea) {
@@ -4180,6 +4671,8 @@ function gobj_send_event(dst, event, kw, src)
      *  If you don’t like this behavior, set the next-state to NULL
      *  and use change_state() to change the state inside the actions.
      */
+    const frame = push_dispatch_frame(dst, event, frame_kind_t.FRAME_ACTION);
+
     if(event_action.next_state) {
         gobj_change_state(dst, event_action.next_state);
     }
@@ -4209,9 +4702,11 @@ function gobj_send_event(dst, event, kw, src)
             }
         }
         throw e;
+    } finally {
+        pop_dispatch_frame(frame);
     }
 
-    if(tracea && __trace_machine_format__ !== 1 && !(dst.obflag & obflag_t.obflag_destroyed)) {
+    if(tracea && __trace_machine_format__ !== 1 && !frame.destroyed) {
         trace_machine(sprintf("<- mach(%s%s^%s), st: %s, ev: %s, ret: %d",
             (!dst.running)?"!!":"",
             gobj_gclass_name(dst), gobj_name(dst),
@@ -5110,223 +5605,228 @@ function gobj_publish_event(
     let sent_count = 0;
     let ret = 0;
 
-    for(let idx=0; idx<dl_subs.length; idx++) {
-        let subs = dl_subs[idx];
-        /*-------------------------------------*
-         *  Pre-filter
-         *  kw NOT owned! you can modify the publishing kw
-         *  Return:
-         *     -1  broke
-         *      0  continue without publish
-         *      1  continue to publish
-         *-------------------------------------*/
-        if(publisher.gclass.gmt.mt_publication_pre_filter) {
-            let topublish = publisher.gclass.gmt.mt_publication_pre_filter(
-                publisher,
-                subs,
-                event,
-                kw  // not owned
-            );
-            if(topublish<0) {
-                break;
-            } else if(!topublish) {
-                /*  `!topublish` and not `=== 0`: this hook is written in
-                 *  javascript, where the natural way to say "do not publish"
-                 *  is `false` — and `false === 0` is FALSE, so it published.
-                 *  Same trap as the `__filter__` guard below.  */
-                continue;
-            }
-        }
-        let subscriber = kw_get_pointer(publisher, subs, "subscriber", null, kw_flag_t.KW_REQUIRED);
-        if(!(subscriber && !gobj_is_destroying(subscriber))) {
-            continue;
-        }
-
-        /*
-         *  Check if event null or event in event_list
-         */
-        let subs_flag = kw_get_int(publisher, subs, "subs_flag", 0, kw_flag_t.KW_REQUIRED);
-        let event_ = kw_get_str(publisher, subs, "event", "", kw_flag_t.KW_REQUIRED);
-        if(empty_string(event_) || strcasecmp(event_, event)===0) {
-            let __config__ = kw_get_dict(publisher, subs, "__config__", null, 0);
-            let __global__ = kw_get_dict(publisher, subs, "__global__", null, 0);
-            let __local__ = kw_get_dict(publisher, subs, "__local__", null, 0);
-            let __filter__ = kw_get_dict_value(publisher, subs, "__filter__", null, 0);
-
-            /*
-             *  Check renamed_event: what the subscriber is sent
-             */
-            let event_name = subs.renamed_event;   // a field read: this is the hot path
-            if(empty_string(event_name)) {
-                event_name = event;
-            }
-
+    const frame = push_dispatch_frame(publisher, event, frame_kind_t.FRAME_PUBLICATION);
+    try {
+        for(let idx=0; idx<dl_subs.length; idx++) {
+            let subs = dl_subs[idx];
             /*-------------------------------------*
-             *  User filter method or filter parameter
+             *  Pre-filter
+             *  kw NOT owned! you can modify the publishing kw
              *  Return:
-             *     -1  (broke),
-             *      0  continue without publish,
-             *      1  continue and publish
+             *     -1  broke
+             *      0  continue without publish
+             *      1  continue to publish
              *-------------------------------------*/
-            let topublish = 1;
-            if(publisher.gclass.gmt.mt_publication_filter) {
-                topublish = publisher.gclass.gmt.mt_publication_filter(
+            if(publisher.gclass.gmt.mt_publication_pre_filter) {
+                let topublish = publisher.gclass.gmt.mt_publication_pre_filter(
                     publisher,
+                    subs,
                     event,
-                    kw,  // not owned
-                    subscriber
+                    kw  // not owned
                 );
-            } else if(json_size(__filter__)>0) {
-                /*  `kw_match_simple()` answers a BOOLEAN, and what is
-                 *  compared below is `topublish === 0`. `false === 0` is
-                 *  FALSE in javascript, so a filter that did not match fell
-                 *  straight through the guard and published anyway: the
-                 *  trace said 👎 and the subscriber got the event all the
-                 *  same. Normalize to the 1/0 the contract is written in
-                 *  (-1 break, 0 skip, 1 publish), which is what the C side
-                 *  passes around.  */
-                topublish = kw_match_simple(kw, __filter__) ? 1 : 0;
-                if(tracea) {
-                    trace_machine(sprintf(
-                        "💜💜🔄%s publishing with filter, event '%s', subscriber'%s', publisher %s",
-                        topublish?"👍":"👎",
-                        event?event:"",
-                        gobj_short_name(subscriber),
-                        gobj_short_name(publisher)
-                    ));
-                    trace_json(__filter__);
+                if(topublish<0) {
+                    break;
+                } else if(!topublish) {
+                    /*  `!topublish` and not `=== 0`: this hook is written in
+                     *  javascript, where the natural way to say "do not publish"
+                     *  is `false` — and `false === 0` is FALSE, so it published.
+                     *  Same trap as the `__filter__` guard below.  */
+                    continue;
                 }
             }
-
-            if(topublish<0) {
-                break;
-            } else if(!topublish) {
-                /*
-                 *  Must not be published
-                 *  Next subs
-                 *
-                 *  `!topublish` and not `=== 0`: a filter or an
-                 *  mt_publication_filter that answers `false` means the same
-                 *  as 0, and a strict comparison with the number let it
-                 *  through.
-                 */
+            let subscriber = kw_get_pointer(publisher, subs, "subscriber", null, kw_flag_t.KW_REQUIRED);
+            if(!(subscriber && !gobj_is_destroying(subscriber))) {
                 continue;
             }
 
             /*
-             *  Check if System event: don't send it if subscriber has not it
+             *  Check if event null or event in event_list
              */
-            let ev_ = gobj_event_type(subscriber, event, true);
-            if(ev_) {
-                if(ev_.event_flag & event_flag_t.EVF_SYSTEM_EVENT) {
-                    if(!gobj_has_event(subscriber, ev_.event_name, 0)) {
-                        continue;
+            let subs_flag = kw_get_int(publisher, subs, "subs_flag", 0, kw_flag_t.KW_REQUIRED);
+            let event_ = kw_get_str(publisher, subs, "event", "", kw_flag_t.KW_REQUIRED);
+            if(empty_string(event_) || strcasecmp(event_, event)===0) {
+                let __config__ = kw_get_dict(publisher, subs, "__config__", null, 0);
+                let __global__ = kw_get_dict(publisher, subs, "__global__", null, 0);
+                let __local__ = kw_get_dict(publisher, subs, "__local__", null, 0);
+                let __filter__ = kw_get_dict_value(publisher, subs, "__filter__", null, 0);
+
+                /*
+                 *  Check renamed_event: what the subscriber is sent
+                 */
+                let event_name = subs.renamed_event;   // a field read: this is the hot path
+                if(empty_string(event_name)) {
+                    event_name = event;
+                }
+
+                /*-------------------------------------*
+                 *  User filter method or filter parameter
+                 *  Return:
+                 *     -1  (broke),
+                 *      0  continue without publish,
+                 *      1  continue and publish
+                 *-------------------------------------*/
+                let topublish = 1;
+                if(publisher.gclass.gmt.mt_publication_filter) {
+                    topublish = publisher.gclass.gmt.mt_publication_filter(
+                        publisher,
+                        event,
+                        kw,  // not owned
+                        subscriber
+                    );
+                } else if(json_size(__filter__)>0) {
+                    /*  `kw_match_simple()` answers a BOOLEAN, and what is
+                     *  compared below is `topublish === 0`. `false === 0` is
+                     *  FALSE in javascript, so a filter that did not match fell
+                     *  straight through the guard and published anyway: the
+                     *  trace said 👎 and the subscriber got the event all the
+                     *  same. Normalize to the 1/0 the contract is written in
+                     *  (-1 break, 0 skip, 1 publish), which is what the C side
+                     *  passes around.  */
+                    topublish = kw_match_simple(kw, __filter__) ? 1 : 0;
+                    if(tracea) {
+                        trace_machine(sprintf(
+                            "💜💜🔄%s publishing with filter, event '%s', subscriber'%s', publisher %s",
+                            topublish?"👍":"👎",
+                            event?event:"",
+                            gobj_short_name(subscriber),
+                            gobj_short_name(publisher)
+                        ));
+                        trace_json(__filter__);
                     }
                 }
-            }
 
-            /*
-             *  One kw for every subscriber, unless this subscription rewrites
-             *  it (__local__ removes keys, __global__ adds them): then it gets
-             *  a twin of its own, as the C kernel does, so what one
-             *  subscription removes or adds reaches no other subscriber, nor
-             *  the publisher, nor the __filter__ of the next subscription.
-             *  Up to gobj-js 7.25.7 the kw was shared always, and one
-             *  subscription forged or stripped the event of everybody after
-             *  it. The twin is SHALLOW (a new top-level object, the nested
-             *  values shared), and __global__ goes in as a copy, so the
-             *  receiver may change what it got without touching the
-             *  subscription. A receiver of the SHARED kw that changes it must
-             *  change a copy of its own (C_IEVENT_CLI's mt_inject_event does).
-             */
-            let kw2publish = kw;
-            if(json_size(__local__)>0 || json_size(__global__)>0) {
-                kw2publish = json_object_update({}, kw);
-            }
-
-            /*
-             *  Remove local keys
-             */
-            if(json_size(__local__)>0) {
-                kw_pop(kw2publish,
-                    __local__ // not owned
-                );
-            }
-
-            /*
-             *  Apply transformation filters
-             *   TODO review, I think it was used only from c_agent
-             */
-            if(__config__) {
-//                json_t *jn_trans_filters = kw_get_dict_value(
-//                    publisher, __config__, "__trans_filter__", 0, 0
-//                );
-//                if(jn_trans_filters) {
-//                    kw2publish = apply_trans_filters(publisher, kw2publish, jn_trans_filters);
-//                }
-            }
-
-            /*
-             *  Add global keys
-             */
-            if(json_size(__global__)>0) {
-                json_object_update(kw2publish, json_deep_copy(__global__));
-            }
-
-            /*
-             *  Send event
-             */
-            if(tracea) {
-                if(__trace_machine_format__ === 1) {
-                    /*  The event as PUBLISHED and the one the subscriber is
-                     *  sent, which a `__rename_event_name__` can make
-                     *  different -- the C kernel prints both, and the pair is
-                     *  the only place the rename is visible. */
-                    trace_machine(sprintf("🔝🔄 %s (%s) %s%s",
-                        event?event:"",
-                        event_name?event_name:"",
-                        (!subscriber.running)?"!!":"",
-                        gobj_short_name(subscriber)
-                    ));
-                } else {
-                    trace_machine(sprintf("🔝🔄 mach(%s%s), st: %s, ev: %s (%s), from(%s%s)",
-                        (!subscriber.running)?"!!":"",
-                        gobj_short_name(subscriber),
-                        gobj_current_state(subscriber),
-                        event?event:"",
-                        event_name?event_name:"",
-                        (publisher && !publisher.running)?"!!":"",
-                        gobj_short_name(publisher)
-                    ));
+                if(topublish<0) {
+                    break;
+                } else if(!topublish) {
+                    /*
+                     *  Must not be published
+                     *  Next subs
+                     *
+                     *  `!topublish` and not `=== 0`: a filter or an
+                     *  mt_publication_filter that answers `false` means the same
+                     *  as 0, and a strict comparison with the number let it
+                     *  through.
+                     */
+                    continue;
                 }
-                if(__trace_gobj_ev_kw__(publisher) && json_object_size(kw2publish)) {
-                    trace_json_masked(kw2publish);
-                }
-            }
 
-            let ret_ = gobj_send_event(
-                subscriber,
-                event_name,
-                kw2publish,
-                publisher
-            );
-            if(ret_ < 0 && (subs_flag & subs_flag_t.__own_event__)) {
-                sent_count = -1; // Return of -1 indicates that someone owned the event
-                break;
-            }
-            ret += ret_;
-            sent_count++;
-
-            if(gobj_is_destroying(publisher)) {
                 /*
-                 *  break all, self publisher deleted
+                 *  Check if System event: don't send it if subscriber has not it
                  */
-                break;
+                let ev_ = gobj_event_type(subscriber, event, true);
+                if(ev_) {
+                    if(ev_.event_flag & event_flag_t.EVF_SYSTEM_EVENT) {
+                        if(!gobj_has_event(subscriber, ev_.event_name, 0)) {
+                            continue;
+                        }
+                    }
+                }
+
+                /*
+                 *  One kw for every subscriber, unless this subscription rewrites
+                 *  it (__local__ removes keys, __global__ adds them): then it gets
+                 *  a twin of its own, as the C kernel does, so what one
+                 *  subscription removes or adds reaches no other subscriber, nor
+                 *  the publisher, nor the __filter__ of the next subscription.
+                 *  Up to gobj-js 7.25.7 the kw was shared always, and one
+                 *  subscription forged or stripped the event of everybody after
+                 *  it. The twin is SHALLOW (a new top-level object, the nested
+                 *  values shared), and __global__ goes in as a copy, so the
+                 *  receiver may change what it got without touching the
+                 *  subscription. A receiver of the SHARED kw that changes it must
+                 *  change a copy of its own (C_IEVENT_CLI's mt_inject_event does).
+                 */
+                let kw2publish = kw;
+                if(json_size(__local__)>0 || json_size(__global__)>0) {
+                    kw2publish = json_object_update({}, kw);
+                }
+
+                /*
+                 *  Remove local keys
+                 */
+                if(json_size(__local__)>0) {
+                    kw_pop(kw2publish,
+                        __local__ // not owned
+                    );
+                }
+
+                /*
+                 *  Apply transformation filters
+                 *   TODO review, I think it was used only from c_agent
+                 */
+                if(__config__) {
+    //                json_t *jn_trans_filters = kw_get_dict_value(
+    //                    publisher, __config__, "__trans_filter__", 0, 0
+    //                );
+    //                if(jn_trans_filters) {
+    //                    kw2publish = apply_trans_filters(publisher, kw2publish, jn_trans_filters);
+    //                }
+                }
+
+                /*
+                 *  Add global keys
+                 */
+                if(json_size(__global__)>0) {
+                    json_object_update(kw2publish, json_deep_copy(__global__));
+                }
+
+                /*
+                 *  Send event
+                 */
+                if(tracea) {
+                    if(__trace_machine_format__ === 1) {
+                        /*  The event as PUBLISHED and the one the subscriber is
+                         *  sent, which a `__rename_event_name__` can make
+                         *  different -- the C kernel prints both, and the pair is
+                         *  the only place the rename is visible. */
+                        trace_machine(sprintf("🔝🔄 %s (%s) %s%s",
+                            event?event:"",
+                            event_name?event_name:"",
+                            (!subscriber.running)?"!!":"",
+                            gobj_short_name(subscriber)
+                        ));
+                    } else {
+                        trace_machine(sprintf("🔝🔄 mach(%s%s), st: %s, ev: %s (%s), from(%s%s)",
+                            (!subscriber.running)?"!!":"",
+                            gobj_short_name(subscriber),
+                            gobj_current_state(subscriber),
+                            event?event:"",
+                            event_name?event_name:"",
+                            (publisher && !publisher.running)?"!!":"",
+                            gobj_short_name(publisher)
+                        ));
+                    }
+                    if(__trace_gobj_ev_kw__(publisher) && json_object_size(kw2publish)) {
+                        trace_json_masked(kw2publish);
+                    }
+                }
+
+                let ret_ = gobj_send_event(
+                    subscriber,
+                    event_name,
+                    kw2publish,
+                    publisher
+                );
+                if(ret_ < 0 && (subs_flag & subs_flag_t.__own_event__)) {
+                    sent_count = -1; // Return of -1 indicates that someone owned the event
+                    break;
+                }
+                ret += ret_;
+                sent_count++;
+
+                if(frame.destroyed || gobj_is_destroying(publisher)) {
+                    /*
+                     *  break all, self publisher deleted
+                     */
+                    break;
+                }
             }
         }
+    } finally {
+        pop_dispatch_frame(frame);
     }
 
-    if(!sent_count) {
+    if(!sent_count && !frame.destroyed) {
         if(!ev || !(ev.event_flag & event_flag_t.EVF_NO_WARN_SUBS)) {
             log_warning(`${gobj_short_name(publisher)}: Publish event WITHOUT subscribers, ev ${event}`);
             // if(__trace_gobj_ev_kw__(publisher)) {
@@ -5446,6 +5946,8 @@ export {
     YUNETA_VERSION,
     data_type_t,
     sdata_flag_t,
+    command_parameter_from_text,
+    command_parameter_from_json,
     SDataDesc,
     SDATA,
     SDATACM,

@@ -7,6 +7,102 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.22
+
+Parity with the C kernel of 7.26.10 (the twenty-fifth review): the masking,
+the reading of an attribute's value, and the check of a gobj destroyed under
+code that still runs on it.
+
+- **fix: a token in the query of a URL is masked**, as in the C kernel (`GET
+  https://my-file-server.com/get?token=abc&x=1`, `{url:
+  "https://cdn.public.example/x?access_token=abc"}`): the name of a
+  `name=value` was the whole word before the `=`, host and path included. The
+  run of name characters before the `=` is judged too. In every published
+  version.
+- **fix: what 7.26.19 masked is masked again.** 7.26.21 said that nothing
+  7.26.9 hid is shown, but it compared with 7.26.20. Against 7.26.19 it showed
+  a hidden value in 66 of 232 444 texts: the value of a name of a segment
+  jumped over a `name=value` (`db_pass='password'=hunter2`). 7.26.19's reading
+  is kept whole.
+- **fix: a name is judged as the C kernel judges it**: its case is folded in
+  ASCII (`toLowerCase()` folded the Kelvin sign into `k`), and it is judged by
+  its last 128 bytes of UTF-8, not by 128 UTF-16 units (`"file_" + 62×"é" +
+  "_password=x"` was masked by C and shown by JS). The price, as in C: a name
+  over 128 bytes whose secret part lies before those 128 bytes shows its value
+  (2 826 of 45 564 texts built around the cap and the case; none of the
+  272 444 generic texts).
+- **A JWT header whose only dots end it is no JWT** (`eyJhIjoxfQ.`): 7.26.21
+  masked it, against its doc.
+- **fix: `C_IEVENT_CLI` logs no text of the server unmasked**: the error of
+  `JSON.parse()` (V8 quotes a slice of the frame, one that can begin inside a
+  secret's name: `..."assword": hunter2}`), the frame dropped (its first 256
+  characters, raw), the names of the event, the service and the role, and the
+  close reason. Masked, then capped on a whole character. In every published
+  version. Test `ievent_peer_logs`.
+- **The masking is as fast as in 7.26.20 again** on the MB of `abcd=`: 51 ms
+  (112 ms in 7.26.21, 53 in 7.26.20). 7.26.21 judged each name twice, each time
+  with a substring, `toLowerCase()` and two regular expressions, and its
+  7.26.20 reading allocated an array at every character. `pin="` is slower (73
+  ms against 60): the price of keeping 7.26.19's reading. The test of linearity
+  is a ratio of 1 MB to 256 KB, not a wall-clock cap (the cap of 500 ms failed
+  under load). C and JS answer the same on 318 008 texts, 30 000 jsons and
+  286 445 names.
+- **fix: a value written to an attribute is read as its type, the same way as
+  the C kernel** (`json2item()` and now `gobj_write_attr()`, which wrote its
+  value raw; the kw of `gobj_create()`, `gobj_write_attrs()`, the persistent
+  attrs; new `command_parameter_from_json()` / `command_parameter_from_text()`,
+  the C parser's grammar). `parseInt("12abc")` wrote 12, `Number("")` 0, a
+  boolean was `false` for `"maybe"` or `"yes"`, and a refusal said only *"attr
+  NaN"*. A string for a boolean, integer, real, list or dict is read from its
+  text, and a number or a boolean as the exact type (`2.7` to an integer
+  refused). A refused value is not written: one `log_error` names the attr, its
+  type, why and the value masked and capped to 64 characters (new `SDF_SECRET`
+  flag, the C bit: its value never shown), and the attr keeps its value. In a
+  kw, an `undefined` value is an absent key; `gobj_write_attr()` of
+  `undefined` to a typed attr is refused. The typed writers read the value as
+  THEIR type by the same grammar: `gobj_write_integer_attr()` refuses `2.5`,
+  `NaN` and `"12abc"` (`parseInt()` wrote 2 and 12), `gobj_write_bool_attr()`
+  reads `"yes"` as `true`, and `gobj_write_str_attr()` writes
+  `null`/`undefined` as `""` (they were the texts `"null"` and `"undefined"`).
+  `set_timeout()` and `set_timeout_periodic()` round the time to whole
+  milliseconds (0.3 * 1000 is 300.00000000000006). A table of 71 cases
+  (`tests/fixtures/attr_types_parity.json`) is read by the tests of both
+  kernels, with the same outcome for each. Measured on the test suites of
+  gobj-ui, gui_agent, gui_treedb, wattyzer and estadodelaire: no value
+  refused. Test `attr_types.test.js`.
+- **`gobj_destroy()` says when it destroys a gobj under code that still runs
+  on it**, with the C kernel's check (7.26.10): *"Destroying a gobj while its
+  tree is publishing"* (a subscriber destroys the publisher or an ancestor of
+  it, or a publisher destroys itself in an action its subscriber sent it) and
+  *"Destroying a gobj while one of its actions is still running"*, naming
+  `destroying`, `publisher`/`running`, `event`, `destroyer`, `inner_event`,
+  with the stack. The destroy is done all the same. Not an error: a gobj
+  destroying itself in its own action, a host destroying its transport in the
+  transport's `EV_STOPPED`. The runtime keeps a frame per action, publication
+  and framework method; the walks of `gobj_start_tree()`/`gobj_stop_tree()` no
+  longer go down into a gobj that ended itself in its own
+  `mt_start`/`mt_stop`. Cost: +7 ns per `gobj_send_event()` (15 -> 22 ns
+  median, Node 24); a publication to 4 subscribers unchanged within noise.
+  Test `destroy_under_dispatch`.
+- **fix(`C_TIMER`): a pure child PUBLISHES its timeout to its parent, which it
+  subscribes in `mt_create`, as the C timer does.** Up to 7.26.21 it SENT it to
+  its parent, also when it had a `subscriber`, so a host that ended its timer
+  in the timer's `EV_TIMEOUT` broke the kernel's rule in C and said nothing in
+  JS.
+- **fix(`C_IEVENT_CLI`): a pure child PUBLISHES its events, to its parent,
+  which it subscribes in `mt_create` -- the C transport's contract.** Up to
+  7.26.21 it SENT `EV_ON_ID_NAK`, `EV_ON_OPEN` and every message that names no
+  service to its parent and subscribed nobody: the parent never heard
+  `EV_ON_CLOSE` / `EV_ON_OPEN_ERROR`, a `subscriber` other than the parent
+  never heard the three, and a host ending the transport in its
+  `EV_ON_ID_NAK` was not reported as C reports it. One subscription (the
+  `subscriber` attr, else the parent), so a parent that is also the subscriber
+  hears each event once. No consumer hosts it as a pure child. Test
+  `ievent_pure_child`.
+- Deploy note: this version reaches the apps in the same round as gobj-ui
+  7.26.43 and gui_agent 0.29.54 / gui_treedb 0.17.120, which defer the five
+  destroys it would otherwise report in the console.
+
 ## 7.26.21
 
 Parity with the C kernel of the twenty-fourth review (yunovatios

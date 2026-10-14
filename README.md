@@ -282,7 +282,9 @@ const attrs_table = [
 
 **Data types (`data_type_t`):** `DTP_STRING`, `DTP_BOOLEAN`, `DTP_INTEGER`, `DTP_REAL`, `DTP_LIST`, `DTP_DICT`, `DTP_JSON`, `DTP_POINTER`
 
-**Flags (`sdata_flag_t`):** `SDF_RD`, `SDF_WR`, `SDF_PERSIST`, `SDF_STATS`, `SDF_AUTHZ_R`, `SDF_AUTHZ_W`, `SDF_REQUIRED`, `SDF_VOLATIL`
+**Flags (`sdata_flag_t`):** `SDF_RD`, `SDF_WR`, `SDF_PERSIST`, `SDF_STATS`, `SDF_AUTHZ_R`, `SDF_AUTHZ_W`, `SDF_REQUIRED`, `SDF_VOLATIL`, `SDF_SECRET`
+
+**A value is read as the attribute's type, as in C** (`gobj_write_attr()`, the kw of `gobj_create()`, `gobj_write_attrs()`, the persistent attrs; 7.26.22+): a string for a boolean, integer, real, list or dict is read from its text by the C command parser's grammar (`command_parameter_from_json()`: `"yes"` is `true`, `"42"` is 42, `"007"` and `"12abc"` are refused), a number or a boolean as the exact type (`2.7` to an integer is refused). A refused value is not written: one `log_error` names the attr, its type, why and the value (masked, capped; a `SDF_SECRET` one never shown). A key of a kw whose value is `undefined` is an absent key; `gobj_write_attr()` of `undefined` to a typed attr is refused. The typed writers read the value as THEIR type by the same grammar (`gobj_write_integer_attr(g, "x", 2.5)` is refused, `gobj_write_bool_attr(g, "on", "yes")` is `true`), and `gobj_write_str_attr()` writes `null`/`undefined` as `""`, never the text `"null"`.
 
 ### Events & Pub-Sub
 
@@ -413,6 +415,45 @@ gobj_is_playing(gobj)      // → boolean
 gobj_is_destroying(gobj)   // → boolean
 gobj_is_volatil(gobj)      // → boolean
 gobj_is_pure_child(gobj)   // → boolean
+```
+
+**A gobj is not destroyed under code that still runs on it** (7.26.22+, as the
+C kernel since 7.26.10). `gobj_publish_event()` and `gobj_send_event()` run
+synchronously, and the code of the publisher (or of the outer action) goes on
+when they return. So `gobj_destroy()` logs an ERROR with the stack when it
+destroys the publisher of a publication in progress, or one of its ancestors —
+*"Destroying a gobj while its tree is publishing"* — or a gobj whose outer
+action is still running — *"Destroying a gobj while one of its actions is
+still running"*. The line names `destroying`, `publisher`/`running`, `event`,
+`destroyer` and `inner_event`. The destroy is done all the same. A gobj that
+destroys itself in its own action, and a host that destroys its transport in
+the transport's `EV_STOPPED`, are not errors.
+
+The fix is to leave the stack: post an event to yourself, and destroy in its
+action. The event is an INPUT event of your gclass (FSM and `event_types`):
+
+```javascript
+// Wrong: EV_TIMEOUT comes from the C_TIMER child, inside its publication.
+function ac_timeout(gobj, event, kw, src) {
+    gobj_stop(src);
+    gobj_destroy(src);
+    return 0;
+}
+
+// Right: the destroy runs on the next turn, from a clean stack.
+function ac_timeout(gobj, event, kw, src) {
+    gobj_post_event(gobj, "EV_TIMER_DONE", {timer: gobj_name(src)}, gobj);
+    return 0;
+}
+function ac_timer_done(gobj, event, kw, src) {
+    let timer = gobj.priv.timer;    // resolve the identity the kw carries
+    if(timer && gobj_name(timer) === kw.timer) {
+        gobj_stop(timer);
+        gobj_destroy(timer);
+        gobj.priv.timer = null;
+    }
+    return 0;
+}
 ```
 
 ### State Machine
@@ -678,6 +719,7 @@ mask_secrets_inline("curl -H 'Authorization: Bearer abc' u")
 mask_secrets_inline("sent Bearer mF_9.B5f-4.1JqM")  // → "sent Bearer ********"
 mask_secrets_inline("the bearer of this letter")    // → null: prose
 mask_secrets_inline("\"password\": hunter2")        // → "\"password\": ********"
+mask_secrets_inline("GET https://h/get?token=abc&x=1")  // → "GET https://h/get?token=********&x=1"
 json_mask_secrets({user: "a", password: "x"})  // → {user: "a", password: "********"}
 json_mask_secrets({note: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"})
                                           // → {note: "********"}: a JWT under any key
@@ -692,9 +734,13 @@ one a cap cut), and after `Bearer` or `Basic` the word that can be a credential
 -- quoted, after the scheme doubled, or not a word of prose (a digit, a symbol,
 a character that is no ASCII, its case mixed, 24 characters or more; for
 `Bearer` 8 at least, for `Basic` a run of base64 that decodes to a
-`user:password`). Each rule judges the text as it came, and a run of
-characters to mask is one `********`: nothing that the masking of 7.26.9 hid is
-shown, but the word after a bare `Bearer` that cannot be a credential. A key
+`user:password`). The name of a `name=value` is also the run of name
+characters before the `=`, as in a query string (`https://h/get?token=x`). A
+name is judged by its last 128 bytes of UTF-8 and its case folded in ASCII, as
+C judges it. Each rule judges the text as it came, and a run of characters to
+mask is one `********`: nothing that 7.26.19 or 7.26.20 masked is shown, but
+the word after a bare `Bearer` that cannot be a credential, and a name that C
+judges otherwise (over 128 bytes, or with a letter that is no ASCII). A key
 is judged as a name, never as a value: a key that is itself a credential (a
 dict keyed by tokens, `{"eyJ...": 1}`) is shown as it is. A NUL in a string is
 read as a blank; linear and bounded (a text over 4 MB is not shown at all).
@@ -910,7 +956,11 @@ set_timeout_periodic(timer_gobj, 1000);
 clear_timeout(timer_gobj);
 ```
 
-Events published: `EV_TIMEOUT`, `EV_TIMEOUT_PERIODIC`
+Events published: `EV_TIMEOUT`, `EV_TIMEOUT_PERIODIC`. They go to the
+`subscriber` attr, else, for a pure child, to its parent, which the timer
+subscribes in `mt_create` — the C timer's rule. Up to 7.26.21 a pure child
+SENT the timeout to its parent instead of publishing it (and to its parent
+even when it had a `subscriber`).
 
 Attributes: `subscriber`, `periodic`, `msec`
 
@@ -931,6 +981,8 @@ let remote = gobj_create_service("backend", "C_IEVENT_CLI", {
 ```
 
 Key attributes: `url`, `jwt`, `wanted_yuno_role`, `wanted_yuno_name`, `wanted_yuno_service`, `remote_yuno_role`, `remote_yuno_name`, `remote_yuno_service`, `required_services`, `timeout_retry`, `timeout_retry_max`
+
+Its events (`EV_ON_OPEN`, `EV_ON_CLOSE`, `EV_ON_OPEN_ERROR`, `EV_ON_ID_NAK` and every message that names no service) are PUBLISHED: to the `subscriber` attr, else, for a pure child, to its parent, which it subscribes in `mt_create` — one subscription, as the C transport. Up to 7.26.21 a pure child SENT three of them to its parent and subscribed nobody, so its parent never heard `EV_ON_CLOSE` / `EV_ON_OPEN_ERROR`.
 
 **`required_services`** (default `[]`) is the list this link advertises in its
 identity_card, which the remote's `C_AUTHZ` uses to authorize commands. It is

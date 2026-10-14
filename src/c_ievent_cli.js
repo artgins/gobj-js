@@ -65,6 +65,7 @@ import {
     msg_iev_get_msg_type,
     trace_json,
     trace_json_masked,
+    mask_secrets_inline,
     json_deep_copy,
     json_object_update,
     is_object,
@@ -185,10 +186,14 @@ function mt_create(gobj)
     gobj_write_str_attr(gobj, "wanted_yuno_service", priv.remote_yuno_service);
 
     /*
-     *  SERVICE subscription model
+     *  SERVICE subscription model, and a pure child subscribes its parent:
+     *  the C transport's. Every event is PUBLISHED, to one subscription.
      */
-    const subscriber = gobj_read_pointer_attr(gobj, "subscriber");
+    let subscriber = gobj_read_pointer_attr(gobj, "subscriber");
     if(subscriber) {
+        gobj_subscribe_event(gobj, null, {}, subscriber);
+    } else if(gobj_is_pure_child(gobj)) {
+        subscriber = gobj_parent(gobj);
         gobj_subscribe_event(gobj, null, {}, subscriber);
     }
 }
@@ -701,6 +706,34 @@ function close_websocket(gobj, code = 1000, reason = "")
 }
 
 /***************************************************************
+ *  A text of the server -- a frame, the name of an event, of a
+ *  service, of a role -- as a log shows it: masked, then capped on a
+ *  whole character (capped first, a credential the cap cut would
+ *  show its first characters). As the C kernel shows the name of an
+ *  event that is not public (mask_secrets_inline_capped()).
+ ***************************************************************/
+const PEER_NAME_SHOWN = 64;
+const PEER_FRAME_SHOWN = 256;
+
+function peer_text_shown(text, max)
+{
+    let s = String(text);
+    let masked = mask_secrets_inline(s);
+    if(masked !== null) {
+        s = masked;
+    }
+    if(s.length > max) {
+        let n = max;
+        let code = s.charCodeAt(n);
+        if(code >= 0xDC00 && code <= 0xDFFF) {
+            n--;    // not half of a pair of surrogates
+        }
+        s = s.substring(0, n);
+    }
+    return s;
+}
+
+/***************************************************************
  *      Trace intra event
  ***************************************************************/
 function trace_inter_event(gobj, prefix, iev)
@@ -888,7 +921,11 @@ function iev_create_from_json(gobj, data)
     try {
         x = JSON.parse(data);
     } catch (e) {
-        log_warning(`${gobj_short_name(gobj)}: parsing inter_event json: ${e}`);
+        /*  Not the message of the error: it quotes a slice of the frame,
+         *  and a slice that begins inside a secret's name is no name.  */
+        let at = /position (\d+)/.exec(String(e && e.message));
+        log_warning(`${gobj_short_name(gobj)}: parsing inter_event json: frame is not json` +
+            `${at? ", at position " + at[1] : ""}, ${String(data).length} characters`);
         return null;
     }
 
@@ -1038,7 +1075,8 @@ function ac_on_close(gobj, event, kw, src)
 
     set_remote_log_functions(); // clean remote log
 
-    log_warning(`${gobj_short_name(gobj)}: WebSocket closed ${url} (Code: ${kw.code}, Reason: "${kw.reason}", Clean: ${kw.was_clean})`);
+    log_warning(`${gobj_short_name(gobj)}: WebSocket closed ${url} (Code: ${kw.code}, ` +
+        `Reason: "${peer_text_shown(kw.reason, PEER_FRAME_SHOWN)}", Clean: ${kw.was_clean})`);
 
     // Cleanup WebSocket event handlers
     if(priv.websocket) {
@@ -1218,14 +1256,7 @@ function ac_identity_card_ack(gobj, event, kw, src)
             "remote_yuno_service": src_service
         };
 
-        /*
-         *  SERVICE subscription model
-         */
-        if(gobj_is_pure_child(gobj)) {
-            gobj_send_event(gobj_parent(gobj), "EV_ON_ID_NAK", kw_nak, gobj);
-        } else {
-            gobj_publish_event(gobj, "EV_ON_ID_NAK", kw_nak);
-        }
+        gobj_publish_event(gobj, "EV_ON_ID_NAK", kw_nak);
 
     } else {
         gobj_change_state(gobj, "ST_SESSION");
@@ -1247,14 +1278,7 @@ function ac_identity_card_ack(gobj, event, kw, src)
                 "services_roles": services_roles,
             };
 
-            /*
-             *  SERVICE subscription model
-             */
-            if(gobj_is_pure_child(gobj)) {
-                gobj_send_event(gobj_parent(gobj), "EV_ON_OPEN", kw_on_open, gobj);
-            } else {
-                gobj_publish_event(gobj, "EV_ON_OPEN", kw_on_open);
-            }
+            gobj_publish_event(gobj, "EV_ON_OPEN", kw_on_open);
         }
 
         priv.inside_on_open = false;
@@ -1286,7 +1310,7 @@ function ac_on_message(gobj, event, kw, src)
          *  parser), a capped dump, and the frame is dropped.  */
         log_warning(
             `${gobj_short_name(gobj)}: frame dropped from ${url}: ` +
-            `${String(kw.data).substring(0, 256)}`
+            `${peer_text_shown(kw.data, PEER_FRAME_SHOWN)}`
         );
         return -1;
     }
@@ -1328,7 +1352,8 @@ function ac_on_message(gobj, event, kw, src)
             }
             // iev_kw consumed
         } else {
-            log_error(`${gobj_short_name(gobj)}: event UNKNOWN in not-session state ${iev_event}`);
+            log_error(`${gobj_short_name(gobj)}: event UNKNOWN in not-session state ` +
+                `${peer_text_shown(iev_event, PEER_NAME_SHOWN)}`);
         }
         close_websocket(gobj);
         return -1;
@@ -1353,7 +1378,8 @@ function ac_on_message(gobj, event, kw, src)
     // Check yuno_name too
 
     if(iev_dst_role.toLowerCase() !== gobj_yuno_role().toLowerCase()) {
-        log_error(`"It's not my role, dst_role: ${iev_dst_role}, my_role: ${gobj_yuno_role()}`);
+        log_error(`"It's not my role, dst_role: ${peer_text_shown(iev_dst_role, PEER_NAME_SHOWN)}, ` +
+            `my_role: ${gobj_yuno_role()}`);
         return 0;
     }
 
@@ -1371,7 +1397,8 @@ function ac_on_message(gobj, event, kw, src)
          */
         log_warning(
             `${gobj_short_name(gobj)}: subscription event ignored, I'm client ` +
-            `(service: ${iev_dst_service}, event: ${iev_event})`
+            `(service: ${peer_text_shown(iev_dst_service, PEER_NAME_SHOWN)}, ` +
+            `event: ${peer_text_shown(iev_event, PEER_NAME_SHOWN)})`
         );
         return -1;
     }
@@ -1385,7 +1412,8 @@ function ac_on_message(gobj, event, kw, src)
          */
         log_warning(
             `${gobj_short_name(gobj)}: unsubscription event ignored, I'm client ` +
-            `(service: ${iev_dst_service}, event: ${iev_event})`
+            `(service: ${peer_text_shown(iev_dst_service, PEER_NAME_SHOWN)}, ` +
+            `event: ${peer_text_shown(iev_event, PEER_NAME_SHOWN)})`
         );
         return -1;
     }
@@ -1430,11 +1458,14 @@ function ac_on_message(gobj, event, kw, src)
     if(!empty_string(iev_dst_service)) {
         let gobj_service = gobj_find_service(iev_dst_service, false);
         if(!gobj_service) {
-            log_warning(`${gobj_short_name(gobj)}: event for a service that is gone, DROPPED: service '${iev_dst_service}', ev '${iev_event}'`);
+            log_warning(`${gobj_short_name(gobj)}: event for a service that is gone, DROPPED: ` +
+                `service '${peer_text_shown(iev_dst_service, PEER_NAME_SHOWN)}', ` +
+                `ev '${peer_text_shown(iev_event, PEER_NAME_SHOWN)}'`);
             return 0;
         }
         if(!gobj_has_event(gobj_service, iev_event, event_flag_t.EVF_PUBLIC_EVENT)) {
-            log_error(`${gobj_short_name(gobj)}: Service found but no event or not public, service '${gobj_short_name(gobj_service)}', ev '${iev_event}'`);
+            log_error(`${gobj_short_name(gobj)}: Service found but no event or not public, ` +
+                `service '${gobj_short_name(gobj_service)}', ev '${peer_text_shown(iev_event, PEER_NAME_SHOWN)}'`);
             return -1;
         }
         gobj_send_event(gobj_service, iev_event, iev_kw, gobj);
@@ -1446,11 +1477,7 @@ function ac_on_message(gobj, event, kw, src)
      *  so it belongs to whoever subscribed here. This is the path the
      *  check above protects, not one it replaces.
      */
-    if(gobj_is_pure_child(gobj)) {
-        gobj_send_event(gobj_parent(gobj), iev_event, iev_kw, gobj);
-    } else {
-        gobj_publish_event(gobj, iev_event, iev_kw);
-    }
+    gobj_publish_event(gobj, iev_event, iev_kw);
 
     return 0;
 }

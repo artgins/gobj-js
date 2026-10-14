@@ -446,9 +446,10 @@ const SECRET_NAME_JOINED = ["apikey", "sessionid", "sessionkey", "authdata"];
 /*
  *  ... or one of these as a WHOLE segment, a run of letters and digits
  *  (pass, db_pass, user-pin, sim_pin, otp, user[pin]): inside a word they
- *  are other words (passive, bypass, compass, ping, mapping, spinner, otpx)
+ *  are other words (passive, bypass, compass, ping, mapping, spinner,
+ *  otpx). Up to 7.26.19 they were no names (NAMES_7_26_9).
  */
-const SECRET_NAME_SEGMENTS = new Set(["pass", "pin", "otp"]);
+const SECRET_NAME_SEGMENTS = ["pass", "pin", "otp"];
 /*
  *  A name with one of these SEGMENTS (split by '_', '-', '.' and blanks)
  *  is not a secret: it names something ABOUT a credential (token_endpoint,
@@ -456,11 +457,167 @@ const SECRET_NAME_SEGMENTS = new Set(["pass", "pin", "otp"]);
  *  and `cert` are no parts: a key is the key of a record as often as a
  *  credential, and a certificate is public.
  */
-const NOT_SECRET_SEGMENTS = new Set([
+const NOT_SECRET_SEGMENTS = [
     "endpoint", "url", "uri", "domain", "path", "file", "public", "pub",
     "count", "counts", "type", "name", "len", "length", "size", "max", "min",
     "ttl", "timeout", "expiry", "expires", "mode"
-]);
+];
+
+/*
+ *  Each list by the letter its words begin with: at a character of a
+ *  name only the words that begin with it are compared
+ */
+function words_by_letter(list)
+{
+    const by_letter = new Array(128).fill(null);
+    for(const word of list) {
+        const c = word.charCodeAt(0);
+        if(!by_letter[c]) {
+            by_letter[c] = [];
+        }
+        by_letter[c].push(word);
+    }
+    return by_letter;
+}
+const SECRET_PARTS_BY_LETTER = words_by_letter(SECRET_NAME_PARTS);
+const SECRET_JOINED_BY_LETTER = words_by_letter(SECRET_NAME_JOINED);
+const SECRET_SEGMENTS_BY_LETTER = words_by_letter(SECRET_NAME_SEGMENTS);
+const NOT_SECRET_BY_LETTER = words_by_letter(NOT_SECRET_SEGMENTS);
+
+/*
+ *  The case is folded in ASCII only, as the C kernel folds it: a
+ *  character that is no ASCII is no letter of a name (the Kelvin sign is
+ *  no 'k', whatever toLowerCase() makes of it)
+ */
+function ascii_lower_code(code)
+{
+    return (code >= 65 && code <= 90)? code + 32 : code;
+}
+
+function is_name_joiner_code(code)
+{
+    return code === 95 || code === 45 || code === 46 || code === 32 || code === 9;  // _ - . blank tab
+}
+
+/*
+ *  Is the run of `str` from `from` to `to` one of the words of
+ *  `by_letter` (words_by_letter(), any case)?
+ */
+function name_segment_in(str, from, to, by_letter)
+{
+    const n = to - from;
+    if(n === 0) {
+        return false;
+    }
+    const c0 = ascii_lower_code(str.charCodeAt(from));
+    const words = (c0 < 128)? by_letter[c0] : null;
+    if(!words) {
+        return false;
+    }
+    for(let w = 0; w < words.length; w++) {
+        const word = words[w];
+        if(word.length !== n) {
+            continue;
+        }
+        let i = 1;
+        while(i < n && ascii_lower_code(str.charCodeAt(from + i)) === word.charCodeAt(i)) {
+            i++;
+        }
+        if(i === n) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ *  Does `part` (lower case) begin at str[i], before `to`? For a joined
+ *  part, '_', '-', '.' and blanks after its first letter are skipped.
+ */
+function name_part_at(str, to, i, part, joined)
+{
+    let j = i;
+    let k = 0;
+    while(k < part.length) {
+        if(j >= to) {
+            return false;
+        }
+        const code = str.charCodeAt(j);
+        if(joined && k > 0 && is_name_joiner_code(code)) {
+            j++;
+            continue;
+        }
+        if(ascii_lower_code(code) !== part.charCodeAt(k)) {
+            return false;
+        }
+        j++;
+        k++;
+    }
+    return true;
+}
+
+/*
+ *  Is the name from `from` to `to` of `str` a secret's? The C kernel's
+ *  secret_name_check(), on the same rules: with `about_wins` a segment
+ *  about a credential makes it no secret's, with `by_segments` pass, pin
+ *  and otp as whole segments are names too.
+ */
+function secret_name_check(str, from, to, about_wins, by_segments)
+{
+    if(to - from < 3) {
+        return false;   // the shortest part is three letters ("pwd", "jwt", "pin")
+    }
+    if(about_wins) {
+        let seg = from;
+        for(let i = from; i <= to; i++) {
+            if(i < to && !is_name_joiner_code(str.charCodeAt(i))) {
+                continue;
+            }
+            if(name_segment_in(str, seg, i, NOT_SECRET_BY_LETTER)) {
+                return false;
+            }
+            seg = i + 1;
+        }
+    }
+    if(by_segments) {
+        let seg = from;
+        for(let i = from; i <= to; i++) {
+            if(i < to && is_ascii_alnum_code(str.charCodeAt(i))) {
+                continue;
+            }
+            if(name_segment_in(str, seg, i, SECRET_SEGMENTS_BY_LETTER)) {
+                return true;
+            }
+            seg = i + 1;
+        }
+    }
+    let has_priv = false;
+    let has_key = false;
+    for(let i = from; i < to; i++) {
+        const c = ascii_lower_code(str.charCodeAt(i));
+        if(c >= 128) {
+            continue;
+        }
+        const parts = SECRET_PARTS_BY_LETTER[c];
+        for(let k = 0; parts && k < parts.length; k++) {
+            if(name_part_at(str, to, i, parts[k], false)) {
+                return true;
+            }
+        }
+        const joined = SECRET_JOINED_BY_LETTER[c];
+        for(let k = 0; joined && k < joined.length; k++) {
+            if(name_part_at(str, to, i, joined[k], true)) {
+                return true;
+            }
+        }
+        if(c === 112 && !has_priv) {            // 'p'
+            has_priv = name_part_at(str, to, i, "priv", false);
+        } else if(c === 107 && !has_key) {     // 'k'
+            has_key = name_part_at(str, to, i, "key", false);
+        }
+    }
+    return has_priv && has_key;
+}
 
 /************************************************************
  *  TRUE if `name` is the name of a secret: a password, a token,
@@ -468,46 +625,63 @@ const NOT_SECRET_SEGMENTS = new Set([
  ************************************************************/
 function is_secret_name(name)
 {
-    if(typeof name !== "string" || name.length < 3) {
-        return false;   // the shortest part is three letters ("pwd", "jwt", "pin")
-    }
-    let lower = name.toLowerCase();
-    let hit = false;
-    for(const segment of lower.split(/[^a-z0-9]+/)) {
-        if(SECRET_NAME_SEGMENTS.has(segment)) {
-            hit = true;     // a whole segment
-            break;
-        }
-    }
-    if(!hit) {
-        for(const part of SECRET_NAME_PARTS) {
-            if(lower.indexOf(part) >= 0) {
-                hit = true;
-                break;
-            }
-        }
-    }
-    if(!hit) {
-        let joined = lower.replace(/[_\-. \t]/g, "");
-        for(const part of SECRET_NAME_JOINED) {
-            if(joined.indexOf(part) >= 0) {
-                hit = true;
-                break;
-            }
-        }
-    }
-    if(!hit) {
-        hit = (lower.indexOf("priv") >= 0 && lower.indexOf("key") >= 0);
-    }
-    if(!hit) {
+    if(typeof name !== "string") {
         return false;
     }
-    for(const segment of lower.split(/[_\-. \t]/)) {
-        if(NOT_SECRET_SEGMENTS.has(segment)) {
-            return false;   // a name ABOUT a credential
-        }
+    return secret_name_check(name, 0, name.length, true, true);
+}
+
+/*
+ *  The names a reading judges by: the names of now, or the names of
+ *  7.26.19 (the C kernel's 7.26.9) -- by their parts only, pass, pin
+ *  and otp no names. As the C kernel's secret_names_t.
+ */
+const NAMES_NOW = 0;
+const NAMES_7_26_9 = 1;
+
+/*
+ *  Is the name from `from` to `to` of `str` a secret's, judged by its
+ *  LAST MASK_MAX_NAME bytes of UTF-8, as the C kernel judges it (the
+ *  part that says what it is comes last: <130 x>_password)? A character
+ *  the cut splits is, in C, bytes that are no letter and no joiner:
+ *  "\u0080" stands for them.
+ */
+function is_secret_name_tail(str, from, to, names)
+{
+    const by_segments = (names === NAMES_NOW);
+    if((to - from) * 3 <= MASK_MAX_NAME) {
+        return secret_name_check(str, from, to, true, by_segments);   // no cut: 3 bytes a unit at most
     }
-    return true;
+    let bytes = 0;
+    let i = to;
+    let partial = false;
+    while(i > from) {
+        const code = str.charCodeAt(i - 1);
+        let n = 3;
+        let units = 1;
+        if(code < 0x80) {
+            n = 1;
+        } else if(code < 0x800) {
+            n = 2;
+        } else if(code >= 0xDC00 && code <= 0xDFFF && i - 2 >= from) {
+            const high = str.charCodeAt(i - 2);
+            if(high >= 0xD800 && high <= 0xDBFF) {
+                n = 4;      // a pair of surrogates: one character of 4 bytes
+                units = 2;
+            }
+        }
+        if(bytes + n > MASK_MAX_NAME) {
+            partial = (bytes < MASK_MAX_NAME);
+            break;
+        }
+        bytes += n;
+        i -= units;
+    }
+    if(partial) {
+        const name = "\u0080" + str.substring(i, to);
+        return secret_name_check(name, 0, name.length, true, by_segments);
+    }
+    return secret_name_check(str, i, to, true, by_segments);
 }
 
 /************************************************************
@@ -554,10 +728,11 @@ function inline_secret_value_end(str, p, outer)
  *  jwt_len() / scheme_credential(), the shapes the agent's audit
  *  record redacts, and the schemes of an HTTP Authorization:
  *    - a JWT or a JWE: "eyJ" (the base64url of '{"') at the start
- *      of a word, base64url, and a '.' after it -- three parts
- *      joined by '.' (a JWS), five (a JWE), or fewer when a cap cut
- *      it; the dots at the end of the run are not its own (a JWT
- *      ends a sentence: "... eyJ.eyJ.sig.");
+ *      of a word, base64url, and a '.' of its own after it -- three
+ *      parts joined by '.' (a JWS), five (a JWE), or fewer when a cap
+ *      cut it; the dots at the end of the run are not its own (a JWT
+ *      ends a sentence: "... eyJ.eyJ.sig."), so a run whose only
+ *      dots end it is a header and no JWT ("eyJhIjoxfQ.");
  *    - the credential after the scheme word "Bearer" or "Basic"
  *      (any case, a word of its own): scheme_credential().
  ************************************************************/
@@ -617,9 +792,9 @@ function jwt_len(str, p)
         return 0;   // inside a word, or a part of a dotted run
     }
     let e = p;
-    let dotted = false;
+    let dotted = false;     // a '.' with a part after it: its own
     while(e < str.length && (is_base64url_code(str.charCodeAt(e)) || str[e] === ".")) {
-        if(str[e] === ".") {
+        if(e > p && str[e] !== "." && str[e-1] === ".") {
             dotted = true;
         }
         e++;
@@ -766,16 +941,16 @@ function is_basic_credential(str, w, n)
 
 /*
  *  Where the word after a scheme ends: a blank, an end of line, a
- *  quote, one of ,;}] (or a NUL, where C stops) -- where the token of
- *  7.26.9 ended
+ *  quote, one of ,;}] (or a NUL, where C stops) -- where the token
+ *  after "Bearer" ended in gobj-js 7.26.20
  */
 const SCHEME_WORD_STOPS = " \t\r\n\"',;}]\u0000";
 
 /*
  *  The credential after a scheme word that begins at `p`: [its
  *  offset from `p`, its length], [0, 0] when what follows the scheme
- *  is no credential. It is the word after the scheme's blanks, as far
- *  as the token of 7.26.9 went, masked whole: in quotes (the quotes
+ *  is no credential. It is the word after the scheme's blanks, to a
+ *  character of SCHEME_WORD_STOPS, masked whole: in quotes (the quotes
  *  too), or after the same scheme word again ("Bearer Bearer tok"),
  *  whatever its shape; else when it can be a credential, judged
  *  without the dots that end it: no word of prose, and for "Bearer"
@@ -796,10 +971,7 @@ function scheme_credential(str, p)
     while(t < str.length && (str[t] === " " || str[t] === "\t")) {
         t++;
     }
-    /*
-     *  The scheme doubled, once, as in C: a loop over "Bearer Bearer
-     *  Bearer ..." from each of its words was quadratic
-     */
+    // the scheme doubled, once, as in C: a loop over "Bearer Bearer ..." would be quadratic
     if(t < str.length && scheme_word_len(str, t) === n && ascii_case_equal(str, t, scheme)) {
         t += n;
         context = true;
@@ -867,14 +1039,13 @@ function shape_len(str, p)
 }
 
 /*
- *  The shape at `p` as 7.26.9 told it, the one its reading of the
- *  parameters jumps over: a JWT of exactly three parts, or the word
- *  after a "bearer" word, whatever it is (to a blank, an end of line,
- *  a quote or one of ,;}]). [its offset from `p`, its length], [0, 0]
- *  if none. As the C kernel's shape_len_7_26_9(): 7.26.9's reading is
- *  kept whole, so nothing it masked is lost.
+ *  The shape at `p` as gobj-js 7.26.20 told it, the one its reading of
+ *  the parameters jumps over: a JWT of exactly three parts, or the word
+ *  after a "bearer" word, whatever it is (to a blank, an end of line, a
+ *  quote or one of ,;}]). [its offset from `p`, its length], [0, 0] if
+ *  none. As the C kernel's shape_len_js_7_26_20().
  */
-function shape_len_7_26_9(str, p)
+function shape_len_js_7_26_20(str, p)
 {
     const c = str[p];
     if(c === "e") {
@@ -1012,9 +1183,10 @@ function colon_value_end(str, v)
 
 /*
  *  As the C kernel: masking is reachable from a peer, so it is linear and
- *  bounded. No more than MASK_MAX_NAME characters of a name are asked
- *  about; a text, or the strings of one json_mask_secrets() call, longer
- *  than MASK_MAX_BYTES are not shown at all (they fail safe).
+ *  bounded. No more than MASK_MAX_NAME bytes of a name (in UTF-8, as C
+ *  counts them) are asked about; a text, or the strings of one
+ *  json_mask_secrets() call, longer than MASK_MAX_BYTES characters are
+ *  not shown at all (they fail safe).
  */
 const MASK_MAX_NAME = 128;
 const MASK_MAX_BYTES = 4*1024*1024;
@@ -1034,16 +1206,31 @@ function mark_range(marks, from, to)
 }
 
 /*
- *  The name=value secrets of `str`, marked: a name=value is judged by
- *  the word before its '=' (since the last blank or '=', its last
- *  MASK_MAX_NAME characters), and the `value` of a write-attr of a
- *  secret attribute too; its value, quoted or not, runs to the next
- *  "word=" (inline_secret_value_end()). Read twice, as the C kernel's
- *  mark_params(): as 7.26.9 read it (jumping over its shapes), and
- *  without jumping over them.
+ *  The readings of the name=value parameters, each one kept whole, as
+ *  the C kernel's param_reading_t: as 7.26.19 read them (the C kernel's
+ *  7.26.9: its names, no shape), as 7.26.20 read them (the names of now,
+ *  jumping over its shapes), and with the names of now, jumping over no
+ *  shape ("Bearer pwd=x")
  */
-function mark_params(str, value_is_secret, as_7_26_9, marks)
+const READ_NOW = 0;
+const READ_AS_GOBJ_JS_7_26_20 = 1;
+const READ_AS_7_26_9 = 2;
+
+/*
+ *  The name=value secrets of `str`, marked as one reading reads them: a
+ *  name=value is judged by the word before its '=' (since the last blank
+ *  or '=', its last MASK_MAX_NAME bytes), and the `value` of a
+ *  write-attr of a secret attribute too; its value, quoted or not, runs
+ *  to the next "word=" (inline_secret_value_end()). Return true if a
+ *  name it took for a secret's is none of 7.26.19's. As the C kernel's
+ *  mark_params(). With `judged`, a '=' whose name it judged no secret's,
+ *  the same name that mark_query_params() would judge, is marked there:
+ *  that name is not asked about again.
+ */
+function mark_params(str, value_is_secret, reading, marks, judged)
 {
+    const names = (reading === READ_AS_7_26_9)? NAMES_7_26_9 : NAMES_NOW;
+    let not_7_26_9 = false;
     const is_blank_or_end = (i) => (i >= str.length || str[i] === " " ||
         str[i] === "\t" || str[i] === "\u0000");
     let outer = "";     // the quote of an outer value open (command='...')
@@ -1063,8 +1250,8 @@ function mark_params(str, value_is_secret, as_7_26_9, marks)
                 outer = "";     // closes it
             }
         }
-        if(as_7_26_9) {
-            const [offset, n] = shape_len_7_26_9(str, p);
+        if(reading === READ_AS_GOBJ_JS_7_26_20 && (c === "e" || c === "b" || c === "B")) {
+            const [offset, n] = shape_len_js_7_26_20(str, p);
             if(n) {
                 p += offset + n;
                 word = p;
@@ -1075,11 +1262,17 @@ function mark_params(str, value_is_secret, as_7_26_9, marks)
             p++;
             continue;
         }
-        const name_from = Math.max(word, p - MASK_MAX_NAME);
-        const name = str.substring(name_from, p);
+        const name_from = word;
         word = p + 1;
-        if(!(is_secret_name(name) || (value_is_secret && name.length === 5 &&
+        const secret = is_secret_name_tail(str, name_from, p, names);
+        if(secret && names === NAMES_NOW && !is_secret_name_tail(str, name_from, p, NAMES_7_26_9)) {
+            not_7_26_9 = true;
+        }
+        if(!(secret || (value_is_secret && p - name_from === 5 &&
                 ascii_case_equal(str, name_from, "value")))) {
+            if(judged && query_name_from(str, p) === name_from) {
+                judged[p] = 1;
+            }
             p++;
             continue;
         }
@@ -1101,6 +1294,138 @@ function mark_params(str, value_is_secret, as_7_26_9, marks)
         p = end;
         word = p;
     }
+    return not_7_26_9;
+}
+
+/*
+ *  Does a shape of 7.26.20 begin in `str`? Where none does, its reading
+ *  reads as READ_NOW does.
+ */
+function has_shape_js_7_26_20(str)
+{
+    for(let p = 0; p < str.length; p++) {
+        const code = str.charCodeAt(p);
+        if((code === 101 || code === 98 || code === 66) && shape_len_js_7_26_20(str, p)[1]) {  // e b B
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ *  Where a run of mark_run() stops: a character of `chars`, a CR/LF or a
+ *  NUL. The stops of a value of a query string are the C kernel's dump's.
+ */
+function stop_table(chars)
+{
+    const table = new Uint8Array(128);
+    for(const c of chars + "\r\n\u0000") {
+        table[c.charCodeAt(0)] = 1;
+    }
+    return table;
+}
+const PARAM_VALUE_STOPS = stop_table("&; \t,\"'<>");
+const QUOTE_STOPS = {'"': stop_table('"'), "'": stop_table("'")};
+
+/*
+ *  Mark from `p` up to a stop of `stops` (stop_table()) or the end:
+ *  return where it stopped
+ */
+function mark_run(str, p, stops, marks)
+{
+    let e = p;
+    while(e < str.length) {
+        const code = str.charCodeAt(e);
+        if(code < 128 && stops[code]) {
+            break;
+        }
+        e++;
+    }
+    mark_range(marks, p, e);
+    return e;
+}
+
+/*
+ *  The value at `v` is a scheme and its credential ("Bearer abc", under
+ *  a secret's name): its WHOLE marked, the scheme, its blanks and the
+ *  word after them (to a stop of `stops`; a quoted one to its quote).
+ *  Return where it ends, -1 when `v` begins no scheme. As the C
+ *  kernel's mark_scheme_value().
+ */
+function mark_scheme_value(str, v, stops, marks)
+{
+    const n = scheme_word_len(str, v);
+    if(!n) {
+        return -1;
+    }
+    let w = v + n;
+    while(w < str.length && (str[w] === " " || str[w] === "\t")) {
+        w++;
+    }
+    mark_range(marks, v, w);
+    if(w < str.length && (str[w] === '"' || str[w] === "'")) {
+        const e = colon_value_end(str, w);
+        mark_range(marks, w, e);
+        return e;
+    }
+    return mark_run(str, w, stops, marks);
+}
+
+function is_name_char_code(code)
+{
+    return is_ascii_alnum_code(code) || code === 95 || code === 45 || code === 46;    // _ - .
+}
+
+/*
+ *  Where the name of the '=' at `eq` begins, for mark_query_params(): the
+ *  run of name characters before it, its last MASK_MAX_NAME
+ */
+function query_name_from(str, eq)
+{
+    let n = eq;
+    while(n > 0 && eq - n < MASK_MAX_NAME && is_name_char_code(str.charCodeAt(n - 1))) {
+        n--;
+    }
+    return n;
+}
+
+/*
+ *  The value of a name=value whose name -- the run of name characters
+ *  (letters, digits, _ - .) before the '=', its last MASK_MAX_NAME -- is
+ *  a secret's, as in a query string or a form body, marked: inside its
+ *  quotes, or to a character of PARAM_VALUE_STOPS. The word before the
+ *  '=' can hold more than the name: in
+ *  "GET https://my-file-server.com/get?token=x" it holds a segment about
+ *  a credential ("file"). As the C kernel's mark_query_params(); the
+ *  names that mark_params() judged no secret's are not asked about
+ *  again (`judged`).
+ */
+function mark_query_params(str, marks, judged)
+{
+    let frontier = 0;
+    for(let p = 1; p < str.length; p++) {
+        if(p < frontier) {
+            p = frontier - 1;   // the value marked: the next '=' is past it
+            continue;
+        }
+        if(str.charCodeAt(p) !== 61) {     // '='
+            continue;
+        }
+        if(judged[p]) {
+            continue;
+        }
+        const n = query_name_from(str, p);
+        if(n === p || !secret_name_check(str, n, p, true, true)) {
+            continue;
+        }
+        const v = p + 1;
+        if(v < str.length && (str[v] === '"' || str[v] === "'")) {
+            frontier = mark_run(str, v + 1, QUOTE_STOPS[str[v]], marks);
+        } else {
+            mark_scheme_value(str, v, PARAM_VALUE_STOPS, marks);
+            frontier = mark_run(str, v, PARAM_VALUE_STOPS, marks);
+        }
+    }
 }
 
 /*
@@ -1110,8 +1435,8 @@ function mark_params(str, value_is_secret, as_7_26_9, marks)
 function mark_shapes(str, marks)
 {
     for(let p = 0; p < str.length; p++) {
-        const c = str[p];
-        if(c !== "e" && c !== "b" && c !== "B") {
+        const code = str.charCodeAt(p);
+        if(code !== 101 && code !== 98 && code !== 66) {   // e b B
             continue;
         }
         const [offset, n] = shape_len(str, p);
@@ -1124,26 +1449,25 @@ function mark_shapes(str, marks)
 /*
  *  The "name: value" secrets of `str` (a json member, a header, a
  *  label), marked: the name is the word before the ':' since a blank,
- *  a '=' or a ':', judged by its last MASK_MAX_NAME characters; the
- *  value is colon_value_end()'s. As the C kernel's mark_labels().
+ *  a '=' or a ':', judged by its last MASK_MAX_NAME bytes; the value is
+ *  colon_value_end()'s. As the C kernel's mark_labels().
  */
 function mark_labels(str, marks)
 {
     let word = 0;
     let p = 0;
     while(p < str.length) {
-        const c = str[p];
-        if(c === " " || c === "\t" || c === "\u0000" || c === "=") {
+        const code = str.charCodeAt(p);
+        if(code === 32 || code === 9 || code === 0 || code === 61) {    // blank tab NUL =
             p++;
             word = p;
             continue;
         }
-        if(c !== ":") {
+        if(code !== 58) {   // ':'
             p++;
             continue;
         }
-        const name = str.substring(Math.max(word, p - MASK_MAX_NAME), p);
-        if(!is_secret_name(name)) {
+        if(!is_secret_name_tail(str, word, p, NAMES_NOW)) {
             p++;
             word = p;
             continue;
@@ -1164,17 +1488,70 @@ function mark_labels(str, marks)
     }
 }
 
+/*
+ *  Does `str` (a command line) carry "attribute=<a secret's name>"?
+ *  Then its "value" is that secret (write-attr attribute=password
+ *  value=...), judged by the names of `names`. As the C kernel's
+ *  inline_value_is_secret().
+ */
+function inline_value_is_secret(str, names)
+{
+    let p = str.indexOf("attribute=");
+    while(p >= 0) {
+        if(p === 0 || str[p-1] === " " || str[p-1] === "\t") {
+            let v = p + "attribute=".length;
+            if(v < str.length && (str[v] === '"' || str[v] === "'")) {
+                v++;
+            }
+            let e = v;
+            while(e < str.length && " \t\"'\u0000".indexOf(str[e]) < 0) {
+                e++;
+            }
+            if(is_secret_name_tail(str, v, e, names)) {
+                return true;
+            }
+        }
+        p = str.indexOf("attribute=", p + 1);
+    }
+    return false;
+}
+
+/*
+ *  The characters of `str` that mask_secrets_inline() masks, marked: each
+ *  rule on the text as it came, and the readings of 7.26.19 and of
+ *  7.26.20 whole, each one where it can differ from READ_NOW. As the C
+ *  kernel's mark_inline_secrets().
+ */
+function mark_inline_secrets(str, marks)
+{
+    const value_is_secret = inline_value_is_secret(str, NAMES_NOW);
+    const value_is_secret_7_26_9 = inline_value_is_secret(str, NAMES_7_26_9);
+    const judged = new Uint8Array(str.length);
+    const not_7_26_9 = mark_params(str, value_is_secret, READ_NOW, marks, judged);
+    if(not_7_26_9 || value_is_secret !== value_is_secret_7_26_9) {
+        mark_params(str, value_is_secret_7_26_9, READ_AS_7_26_9, marks, null);
+    }
+    if(has_shape_js_7_26_20(str)) {
+        mark_params(str, value_is_secret, READ_AS_GOBJ_JS_7_26_20, marks, null);
+    }
+    mark_query_params(str, marks, judged);
+    mark_shapes(str, marks);
+    mark_labels(str, marks);
+}
+
 /************************************************************
  *  A text (a command line) with the secrets that can be told
  *  written as "********" (each run of them as one), the rest as it
  *  is: the value of every "name=value" whose name is a secret's,
  *  quoted or not (and the "value" of a write-attr whose attribute
- *  names a secret); the same for a "name: value", its name in quotes
- *  or not (a json, a header, a label: "password": x, Authorization:
- *  Basic x, bearer: tok); and a JWT or the credential after "Bearer "
- *  or "Basic ", wherever they are, whatever names them. Each rule
- *  judges the text as it came. Return null when there was nothing to
- *  mask. As the C kernel's mask_secrets_inline().
+ *  names a secret) -- the name is the word before the '=', and also
+ *  the run of name characters before it, as in a query string; the
+ *  same for a "name: value", its name in quotes or not (a json, a
+ *  header, a label: "password": x, Authorization: Basic x, bearer:
+ *  tok); and a JWT or the credential after "Bearer " or "Basic ",
+ *  wherever they are, whatever names them. Each rule judges the text
+ *  as it came. Return null when there was nothing to mask. As the C
+ *  kernel's mask_secrets_inline().
  ************************************************************/
 function mask_secrets_inline(str)
 {
@@ -1188,20 +1565,8 @@ function mask_secrets_inline(str)
     if(str.length > MASK_MAX_BYTES) {
         return MASK_TOO_LARGE;
     }
-    let value_is_secret = false;
-    let re_attr = /(^|[ \t])attribute=["']?([^ \t"'\u0000]*)/g;
-    let m;
-    while((m = re_attr.exec(str)) !== null) {
-        if(is_secret_name(m[2].slice(-MASK_MAX_NAME))) {
-            value_is_secret = true;
-        }
-    }
-
     const marks = new Uint8Array(str.length);
-    mark_params(str, value_is_secret, true, marks);
-    mark_params(str, value_is_secret, false, marks);
-    mark_shapes(str, marks);
-    mark_labels(str, marks);
+    mark_inline_secrets(str, marks);
 
     let parts = [];
     let changed = false;
@@ -1323,8 +1688,12 @@ function _json_mask_secrets(jn, memo, depth, budget)
         }
     } else {
         result = Object.create(Object.getPrototypeOf(jn));
-        let value_is_secret = typeof jn.attribute === "string" &&
-            is_secret_name(jn.attribute.slice(-MASK_MAX_NAME));
+        let value_is_secret = false;
+        if(typeof jn.attribute === "string") {
+            let nul = jn.attribute.indexOf("\u0000");     // C reads it up to a NUL
+            let attribute = (nul >= 0)? jn.attribute.substring(0, nul) : jn.attribute;
+            value_is_secret = is_secret_name_tail(attribute, 0, attribute.length, NAMES_NOW);
+        }
         for(const key in jn) {
             if(!Object.prototype.hasOwnProperty.call(jn, key)) {
                 continue;
@@ -1336,7 +1705,7 @@ function _json_mask_secrets(jn, memo, depth, budget)
             budget.left -= 1 + key.length;
             let value = jn[key];
             let shown;
-            let secret = is_secret_name(key.slice(-MASK_MAX_NAME)) ||
+            let secret = is_secret_name_tail(key, 0, key.length, NAMES_NOW) ||
                 (value_is_secret && key === "value");
             if(secret && value !== undefined && value !== null && value !== "") {
                 shown = "********";
