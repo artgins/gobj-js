@@ -7,6 +7,22 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.23
+
+- **fix(`C_IEVENT_CLI`): a session that ends is logged by nobody, as in the C
+  transport.** Every close of the websocket was a WARNING (*"WebSocket closed
+  ... Code: 1000 ... Clean: true"*), the clean one of a logout included, ahead
+  of the branch that tells what happened: so a console check of an app passed
+  or failed depending on when the close of its logout landed (estadodelaire's,
+  after the 7.26.22 round). An ended session is published as `EV_ON_CLOSE` and
+  logged by nobody; a socket that closes before it ever opened is still the
+  `EV_ON_OPEN_ERROR` warning. With the gclass's `ievents` trace on, every close
+  is traced. Test `ievent_close_logs` (red on 7.26.22).
+- **fix(`C_IEVENT_CLI`): the reason of a failed open is masked.** The
+  `EV_ON_OPEN_ERROR` warning wrote the close reason the server gave as it
+  came; 7.26.22 masked it in the other close log and not in this one. Masked
+  and capped now, as every text of the server.
+
 ## 7.26.22
 
 Parity with the C kernel of 7.26.10 (the twenty-fifth review): the masking,

@@ -53,6 +53,7 @@ import {
     log_error,
     log_debug,
     log_warning,
+    trace_msg,
     current_timestamp,
     empty_string,
     msg_iev_push_stack,
@@ -1075,8 +1076,12 @@ function ac_on_close(gobj, event, kw, src)
 
     set_remote_log_functions(); // clean remote log
 
-    log_warning(`${gobj_short_name(gobj)}: WebSocket closed ${url} (Code: ${kw.code}, ` +
-        `Reason: "${peer_text_shown(kw.reason, PEER_FRAME_SHOWN)}", Clean: ${kw.was_clean})`);
+    /*  As the C transport: an ended session is EV_ON_CLOSE and nobody's
+     *  warning; only an open that failed is (below).  */
+    if(is_traffic_tracing(gobj)) {
+        trace_msg(`${gobj_short_name(gobj)}: WebSocket closed ${url} (Code: ${kw.code}, ` +
+            `Reason: "${peer_text_shown(kw.reason, PEER_FRAME_SHOWN)}", Clean: ${kw.was_clean})`);
+    }
 
     // Cleanup WebSocket event handlers
     if(priv.websocket) {
@@ -1138,7 +1143,8 @@ function ac_on_close(gobj, event, kw, src)
          */
         log_warning(
             `${gobj_short_name(gobj)}: EV_ON_OPEN_ERROR cannot open ` +
-            `${url} (Code: ${kw.code}, Reason: "${kw.reason}", ` +
+            `${url} (Code: ${kw.code}, ` +
+            `Reason: "${peer_text_shown(kw.reason, PEER_FRAME_SHOWN)}", ` +
             `Clean: ${kw.was_clean})`
         );
         gobj_publish_event(

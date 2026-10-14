@@ -22,6 +22,7 @@ import {
     gobj_start,
     gobj_send_event,
     gobj_change_state,
+    gobj_set_gobj_trace,
     register_c_yuno,
     register_c_timer,
     register_c_ievent_cli,
@@ -158,10 +159,14 @@ describe("the names the server sends", () => {
 });
 
 describe("the close of the websocket", () => {
-    test("the reason the server gives is masked", () => {
+    /*  A close is no warning (ievent_close_logs.test.js); with the
+     *  gclass's `ievents` trace on it is traced, its reason masked.  */
+    test("the reason the server gives is masked in the trace", () => {
         const ievent = make_transport("t_close", true);
+        gobj_set_gobj_trace(ievent, "ievents", true);
         gobj_send_event(ievent, "EV_ON_CLOSE",
             {url: "ws://127.0.0.1:1", code: 1008, reason: "bad token=cl1-hunter2", was_clean: true}, ievent);
+        gobj_set_gobj_trace(ievent, "ievents", false);
         expect(logged.some(l => /WebSocket closed/.test(l))).toBe(true);
         expect(shown("cl1-hunter2")).toEqual([]);
     });
