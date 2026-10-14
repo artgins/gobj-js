@@ -7,6 +7,58 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.28
+
+- **fix: `node_uuid()` answers ONE uuid for the life of the page.** When the
+  store could not keep it (the site's data blocked, a full store, no
+  `localStorage`, outside a browser) it made a new uuid on EVERY call, so the
+  `node_uuid` attribute of the yuno, the `id` of `C_IEVENT_CLI`'s identity card
+  and the `host` of every message it sends changed from one call to the next;
+  7.26.27 said *"a uuid of this page only"*, and nothing kept it. Without
+  `crypto.randomUUID()` (a page on http without TLS is not a secure context) it
+  answered `null` -- with a working store too, for ever, as nothing was
+  written. The first answer is kept now: the stored uuid, or one this page
+  made (one WARNING); a missing `randomUUID()` makes a uuid v4 from
+  `crypto.getRandomValues()`, or from `Math.random()` with no crypto at all. A
+  uuid written to the store by another tab while the page lives does not
+  change the page's. In every published version (the null, and a new uuid
+  per call with no `localStorage` or outside a browser); with a blocked or full
+  store, only in 7.26.27 (7.26.26 threw). Test `node_uuid`.
+- **fix: a walk of the tree hands each gobj to its callback once.** 7.26.27
+  walks a COPY of each child list and stepped over only a destroyed gobj, so a
+  gobj a callback MOVED with `gobj_change_parent()` was handed in its old place
+  and again under its new parent: in a `WALK_TOP2BOTTOM` where c1's callback
+  moves c2 under c3, `c1 g1 c2 g2 c3 c2 g2` (7.26.26: `c1 g1 c3 c2 g2`). A gobj
+  whose parent is no longer the owner of the list is stepped over now (handed
+  where the walk finds it), and a walk keeps the set of gobjs it handed, so a
+  gobj moved AHEAD after it was handed (by its own callback, or by the walk of
+  its children) is not handed again there, nor are its children -- in every
+  order (`WALK_TOP2BOTTOM`, `WALK_BOTTOM2TOP`, `WALK_BYLEVEL` both ways) and in
+  `gobj_walk_gobj_children()`. Only in 7.26.27 for a gobj moved before it was
+  reached; a gobj moved ahead after it was handed was handed twice in every
+  published version. No consumer calls `gobj_change_parent()`. Test
+  `walk_destroyed`.
+- **fix: with `create`, a store that can be read but not written (full) is
+  warned once per key.** Every read tried to write the default again, and the
+  failed write was an ERROR of `kw_set_local_storage_value()`: one ERROR per
+  read of the locale, the theme... Now one WARNING per key, as for a store that
+  cannot be read, warned again after a read that goes well. A default with no
+  json text is still an ERROR (the caller's fault), and
+  `kw_set_local_storage_value()` to a full store is still -1 with an ERROR. In
+  every published version. Test `local_storage`.
+- **fix, BREAKING: `gobj_start()` refuses a gobj with an empty `SDF_REQUIRED`
+  attribute**, as `gobj_start()` does in C (`gobj_check_required_attrs()`): one
+  ERROR naming the attributes (*"Cannot start without all required
+  attributes"*), -1, `mt_start` not called. Empty is what C asks, type by type:
+  a string `""`, a list, dict or json with nothing usable in it
+  (`empty_json()`: null, `{}`, `[]`, `""` or a scalar), a null pointer; a
+  boolean, integer or real is never empty. The check was a TODO with the C code
+  commented out, so a gobj started without what it needs. `gobj_start_tree()`
+  starts the children of a refused gobj, as in C. No consumer declares
+  `SDF_REQUIRED` (gobj-ui, the in-repo yunos, wattyzer, estadodelaire,
+  hidraulia, yunovatios, yunomusica). In every published version. Test
+  `start_required`.
+
 ## 7.26.27
 
 - **fix: with the site's data blocked, the local storage helpers no longer
@@ -40,13 +92,16 @@ about which SDK it was built against.
   absent key. No consumer writes such a value (gobj-ui, the in-repo yunos,
   wattyzer, estadodelaire, yunovatios: strings, numbers, booleans and plain
   objects). In every published version. Tests `local_storage`, `attr_types`.
-- **fix(`C_IEVENT_CLI`): the first reconnect delay is at least 1000 ms.** A
-  `timeout_retry` of 0 never left 0 (0 doubled is 0), so with a
+- **fix, BREAKING(`C_IEVENT_CLI`): the base of the first reconnect delay is at
+  least 1000 ms** (the ±20% jitter puts the first delay itself between 800 and
+  1200 ms). A `timeout_retry` of 0 never left 0 (0 doubled is 0), so with a
   `timeout_retry_max` of 0 too a server that closes before the ack was
   reconnected in a loop with no wait: 269 connections in one second on the dev
   machine. A lower `timeout_retry` is raised to 1000 with one WARNING per link;
-  the age that makes a broken session "served" uses the raised values too. In
-  every published version. Tests `ievent_restart`, `ievent_peer_fault` (whose
+  the age that makes a broken session "served" uses the raised values too.
+  BREAKING (marked in 7.26.28): any `timeout_retry` below 1000 now waits 1000,
+  and a 0 that never waited now reconnects every second; no consumer sets one
+  below 1000. In every published version. Tests `ievent_restart`, `ievent_peer_fault` (whose
   backoff tests run on fake timers now, with delays from 1000 ms).
 - **fix: a walk of the tree steps over a gobj a callback destroyed, and no
   longer skips or repeats a live one.** The walks went over a COPY of each

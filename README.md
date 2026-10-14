@@ -460,7 +460,10 @@ gobj_create_volatil(name, gclass_name, attrs, parent)
 gobj_create_pure_child(name, gclass_name, attrs, parent)
 
 // Start / Stop
-gobj_start(gobj)           // calls mt_start
+gobj_start(gobj)           // calls mt_start; -1 with an ERROR if a
+                           // SDF_REQUIRED attr is empty, as in C
+                           // (BREAKING in 7.26.28: "" string, empty_json()
+                           // list/dict/json, null pointer)
 gobj_stop(gobj)            // calls mt_stop
 gobj_start_children(gobj)
 gobj_stop_children(gobj)
@@ -599,6 +602,9 @@ gobj_search_path(gobj, path)
 
 gobj_walk_gobj_children(gobj, walk_type, cb_walking, user_data, user_data2)
 gobj_walk_gobj_children_tree(gobj, walk_type, cb_walking, user_data, user_data2)
+// A callback may destroy or move (gobj_change_parent()) any gobj: a
+// destroyed one is never handed, a moved one is handed where the walk
+// finds it now, and no gobj is handed twice in one walk (7.26.28).
 ```
 
 ### Persistence
@@ -740,11 +746,16 @@ kw_remove_local_storage_value(key)
 //   kw_set_local_storage_value("k", () => 1)     → -1
 //   kw_set_local_storage_value("k", {w: NaN})    → -1 (it was {"w":null})
 //   kw_set_local_storage_value("k", [1, , 3])    → -1 (a hole: [1,null,3])
+// A full store (read, not written) with `create`: the default, warned
+// once per key (7.26.28: an ERROR on every read).
 
 // Misc utilities
 current_timestamp()          // ISO string
 get_now()                    // Date object
-node_uuid()                  // generate UUID
+node_uuid()                  // uuid of this browser, the SAME for the
+                             // life of the page (kept in localStorage
+                             // "host_uuid"; a page uuid if the store
+                             // cannot keep it; never null: 7.26.28)
 parseBoolean(v)              // coerce to boolean
 empty_string(s)              // true if null/undefined/""
 str_in_list(list, str, ci)   // case-insensitive optional
@@ -1106,7 +1117,8 @@ count as reached: the backoff goes on from where it was (7.26.25), so a server
 that breaks every session is not reconnected at the first delay for ever -- unless
 the session outlived `timeout_retry_max`: a session that long was served, and its
 fault starts the backoff over, as a clean end does (7.26.26). For the old fixed-interval behaviour set `timeout_retry_max` equal to
-`timeout_retry`. The first delay is **at least 1000 ms** (7.26.27): a lower
+`timeout_retry`. The BASE of the first delay is **at least 1000 ms** (7.26.27;
+the ±20% jitter puts the first delay itself between 800 and 1200 ms): a lower
 `timeout_retry` is raised to 1000 with one WARNING, because 0 never doubled
 away from 0 and a server that closes before the ack was reconnected in a loop
 with no wait, hundreds of times a second.

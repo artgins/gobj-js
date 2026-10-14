@@ -313,8 +313,8 @@ describe("C_IEVENT_CLI stopped and started in the same turn", () => {
     /*
      *  0 doubled is 0: a timeout_retry of 0 was a reconnect loop with no
      *  wait, hundreds of connections a second against a server that
-     *  closes before the ack. The first delay is at least 1000 ms now,
-     *  warned once.
+     *  closes before the ack. The base of the first delay is at least
+     *  1000 ms now (800-1200 ms with the jitter), warned once.
      */
     test("a timeout_retry below the floor is raised to it, with one WARNING", async () => {
         const logs = [];

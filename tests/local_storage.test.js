@@ -173,6 +173,68 @@ describe("a second corrupt value in the same key", () => {
     });
 });
 
+/*
+ *  A store that can be read but not written (full: QuotaExceededError).
+ *  With `create`, every read tried to write the default, and the failed
+ *  write was an ERROR of kw_set_local_storage_value(): one per read.
+ */
+describe("with `create`, a store that can be read but not written", () => {
+    let setItem;
+    const fill = () => {
+        fake_storage.setItem = () => {
+            throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+        };
+    };
+    beforeEach(() => {
+        setItem = fake_storage.setItem;
+    });
+    afterEach(() => {
+        fake_storage.setItem = setItem;
+    });
+
+    test("the default is answered, warned once per key, no ERROR", () => {
+        fill();
+        for(let i = 0; i < 4; i++) {
+            expect(kw_get_local_storage_value("locale_full", "es", true)).toBe("es");
+        }
+        expect(logged.filter(l => /^error: /.test(l))).toEqual([]);
+        expect(logged.filter(l => /^warning: .*"locale_full".*cannot be written/.test(l)).length).toBe(1);
+        expect(logged.length).toBe(1);
+    });
+
+    test("a write that goes well again makes the next failure news", () => {
+        fill();
+        expect(kw_get_local_storage_value("again", "x", true)).toBe("x");
+        fake_storage.setItem = setItem;
+        expect(kw_get_local_storage_value("again", "x", true)).toBe("x");
+        expect(store.get("again")).toBe("\"x\"");
+        store.delete("again");
+        fill();
+        expect(kw_get_local_storage_value("again", "x", true)).toBe("x");
+        expect(kw_get_local_storage_value("again", "x", true)).toBe("x");
+        expect(logged.filter(l => /^warning: .*"again".*cannot be written/.test(l)).length).toBe(2);
+    });
+
+    test("a stored value is answered, and nothing is written", () => {
+        store.set("kept", "\"fr\"");
+        fill();
+        expect(kw_get_local_storage_value("kept", "es", true)).toBe("fr");
+        expect(logged).toEqual([]);
+    });
+
+    test("a default with no json text is still an ERROR: the caller's fault", () => {
+        expect(kw_get_local_storage_value("fn_default", () => 1, true)).toBeTypeOf("function");
+        expect(logged.filter(l => /^error: .*"fn_default".*no json text/.test(l)).length).toBe(1);
+        expect(store.has("fn_default")).toBe(false);
+    });
+
+    test("kw_set_local_storage_value() to a full store is still -1 with an ERROR", () => {
+        fill();
+        expect(kw_set_local_storage_value("theme_full", "dark")).toBe(-1);
+        expect(logged.filter(l => /^error: .*cannot save "theme_full"/.test(l)).length).toBe(1);
+    });
+});
+
 describe("kw_set_local_storage_value() of a value with no json text", () => {
     const circular = {a: 1};
     circular.self = circular;
@@ -260,10 +322,4 @@ describe("with the site's data blocked", () => {
     });
 });
 
-describe("node_uuid()", () => {
-    test("is kept in the store and answered again", () => {
-        const a = node_uuid();
-        expect(store.get("host_uuid")).toBe(a);
-        expect(node_uuid()).toBe(a);
-    });
-});
+/*  node_uuid() with a store that keeps it, and with one that cannot: node_uuid.test.js  */

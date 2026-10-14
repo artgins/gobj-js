@@ -16,6 +16,7 @@ import {
     log_error,
     log_warning,
     empty_string,
+    empty_json,
     json_deep_copy,
     json_object_update,
     json_object_get,
@@ -2878,6 +2879,48 @@ function gobj_destroy_children(gobj)
 }
 
 /************************************************************
+ *  The SDF_REQUIRED attributes with no value, or null when there
+ *  is none: what is empty is asked type by type, as in C.
+ ************************************************************/
+function gobj_check_required_attrs(gobj)
+{
+    const hs = gobj_hsdata(gobj);
+    const missing = [];
+    if(!is_array(gobj.gclass.attrs_table)) {
+        return null;    // Error already logged by sdata_create()
+    }
+
+    for(const it of gobj.gclass.attrs_table) {
+        if(!it.name || !(it.flag & sdata_flag_t.SDF_REQUIRED)) {
+            continue;
+        }
+        const value = hs[it.name];
+        switch(it.type) {
+            case data_type_t.DTP_STRING:
+                if(!is_string(value) || empty_string(value)) {
+                    missing.push(it.name);
+                }
+                break;
+            case data_type_t.DTP_LIST:
+            case data_type_t.DTP_DICT:
+            case data_type_t.DTP_JSON:
+                if(empty_json(value)) {
+                    missing.push(it.name);
+                }
+                break;
+            case data_type_t.DTP_POINTER:
+                if(!value) {
+                    missing.push(it.name);
+                }
+                break;
+            default:
+                break;  // a boolean, an integer, a real: never empty
+        }
+    }
+    return missing.length? missing : null;
+}
+
+/************************************************************
  *
  ************************************************************/
 function gobj_start(gobj)
@@ -2896,20 +2939,14 @@ function gobj_start(gobj)
     }
 
     /*
-     *  TODO Check required attributes.
+     *  Check required attributes.
      */
-    // json_t *jn_required_attrs = gobj_check_required_attrs(gobj);
-    // if(jn_required_attrs) {
-    //     gobj_log_error(gobj, LOG_OPT_TRACE_STACK,
-    //         "function",     "%s", __FUNCTION__,
-    //         "msgset",       "%s", MSGSET_OPERATIONAL_ERROR,
-    //         "msg",          "%s", "Cannot start without all required attributes",
-    //         "attrs",        "%j", jn_required_attrs,
-    //         NULL
-    //     );
-    //     JSON_DECREF(jn_required_attrs)
-    //     return -1;
-    // }
+    const required_attrs = gobj_check_required_attrs(gobj);
+    if(required_attrs) {
+        log_error(`${gobj_short_name(gobj)}: Cannot start without all required attributes: ` +
+            JSON.stringify(required_attrs));
+        return -1;
+    }
 
     let tracea = __trace_gobj_start_stop__(gobj);
     if(tracea) {
@@ -3485,7 +3522,7 @@ function gobj_walk_gobj_children(
         return 0;
     }
 
-    return rc_walk_by_list(gobj.dl_children, walk_type, cb_walking, user_data, user_data2);
+    return rc_walk_by_list(gobj, new Set(), walk_type, cb_walking, user_data, user_data2);
 }
 
 /***************************************************************************
@@ -3503,7 +3540,7 @@ function gobj_walk_gobj_children_tree(
         return 0;
     }
 
-    return rc_walk_by_tree(gobj.dl_children, walk_type, cb_walking, user_data, user_data2);
+    return rc_walk_by_tree(gobj, new Set(), walk_type, cb_walking, user_data, user_data2);
 }
 
 /***************************************************************
@@ -3540,26 +3577,39 @@ function walk_ret(ret)
     return 0;
 }
 
+/***************************************************************
+ *  Whether a walk steps over this gobj of the list of `owner`.
+ *
+ *  Each list is walked over a COPY of it, because a callback may destroy
+ *  any gobj of the list, the current one included, or move one with
+ *  gobj_change_parent(). One it destroyed is stepped over, as the C walk
+ *  does; one it moved is no longer in this list, and is handed where the
+ *  walk finds it now (7.26.27 handed it here AND there); and a gobj is
+ *  never handed twice in one walk (`seen`), wherever it was moved.
+ ***************************************************************/
+function walk_steps_over(child, owner, seen)
+{
+    return gobj_is_destroying(child) || child.parent !== owner || seen.has(child);
+}
+
 function rc_walk_by_list(
-    iter_,              // dl_list_t
+    owner,              // gobj whose children are walked
+    seen,               // Set of the gobjs handed in this walk
     walk_type,          // walk_type_t
     cb_walking,         // cb_walking_t
     user_data,
     user_data2
 ) {
-    /*
-     *  A copy: a callback may destroy any gobj of the list, the current one
-     *  included. One it destroyed is stepped over, as the C walk does.
-     */
-    let iter = [...iter_];
+    let iter = [...owner.dl_children];   // see walk_steps_over()
 
     let child;
     if(walk_type & walk_type_t.WALK_LAST2FIRST) {
         for(let i=iter.length; i>0; i--) {
             child = iter[i-1];
-            if(gobj_is_destroying(child)) {
+            if(walk_steps_over(child, owner, seen)) {
                 continue;
             }
+            seen.add(child);
             let ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
@@ -3568,9 +3618,10 @@ function rc_walk_by_list(
     } else {
         for(let i=0; i<iter.length; i++) {
             child = iter[i];
-            if(gobj_is_destroying(child)) {
+            if(walk_steps_over(child, owner, seen)) {
                 continue;
             }
+            seen.add(child);
             let ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
@@ -3591,51 +3642,48 @@ function rc_walk_by_list(
  *          WALK_LAST2FIRST
  ***************************************************************/
 function rc_walk_by_level(
-    iter_,              // dl_list_t
+    owner,              // gobj whose children are walked
+    seen,               // Set of the gobjs handed in this walk
     walk_type,          // walk_type_t
     cb_walking,         // cb_walking_t
     user_data,
     user_data2
 ) {
-    let iter = [...iter_];  // see rc_walk_by_list()
+    let iter = [...owner.dl_children];   // see walk_steps_over()
+    if(walk_type & walk_type_t.WALK_LAST2FIRST) {
+        iter.reverse();
+    }
 
     /*
      *  First my children
      */
-    let ret = rc_walk_by_list(iter, walk_type, cb_walking, user_data, user_data2);
-    if(ret < 0) {
-        return ret;
+    let handed = [];
+    for(const child of iter) {
+        if(walk_steps_over(child, owner, seen)) {
+            continue;
+        }
+        seen.add(child);
+        handed.push(child);
+        let ret = walk_ret((cb_walking)(child, user_data, user_data2));
+        if(ret < 0) {
+            return ret;
+        }
     }
 
     /*
-     *  Now child's children
+     *  Now child's children: of those handed here, even if moved since
      */
-    let child;
-    if(walk_type & walk_type_t.WALK_LAST2FIRST) {
-        for(let i=iter.length; i>0; i--) {
-            child = iter[i-1];
-            if(gobj_is_destroying(child)) {
-                continue;
-            }
-            ret = rc_walk_by_level(child.dl_children, walk_type, cb_walking, user_data, user_data2);
-            if(ret < 0) {
-                return ret;
-            }
+    for(const child of handed) {
+        if(gobj_is_destroying(child)) {
+            continue;
         }
-    } else {
-        for(let i=0; i<iter.length; i++) {
-            child = iter[i];
-            if(gobj_is_destroying(child)) {
-                continue;
-            }
-            ret = rc_walk_by_level(child.dl_children, walk_type, cb_walking, user_data, user_data2);
-            if(ret < 0) {
-                return ret;
-            }
+        let ret = rc_walk_by_level(child, seen, walk_type, cb_walking, user_data, user_data2);
+        if(ret < 0) {
+            return ret;
         }
     }
 
-    return ret;
+    return 0;
 }
 
 /***************************************************************
@@ -3654,28 +3702,29 @@ function rc_walk_by_level(
  *          WALK_LAST2FIRST
  ***************************************************************/
 function rc_walk_by_tree(
-    iter_,              // dl_list_t
+    owner,              // gobj whose children are walked
+    seen,               // Set of the gobjs handed in this walk
     walk_type,          // walk_type_t
     cb_walking,         // cb_walking_t
     user_data,
     user_data2
 ) {
     if(walk_type & walk_type_t.WALK_BYLEVEL) {
-        return rc_walk_by_level(iter_, walk_type, cb_walking, user_data, user_data2);
+        return rc_walk_by_level(owner, seen, walk_type, cb_walking, user_data, user_data2);
     }
 
-    let iter = [...iter_];  // see rc_walk_by_list()
+    let iter = [...owner.dl_children];   // see walk_steps_over()
 
     let ret;
     let child;
     if(walk_type & walk_type_t.WALK_BOTTOM2TOP) {
         for(let i=iter.length; i>0; i--) {
             child = iter[i-1];
-            if(gobj_is_destroying(child)) {
+            if(walk_steps_over(child, owner, seen)) {
                 continue;
             }
 
-            ret = rc_walk_by_tree(child.dl_children, walk_type, cb_walking, user_data, user_data2);
+            ret = rc_walk_by_tree(child, seen, walk_type, cb_walking, user_data, user_data2);
             if(ret < 0) {
                 return ret;
             }
@@ -3683,6 +3732,7 @@ function rc_walk_by_tree(
             if(gobj_is_destroying(child)) {
                 continue;   // its children's walk ended it
             }
+            seen.add(child);
             ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
@@ -3692,15 +3742,16 @@ function rc_walk_by_tree(
     } else {
         for(let i=0; i<iter.length; i++) {
             child = iter[i];
-            if(gobj_is_destroying(child)) {
+            if(walk_steps_over(child, owner, seen)) {
                 continue;
             }
 
+            seen.add(child);
             ret = walk_ret((cb_walking)(child, user_data, user_data2));
             if(ret < 0) {
                 return ret;
             } else if(ret === 0 && !gobj_is_destroying(child)) {
-                ret = rc_walk_by_tree(child.dl_children, walk_type, cb_walking, user_data, user_data2);
+                ret = rc_walk_by_tree(child, seen, walk_type, cb_walking, user_data, user_data2);
                 if(ret < 0) {
                     return ret;
                 }

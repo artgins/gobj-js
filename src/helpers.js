@@ -3993,7 +3993,10 @@ function warn_local_storage_once(key, msg)
  *  for ever; a new corrupt entry is a new WARNING. Its text is never
  *  shown (JSON.parse() quotes it in its error, and an entry can hold a
  *  token). A store that cannot be read (blocked) is warned once per
- *  key, and the default is NOT written there. Outside a browser: the
+ *  key, and the default is NOT written there; one that cannot be
+ *  written (full) is warned once per key too: with `create` it was an
+ *  ERROR on every read, the default tried again each time. A key is
+ *  warned again after a read that goes well. Outside a browser: the
  *  default.
  ********************************************/
 function kw_get_local_storage_value(key, default_value, create = false)
@@ -4012,6 +4015,7 @@ function kw_get_local_storage_value(key, default_value, create = false)
         return default_value;
     }
 
+    let went_well = true;
     let value = null;
     if (text !== null) {
         try {
@@ -4021,23 +4025,33 @@ function kw_get_local_storage_value(key, default_value, create = false)
             try {
                 store.removeItem(key);
                 log_warning(`${where} does not hold json: removed, the default is used`);
-                local_storage_warned.delete(key);
             } catch (e2) {
+                went_well = false;
                 warn_local_storage_once(key,
                     `${where} does not hold json and cannot be removed: the default is used`);
             }
-            text = undefined;
         }
-    }
-    if (text !== undefined) {
-        local_storage_warned.delete(key);   // a read that went well: the next failure is news
     }
 
     if (value === null) {
+        value = default_value;
         if (create) {
-            kw_set_local_storage_value(key, default_value);
+            const default_text = json_text_of(default_value);
+            if (default_text === undefined) {
+                log_error(`${where}: cannot write the default: a value with no json text`);
+            } else {
+                try {
+                    store.setItem(key, default_text);
+                } catch (e) {
+                    went_well = false;
+                    warn_local_storage_once(key,
+                        `${where} cannot be written (storage full or blocked?): the default is used, not kept`);
+                }
+            }
         }
-        return default_value;
+    }
+    if (went_well) {
+        local_storage_warned.delete(key);   // the next failure is news
     }
     return value;
 }
@@ -5847,38 +5861,82 @@ function index_in_list(list, elm) {
 }
 
 /************************************************************
+ *  A new uuid v4 (RFC 9562).
  *
+ *  crypto.randomUUID() exists only in a secure context, so a page
+ *  served over http without TLS has none; crypto.getRandomValues()
+ *  exists there too. With no crypto at all, Math.random(): not fit
+ *  for a secret, and a uuid that names a node is not one.
  ************************************************************/
-function node_uuid()
+function new_uuid()
 {
-    let uuid = "";
-
-    const store = local_store();
-    if (store) {
-        try {
-            uuid = store.getItem("host_uuid");
-        } catch (e) {
-            uuid = null;
-            warn_local_storage_once("host_uuid",
-                "node_uuid(): localStorage cannot be read (storage blocked?): a uuid of this page only");
-        }
-        if (!uuid && window.crypto?.randomUUID) {
-            uuid = window.crypto.randomUUID();  // Generate a new UUID
-            try {
-                store.setItem("host_uuid", uuid);
-            } catch (e) {
-                warn_local_storage_once("host_uuid",
-                    "node_uuid(): localStorage cannot be written (storage full or blocked?): " +
-                    "a uuid of this page only");
-            }
-        }
-    } else if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
-        uuid = globalThis.crypto.randomUUID();  // Node.js environment (if available)
-    } else {
-        uuid = "00000000-0000-0000-0000-000000000000"; // Fallback UUID (if crypto is unavailable)
+    const c = (typeof window !== "undefined" && window.crypto) || globalThis.crypto;
+    if (c && typeof c.randomUUID === "function") {
+        return c.randomUUID();
     }
 
-    return uuid;
+    const b = new Uint8Array(16);
+    if (c && typeof c.getRandomValues === "function") {
+        c.getRandomValues(b);
+    } else {
+        for (let i = 0; i < b.length; i++) {
+            b[i] = Math.floor(Math.random() * 256);
+        }
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;    // version 4
+    b[8] = (b[8] & 0x3f) | 0x80;    // variant 10
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/************************************************************
+ *  The uuid of this node: ONE for the life of the page.
+ *
+ *  The one the store keeps ("host_uuid"), made and written there when
+ *  there is none. When the store cannot keep it (blocked, full, no
+ *  localStorage, outside a browser) the one this page made, warned
+ *  once. It goes in the node_uuid attribute of the yuno, the id of the
+ *  identity card and the `host` of every message the client sends, so
+ *  the first answer is kept and answered again: 7.26.27 made a new
+ *  uuid on every call when the store could not keep it, and answered
+ *  null without crypto.randomUUID().
+ ************************************************************/
+let uuid_of_this_page = null;
+
+function node_uuid()
+{
+    if (uuid_of_this_page) {
+        return uuid_of_this_page;
+    }
+
+    const store = local_store();
+    if (!store) {
+        uuid_of_this_page = new_uuid();
+        return uuid_of_this_page;
+    }
+
+    let uuid = null;
+    try {
+        uuid = store.getItem("host_uuid");
+    } catch (e) {
+        warn_local_storage_once("host_uuid",
+            "node_uuid(): localStorage cannot be read (storage blocked?): a uuid of this page only");
+        uuid_of_this_page = new_uuid();
+        return uuid_of_this_page;
+    }
+
+    if (!uuid) {
+        uuid = new_uuid();
+        try {
+            store.setItem("host_uuid", uuid);
+        } catch (e) {
+            warn_local_storage_once("host_uuid",
+                "node_uuid(): localStorage cannot be written (storage full or blocked?): " +
+                "a uuid of this page only");
+        }
+    }
+    uuid_of_this_page = uuid;
+    return uuid_of_this_page;
 }
 
 /************************************************************
