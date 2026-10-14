@@ -306,14 +306,31 @@ thrown (7.26.24). So is a value that is not json ALL THE WAY DOWN given to a
 string, a `DTP_DICT` or a `DTP_LIST` (7.26.25): a cycle anywhere inside, a
 `BigInt` inside (`[1n]`), a `Map`, a `Set`, a `Date`, a typed array, an instance
 of a class. They were written, and burst (or turned into `"{}"`) when the value
-was serialized, far from the write. A key whose value is `undefined` or a
-function is dropped, as `JSON.stringify()` drops it:
+was serialized, far from the write. And so is a value whose text would say
+another value (7.26.26): an object with a `toJSON()`, `NaN` or `Infinity` inside
+(the text says `null`; jansson holds no such real), a function, `undefined` or a
+symbol inside an array (the text says `null`), and a value nested deeper than
+2048 levels (a scalar is a level too), which C would not read back and which
+bursts `JSON.stringify()` a little further on. A getter or a `Proxy` trap that
+throws is a refusal too, never an exception (7.26.26). A key whose value is
+`undefined`, a function or a symbol is dropped, as `JSON.stringify()` drops it:
+an absent key. A plain object of another realm (a `vm` context, an iframe) is a
+plain object. A `Proxy` is read through its traps, as `JSON.stringify()` reads
+it: JS cannot tell one from its target.
 
 ```javascript
 gobj_write_attr(gobj, "settings", {a: 1, b: undefined});    // 0: b goes when serialized
 gobj_write_attr(gobj, "settings", new Map([["a", 1]]));     // -1, ERROR "a value with no json text"
 gobj_write_str_attr(gobj, "name", new Map());               // -1: it was the text "{}"
+gobj_write_attr(gobj, "settings", {ratio: NaN});            // -1: it was the text {"ratio":null}
+gobj_write_attr(gobj, "items", [1, undefined]);             // -1: it was the text [1,null]
+gobj_write_str_attr(gobj, "name", NaN);                     // -1: it was the text "null"
 ```
+
+The check walks the whole value on every write of a string, a dict or a list:
+it costs about what a `JSON.stringify()` of the value costs (some 20-30 ms for a
+dict of 50 000 records), once per write. It is not cached: an object found json
+once can be changed into one that is not before its next write.
 
 A `DTP_JSON` attribute is not checked: it takes any value, as before.
 
@@ -322,11 +339,14 @@ refuses is refused in JS too -- an escaped NUL (`"\u0000"`), a lone surrogate,
 an integer out of int64, a real that overflows (`1e309`; to a `DTP_JSON` it is
 the text `"1e309"`, not `Infinity`), a text nested deeper than 2048 levels (a
 scalar is a level too; 7.26.25). A number beyond int64 is "a real" to a dict,
-as in C (`1e20`), and `9223372036854775807` is taken by an integer (JSON.parse()
-makes it 2^63, kept as such). Two differences remain, because a JS number
-cannot carry them: an integer beyond 2^53 is rounded, and `2.0` (and `-0.0`) is
-the integer (see `tests/fixtures/attr_types_parity.json`, which the C test
-`tests/c/attr_types` of yunetas reads too).
+as in C (`1e20`). Three differences remain, because a JS number cannot carry
+them: an integer beyond 2^53 is rounded; `2.0` (and `-0.0`) is the integer; and
+the last 512 integers of int64 round up to 2^63, which is OUT of int64, so an
+integer attr refuses them, as text or as a number (`"9223372036854775807"`,
+the int64 maximum C takes, is "a number out of its range" in JS: its JS number
+is 2^63, whose text C refuses as "too big integer"; 7.26.26, 7.26.25 took it).
+See `tests/fixtures/attr_types_parity.json`, which the C test
+`tests/c/attr_types` of yunetas reads too.
 
 ### Events & Pub-Sub
 
@@ -1040,7 +1060,9 @@ const event_types = [
     ["EV_MT_COMMAND_ANSWER",    event_flag_t.EVF_PUBLIC_EVENT],
     ["EV_REALTIME_ALARM",       event_flag_t.EVF_PUBLIC_EVENT],
 ];
-``` What the server gets wrong is a WARNING, never an ERROR. Before the session only `EV_IDENTITY_CARD_ACK` is taken; a `dst_role` or `dst_yuno` that is not this yuno's closes the channel too (an empty one is legal: anybody's), as the C transport does; an event that the named service does not take as public is dropped (7.26.24). A channel closed for a fault of the server is closed with **4002**, not 1000 (a browser may send only 1000 or 3000-4999, so 1002 cannot be used), so `EV_ON_CLOSE` says the session was cut (7.26.25).
+```
+
+What the server gets wrong is a WARNING, never an ERROR. Before the session only `EV_IDENTITY_CARD_ACK` is taken; a `dst_role` or `dst_yuno` that is not this yuno's closes the channel too (an empty one is legal: anybody's), as the C transport does; an event that the named service does not take as public is dropped (7.26.24). A channel closed for a fault of the server is closed with **4002**, not 1000 (a browser may send only 1000 or 3000-4999, so 1002 cannot be used), so `EV_ON_CLOSE` says the session was cut (7.26.25).
 
 `EV_ON_CLOSE` carries `code`, `reason` (masked) and `was_clean`, and so does `EV_ON_OPEN_ERROR` (7.26.24). A session that ends cleanly (a stop, a logout, the server closing with 1000 or 1001) is logged by nobody; a session CUT -- not clean, or any other code (1006, 1008, 1011) -- is one WARNING with the code and the reason masked:
 
@@ -1066,8 +1088,22 @@ that is just coming back. The backoff resets when a session is actually reached,
 and on `mt_start` — a deliberate reconnect never inherits a previous run's
 penalty. A session the transport closes for a fault of the server (4002) does not
 count as reached: the backoff goes on from where it was (7.26.25), so a server
-that breaks every session is not reconnected at the first delay for ever. For the old fixed-interval behaviour set `timeout_retry_max` equal to
+that breaks every session is not reconnected at the first delay for ever -- unless
+the session outlived `timeout_retry_max`: a session that long was served, and its
+fault starts the backoff over, as a clean end does (7.26.26). For the old fixed-interval behaviour set `timeout_retry_max` equal to
 `timeout_retry`.
+
+**A refused identity card** (`result < 0` in its ack) publishes `EV_ON_ID_NAK`
+and closes the channel with 1000; no session was reached, so the close is then
+`EV_ON_OPEN_ERROR` (one WARNING), and the link retries -- as the C transport.
+A subscriber that shows the refusal on `EV_ON_ID_NAK` should not show a second
+error on the `EV_ON_OPEN_ERROR` that follows it.
+
+**Stats and commands the server asks of this client** (`EV_MT_STATS`,
+`EV_MT_COMMAND`) are not served: the C client runs them on the service named and
+answers, a browser client does not run what its server asks. Each is one WARNING
+naming what was asked (masked), and the session goes on (7.26.26; up to 7.26.25
+they were dropped without a trace).
 
 ---
 

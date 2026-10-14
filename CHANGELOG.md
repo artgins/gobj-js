@@ -7,6 +7,88 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.26.26
+
+- **fix: a getter or a `Proxy` trap that throws is refused, not thrown, by the
+  attribute writers.** The walk of 7.26.25 read every value with no `try`, so
+  `gobj_write_str_attr(g, "s", {get a() { throw new Error("boom"); }})` threw
+  `boom` out of `gobj_write_attr()`, `gobj_write_attrs()` and the typed writers,
+  for a string, a `DTP_DICT` and a `DTP_LIST` (7.26.24 refused it, as the README
+  promises). A revoked `Proxy` threw even from the shape check. Refused now with
+  *"a value with no json text"*: one ERROR, -1, the attr keeps its value. Only in
+  7.26.25. Test `attr_types`.
+- **fix: a plain object of another realm (a `vm` context, an iframe) is a plain
+  object again** for a string, a `DTP_DICT` or a `DTP_LIST`. 7.26.25 asked its
+  prototype to be THIS realm's `Object.prototype`, and refused it as *"a value
+  with no json text"*; a `Map`, a `Date` or a class instance of another realm is
+  still refused. Only in 7.26.25. Test `attr_types`.
+- **fix: a value whose json text says another value is refused for a string, a
+  `DTP_DICT` or a `DTP_LIST`**: an object with a `toJSON()`, `NaN` or `Infinity`
+  inside (its text says `null`, and jansson holds no such real), a function,
+  `undefined` or a symbol inside an ARRAY (its text says `null`; as the value of
+  a key it is still an absent key), and a value nested deeper than 2048 levels
+  (a scalar is a level too) -- the depth C reads a text to, as a text is already
+  refused; a value 200 000 levels deep passed and burst `JSON.stringify()` later.
+  `NaN` or `Infinity` given to a string attribute was the text `"null"`. The
+  depth also ends a cycle, so the walk keeps no set of the path; it stays
+  without recursion, so a deep caller's stack does not change the answer. In
+  every published version. A `Proxy` is read through its traps, as `JSON.stringify()`
+  reads it: JS cannot tell one. Test `attr_types`.
+- **The walk costs what a `JSON.stringify()` of the value costs** (a dict of
+  50 000 records, some 450 000 values: 18-30 ms per write, against 26-50 ms for
+  its `JSON.stringify()`, on the dev machine), on every write of a string, a dict
+  or a list. Kept whole, by decision: a cache by identity would accept an object
+  changed since its first check, and checking only some writes would leave the
+  ones the check exists for. No consumer writes a large value to an attribute
+  (gobj-ui writes `records` as `{}`); the kw of an event is not checked.
+- **fix: an integer attribute refuses 2^63, as text and as a number.** A JS number
+  rounds the last 512 integers of int64 up to 2^63, which is out of int64, and
+  JSON.parse() makes 2^63 of `9223372036854775807`, of `9223372036854775808` (too
+  big for C) and of the real `9.223372036854775808e18` (out of range in C) alike.
+  7.26.25 took it (*"the int64 maximum it came from"*), so an attribute could hold
+  a number whose text C refuses as *"too big integer"* when it goes back on the
+  wire. Now *"a number out of its range"*, as the text `"9223372036854775296"` to
+  `"9223372036854775807"`, which C takes and JS cannot hold; to a list or a dict
+  2^63 is *"a real"*. Only in 7.26.25 for a number; a text in every published
+  version. The parity table has 111 cases (105); the C test `tests/c/attr_types`
+  passes all 111.
+- **fix(`C_IEVENT_CLI`): a session that outlived `timeout_retry_max` starts the
+  backoff over when the server breaks it.** 7.26.25 put back the backoff the ack
+  had reset whatever the session's age, so after a run of broken sessions, a
+  session that lived for hours and then got one foreign message was reconnected
+  with the escalated delay. A session that long was served: its fault is now a
+  delay from `timeout_retry`, as a clean end is. Broken sooner, the backoff goes
+  on as in 7.26.25. Only in 7.26.25. Test `ievent_peer_fault`.
+- **fix(`C_IEVENT_CLI`): `EV_MT_STATS` and `EV_MT_COMMAND` from the server are
+  refused with a WARNING** naming what was asked (the stats or the command,
+  masked: a command line can carry a secret) and the service. They were TODO
+  actions that returned 0 and left no trace. The C client runs them on the
+  service named and answers; a browser client does not run what its server
+  asks. The session goes on (the protocol allows the ask). In every published
+  version. Test `ievent_peer_logs`.
+- **fix: `kw_get_local_storage_value()` warns ONCE for an entry that is not
+  json, and removes it.** It console.warn'ed (with JSON.parse()'s error, which
+  quotes the text: an entry can hold a token) and answered the default on EVERY
+  read, so every reader of a corrupt entry in gobj-ui (the dev window, the json
+  viewer...) warned for ever; gobj-ui 7.26.47 worked around it in
+  `C_YUI_WINDOW`. Now one WARNING through the log, the text never shown, the
+  entry removed (with `create`, the default written in its place), the default
+  answered. A json `null` is no value, as `json_absent()` in C: the default
+  (it answered `null`, so a reader with a default of `"light"` got `null`), and
+  `create` writes the default over it. A store that cannot be read is warned
+  once per key. Outside a browser it answers the default (it answered
+  `undefined`, so `Number(...)` of it was NaN). In every published version. No
+  caller relied on the old answers: the keys written raw (`bulma-theme`,
+  `host_uuid`, yunomusica's) are never read through it. Test `local_storage`.
+- **docs:** the README's `C_IEVENT_CLI` section had a code block closed by a
+  line with text after the backticks, so the paragraphs after it (the WARNING,
+  the 4002, `EV_ON_CLOSE` and its example) rendered as code. The README and
+  doc.yuneta.io now also say that a refused identity card is `EV_ON_ID_NAK` and
+  then `EV_ON_OPEN_ERROR` (as the C transport: a subscriber that shows the first
+  should not show the second), and doc.yuneta.io's `C_IEVENT_CLI` page gains the
+  4002 close and the reconnection backoff.
+- **The masking's decoded view is built with fewer allocations** (`mark_decoded_view()`): two strings for each `%XX` made enough garbage to bend the time of a large text, and the linearity test failed under load for `%25253D` (slope 1.16-1.20). The view is built as character codes, a chunk at a time. Same output -- the views, their marks and the masked text on 441 008 texts --; 1 MB of `%25253D` takes 28 ms instead of 57, 4 MB 111 instead of 226.
+
 ## 7.26.25
 
 - **fix(`C_IEVENT_CLI`): a message that names no service is taken only for an
@@ -37,7 +119,9 @@ about which SDK it was built against.
   browser may close only with 1000 or 3000-4999: 1002 throws there, and the
   socket stayed open), and the backoff the ack reset is put back, so it doubles
   as for a failed open. The routing closes are of 7.26.24, the event out of
-  session of every published version. Test `ievent_peer_fault`.
+  session of every published version. Test `ievent_peer_fault`. (Correction, in
+  7.26.26: the backoff was put back after a session of any age; a session that
+  outlived `timeout_retry_max` now starts it over.)
 - **fix: a value that is not json all the way down is refused for a string, a
   `DTP_DICT` or a `DTP_LIST`, at the write.** The shape check looked only at
   the top: a circular object, a gobj, a `Map`, a `Set`, a `Date`, a typed array
@@ -46,7 +130,9 @@ about which SDK it was built against.
   became the text `"{}"`, silently. Refused now with *"a value with no json
   text"*, one ERROR, -1, the attr keeps its value. A key of `undefined` or of a
   function is still taken (`JSON.stringify()` drops it). `DTP_JSON` is not
-  checked. In every published version. Test `attr_types`.
+  checked. In every published version. Test `attr_types`. (Correction, in
+  7.26.26: its walk let a getter that throws escape the writer, which 7.26.24
+  refused, and it refused a plain object of another realm.)
 - **fix: the json text and the numbers of the parity edges are read as C reads
   them.** A text nested deeper than 2048 levels (a scalar is a level too) is
   refused for a dict or a list, as jansson refuses it ("maximum parsing
@@ -54,7 +140,8 @@ about which SDK it was built against.
   int64 given to a dict or a list is refused as "a real", as in C (`1e20`,
   `1.5e300` were "an integer"). `9223372036854775807` given as a json number to
   an integer is taken (JSON.parse() makes it 2^63, which JS refused as out of
-  range). `-0.0`, like `2.0`, stays "an integer" in JS. The parity table has
+  range). (Correction, in 7.26.26: 2^63 is out of int64, and its text is one C
+  refuses; JS refuses it again, as a number and as text.) `-0.0`, like `2.0`, stays "an integer" in JS. The parity table has
   105 cases (92), each with C's outcome and, where JS cannot give it, JS's; the
   C test `tests/c/attr_types` passes all 105.
 - **fix(masking): a URL or a query %-encoded inside a value is read decoded** (`mask_secrets_inline()`, `json_mask_secrets()`): `next=%2Flogin%3Fpassword%3Dx`, `url=https%3A%2F%2Fbob%3Ax%40host`, `redirect_uri=...%3Ftoken%3Dx` and `%2570assword=x` showed `x`. Decoded twice at most, ASCII only, as the C kernel. In every published version.

@@ -152,6 +152,7 @@ let PRIVATE_DATA = {
                                 // they will send in resend_subscriptions
     retry_ms:           0,      // current backoff (0 = none yet); see next_retry()
     retry_ms_before_session: 0, // the backoff the ack reset; see close_for_peer_fault()
+    session_since:      0,      // performance.now() of the ack; see close_for_peer_fault()
 };
 
 let __gclass__ = null;
@@ -718,10 +719,14 @@ function close_websocket(gobj, code = 1000, reason = "")
  *  protocol error, throws there), so it is 4002 -- and the server
  *  echoes it, so EV_ON_CLOSE carries it.
  *
- *  And a session the server broke was not a session reached: the
- *  backoff the ack reset is put back, or a server that breaks every
+ *  And a session the server broke at once was not a session reached:
+ *  the backoff the ack reset is put back, or a server that breaks every
  *  session is reconnected at the first delay for ever, with an
- *  EV_ON_OPEN and an EV_ON_CLOSE in the app per round.
+ *  EV_ON_OPEN and an EV_ON_CLOSE in the app per round. A session that
+ *  outlived the longest delay of the backoff (`timeout_retry_max`) was
+ *  served: its fault starts the backoff over, as a clean end does, or
+ *  one foreign message hours later is waited for with a delay escalated
+ *  by failures long gone.
  ***************************************************************/
 const CLOSE_PEER_FAULT = 4002;
 
@@ -730,7 +735,15 @@ function close_for_peer_fault(gobj, reason)
     let priv = gobj.priv;
 
     if(gobj_current_state(gobj) === "ST_SESSION") {
-        priv.retry_ms = priv.retry_ms_before_session;
+        const lived = performance.now() - priv.session_since;
+        const longest = Math.max(
+            gobj_read_integer_attr(gobj, "timeout_retry"),
+            gobj_read_integer_attr(gobj, "timeout_retry_max")
+        );
+        if(lived < longest) {
+            priv.retry_ms = priv.retry_ms_before_session;
+        }
+        priv.retry_ms_before_session = 0;
     }
     close_websocket(gobj, CLOSE_PEER_FAULT, reason);
 }
@@ -1318,6 +1331,7 @@ function ac_identity_card_ack(gobj, event, kw, src)
          */
         priv.retry_ms_before_session = priv.retry_ms;
         priv.retry_ms = 0;
+        priv.session_since = performance.now();
 
         if(!priv.inform_on_close) {
             priv.inform_on_close = true;
@@ -1576,15 +1590,29 @@ function ac_on_message(gobj, event, kw, src)
 }
 
 /***************************************************************************
+ *  The server asking this client for stats or a command. The C client
+ *  serves them (gobj_stats() / gobj_command() of the service named, and
+ *  an answer); a browser client does not run what its server asks, so it
+ *  is refused: a WARNING naming what was asked, masked (a command line
+ *  can carry a secret), and nothing else -- the protocol allows the ask,
+ *  so the session goes on. Up to 7.26.25 it was dropped without a trace.
+ ***************************************************************************/
+function refuse_asked_by_server(gobj, event, kw, key)
+{
+    const asked = (kw && typeof kw[key] === "string")? kw[key] : "";
+    const service = (kw && typeof kw.service === "string")? kw.service : "";
+    log_warning(`${gobj_short_name(gobj)}: ${event} not served by this client, DROPPED: ` +
+        `${key.replace(/_/g, "")} '${peer_text_shown(asked, PEER_NAME_SHOWN)}', ` +
+        `service '${peer_text_shown(service, PEER_NAME_SHOWN)}'`);
+    return -1;
+}
+
+/***************************************************************************
  *  remote asking for stats
  ***************************************************************************/
 function ac_mt_stats(gobj, event, kw, src)
 {
-    /*
-     *      __RESPONSE__ __MESSAGE__
-     */
-    // TODO
-    return 0;
+    return refuse_asked_by_server(gobj, event, kw, "__stats__");
 }
 
 /***************************************************************************
@@ -1592,11 +1620,7 @@ function ac_mt_stats(gobj, event, kw, src)
  ***************************************************************************/
 function ac_mt_command(gobj, event, kw, src)
 {
-    /*
-     *      __RESPONSE__ __MESSAGE__
-     */
-    // TODO
-    return 0;
+    return refuse_asked_by_server(gobj, event, kw, "__command__");
 }
 
 /***************************************************************************

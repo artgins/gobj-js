@@ -1215,6 +1215,17 @@ function value_has_shape(type, value)
     return true;
 }
 
+/*
+ *  Is a JS number within int64? 2^63 is not: it is what JSON.parse() makes
+ *  of 9223372036854775807 and of 9223372036854775808 alike (and of the
+ *  real 9.223372036854775808e18), and its text is an integer C refuses
+ *  ("too big integer"). -2^63 is exact.
+ */
+function is_int64_number(value)
+{
+    return value >= -9223372036854775808 && value < 9223372036854775808;
+}
+
 function shape_of_value(value)
 {
     if(is_array(value)) {
@@ -1228,8 +1239,7 @@ function shape_of_value(value)
     }
     if(typeof value === "number") {
         /*  Beyond int64 a json number is a real to C, whatever its digits  */
-        return (Number.isInteger(value) && Math.abs(value) <= 9223372036854775808)?
-            "an integer" : "a real";
+        return (Number.isInteger(value) && is_int64_number(value))? "an integer" : "a real";
     }
     if(typeof value === "boolean") {
         return "a boolean";
@@ -1256,8 +1266,7 @@ function number_as_type(type, value)
     if(typeof value === "boolean") {
         return {value: value? 1 : 0, refused: null};
     }
-    /*  2^63 included: it is what JSON.parse() makes of 9223372036854775807  */
-    if(!(value >= -9223372036854775808 && value <= 9223372036854775808)) {
+    if(!is_int64_number(value)) {
         return {value: undefined, refused: "a number out of its range"};
     }
     if(!Number.isInteger(value)) {
@@ -1311,7 +1320,11 @@ function text2parameter(type, s, from_kw)
         if(DTP_IS_BOOLEAN(type)) {
             return {value: n !== 0n, refused: null};
         }
-        return {value: Number(n), refused: null};   // beyond 2^53 a JS number rounds it, as JSON.parse()
+        const v = Number(n);    // beyond 2^53 a JS number rounds it, as JSON.parse()
+        if(!is_int64_number(v)) {
+            return {value: undefined, refused: "a number out of its range"};
+        }
+        return {value: v, refused: null};
     }
     if(DTP_IS_DICT(type) || DTP_IS_LIST(type)) {
         const jn = parse_json_text_as_c(s);
@@ -1361,6 +1374,15 @@ function command_parameter_from_text(type, text)
  *  undefined, or an empty text given to a number).
  ***************************************************************************/
 function command_parameter_from_json(type, value)
+{
+    try {
+        return parameter_from_json(type, value);
+    } catch(e) {
+        return {value: undefined, refused: NO_JSON_TEXT};   // a revoked proxy: even its shape throws
+    }
+}
+
+function parameter_from_json(type, value)
 {
     if(value === undefined || value === null) {
         if(DTP_IS_JSON(type) && value === null) {
@@ -1412,55 +1434,107 @@ const TYPES_READ = [
 ];
 
 /*
- *  Is `value` json, all the way down: plain objects (or of no prototype),
- *  arrays, strings, numbers, booleans and null, with no cycle. Its keys of
- *  undefined or of a function are dropped by JSON.stringify(), as an absent
- *  key. A cycle, a BigInt, a Map, a Set, a Date, a typed array or an
- *  instance of a class (a gobj, a DOM node) is not: it bursts, or changes,
- *  when it is serialized, far from the write. Walked without recursion,
- *  so no depth overflows the check itself.
+ *  Is `value` json, all the way down, and does its text say the same value:
+ *  plain objects (or of no prototype, or plain ones of another realm: a vm,
+ *  an iframe), arrays, strings, finite numbers, booleans and null, nested
+ *  no deeper than C reads a text (JSON_MAX_DEPTH, a scalar is a level too;
+ *  a cycle ends there). Walked without recursion: the depth of the
+ *  caller's stack does not change the answer. A key of undefined, a function or a symbol is
+ *  dropped by JSON.stringify(), as an absent key. Not json: a BigInt, a Map,
+ *  a Set, a Date, a typed array, an instance of a class (a gobj, a DOM
+ *  node), and what the text would change -- a toJSON(), NaN and Infinity
+ *  (null), a function, undefined or a symbol in an array (null). A getter
+ *  or a proxy trap that throws makes it not json: it is refused, never
+ *  thrown. A Proxy is read through its traps, as JSON.stringify() reads it.
  */
-const LEAVE_NODE = Symbol("leave");
-
-function is_json_value(value)
+function is_plain_object(v)
 {
-    const on_path = new Set();
-    const stack = [value];
-    while(stack.length) {
-        const v = stack.pop();
-        if(v === LEAVE_NODE) {
-            on_path.delete(stack.pop());
-            continue;
-        }
-        if(typeof v === "bigint") {
+    const proto = Object.getPrototypeOf(v);
+    if(proto === Object.prototype || proto === null) {
+        return true;
+    }
+    if(Object.getPrototypeOf(proto) !== null ||
+            !Object.prototype.hasOwnProperty.call(proto, "constructor")) {
+        return false;
+    }
+    const ctor = proto.constructor;
+    return typeof ctor === "function" && ctor.name === "Object";   // Object.prototype of another realm
+}
+
+/*
+ *  A scalar is json as it is; a container is walked by the caller.
+ *  Return true, false, or null for a container.
+ */
+function json_scalar_or_container(v)
+{
+    switch(typeof v) {
+        case "string":
+        case "boolean":
+            return true;
+        case "number":
+            return Number.isFinite(v);
+        case "object":
+            return (v === null)? true : null;
+        default:
             return false;
-        }
-        if(v === null || typeof v !== "object") {
-            continue;
-        }
-        if(on_path.has(v)) {
-            return false;
-        }
-        const array = Array.isArray(v);
-        if(!array) {
-            const proto = Object.getPrototypeOf(v);
-            if(proto !== Object.prototype && proto !== null) {
+    }
+}
+
+function is_json_node(value)
+{
+    const top = json_scalar_or_container(value);
+    if(top !== null) {
+        return top;
+    }
+    const values = [value];
+    const levels = [1];
+    while(values.length) {
+        const v = values.pop();
+        const level = levels.pop() + 1;     // the level of its children
+        let children;
+        if(Array.isArray(v)) {
+            if(typeof v.toJSON === "function") {
                 return false;
             }
-        }
-        on_path.add(v);
-        stack.push(v, LEAVE_NODE);
-        if(array) {
-            for(let i = 0; i < v.length; i++) {
-                stack.push(v[i]);
-            }
+            children = v;
         } else {
+            if(!is_plain_object(v) || typeof v.toJSON === "function") {
+                return false;
+            }
+            children = [];
             for(const key of Object.keys(v)) {
-                stack.push(v[key]);
+                const x = v[key];
+                if(x === undefined || typeof x === "function" || typeof x === "symbol") {
+                    continue;   // dropped by JSON.stringify(): an absent key
+                }
+                children.push(x);
+            }
+        }
+        if(children.length > 0 && level > JSON_MAX_DEPTH) {
+            return false;
+        }
+        for(let i = 0; i < children.length; i++) {
+            const x = children[i];
+            const r = json_scalar_or_container(x);
+            if(r === false) {
+                return false;
+            }
+            if(r === null) {
+                values.push(x);
+                levels.push(level);
             }
         }
     }
     return true;
+}
+
+function is_json_value(value)
+{
+    try {
+        return is_json_node(value);
+    } catch(e) {
+        return false;   // a getter or a trap that throws, a revoked proxy
+    }
 }
 
 /*

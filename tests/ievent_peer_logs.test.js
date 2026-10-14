@@ -326,6 +326,29 @@ describe("what the server gets wrong is a warning, and what no gclass declares i
     });
 });
 
+describe("stats and commands the server asks of this client", () => {
+    test("are not served: a WARNING each, the command masked, nothing published, the channel kept", () => {
+        const ievent = make_transport("t_mt_asked", true);
+        const listener = gobj_create_pure_child("t_mt_asked_listener", "C_PROBE_PEER_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        const ws = attach_socket(ievent);
+        logged = [];
+        receive(ievent, JSON.stringify({event: "EV_MT_STATS",
+            kw: {...iev_kw(""), __stats__: "stats"}}));
+        receive(ievent, JSON.stringify({event: "ev_mt_command",
+            kw: {...iev_kw(""), __command__: "set-pin pin=hunter2"}}));
+        expect(logged.filter(l => /^warning: .*EV_MT_STATS.*not served by this client.*'stats'/.test(l)).length)
+            .toBe(1);
+        expect(logged.filter(l => /^warning: .*EV_MT_COMMAND.*not served by this client/.test(l)).length)
+            .toBe(1);
+        expect(shown("hunter2")).toEqual([]);
+        expect(heard).toEqual([]);
+        expect(errors()).toEqual([]);
+        expect(ws.closed).toBe(false);
+    });
+});
+
 describe("the routing of a message, as the C transport checks it", () => {
     test("before the session only EV_IDENTITY_CARD_ACK: any other event is a WARNING and the channel goes", () => {
         const ievent = make_transport("t_pre_session", false);

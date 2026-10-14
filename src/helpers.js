@@ -1741,9 +1741,14 @@ function mark_inline_rules_of_now(str, marks)
  *  marked on the characters it came from, a %XX whole. Decoded
  *  MASK_MAX_DECODINGS times at most -- once, and once more for a value
  *  encoded inside an encoded value ("%253D") --: a bound keeps it linear.
- *  As the C kernel's mark_decoded_view().
+ *  As the C kernel's mark_decoded_view(). The view is built as character
+ *  codes and made a string VIEW_CHUNK codes at a time: two strings for
+ *  each %XX (up to gobj-js 7.26.25) were enough garbage to bend the time
+ *  of a large text, and made it twice as slow ("%25253D": 57 ms for 1 MB,
+ *  28 ms now).
  */
 const MASK_MAX_DECODINGS = 2;
+const VIEW_CHUNK = 8192;     // the arguments of one String.fromCharCode()
 
 function encoded_ascii_at(str, p)
 {
@@ -1764,24 +1769,31 @@ function mark_decoded_view(str, marks, decodings)
     if(decodings >= MASK_MAX_DECODINGS) {
         return;
     }
-    const pieces = [];
-    let last = 0;
-    let p = str.indexOf("%");
-    while(p >= 0) {
-        const c = encoded_ascii_at(str, p);
-        if(c >= 0) {
-            pieces.push(str.substring(last, p), String.fromCharCode(c));
-            last = p + 3;
-            p = str.indexOf("%", last);
-        } else {
-            p = str.indexOf("%", p + 1);
-        }
+    let first = str.indexOf("%");
+    while(first >= 0 && encoded_ascii_at(str, first) < 0) {
+        first = str.indexOf("%", first + 1);
     }
-    if(pieces.length === 0) {
+    if(first < 0) {
         return;     // nothing encoded
     }
-    pieces.push(str.substring(last));
-    const view = pieces.join("");
+
+    const codes = new Uint16Array(str.length - first);
+    let n = 0;
+    for(let p = first; p < str.length; p++) {
+        const code = str.charCodeAt(p);
+        const c = (code === 37)? encoded_ascii_at(str, p) : -1;    // '%'
+        if(c >= 0) {
+            codes[n++] = c;
+            p += 2;
+        } else {
+            codes[n++] = code;
+        }
+    }
+    const chunks = [str.substring(0, first)];
+    for(let k = 0; k < n; k += VIEW_CHUNK) {
+        chunks.push(String.fromCharCode.apply(null, codes.subarray(k, Math.min(n, k + VIEW_CHUNK))));
+    }
+    const view = chunks.join("");
 
     const view_marks = new Uint8Array(view.length);
     mark_inline_rules_of_now(view, view_marks);
@@ -1789,11 +1801,11 @@ function mark_decoded_view(str, marks, decodings)
 
     let q = 0;
     for(let i = 0; i < view.length; i++) {
-        const n = (encoded_ascii_at(str, q) >= 0)? 3 : 1;
+        const n_from = (encoded_ascii_at(str, q) >= 0)? 3 : 1;
         if(view_marks[i]) {
-            mark_range(marks, q, q + n);
+            mark_range(marks, q, q + n_from);
         }
-        q += n;
+        q += n_from;
     }
 }
 
@@ -3928,28 +3940,59 @@ function kw_clone_by_not_keys(
 
 /********************************************
  *  Get a local attribute
+ *
+ *  The json the entry holds, or `default_value` when there is none
+ *  (written there too with `create`). A json null is no value, as
+ *  json_absent() in C: the default. An entry that is not json (a
+ *  corrupt or foreign write) is one WARNING and is REMOVED, so the
+ *  next read finds no entry: it used to console.warn on every read,
+ *  for ever. Its text is never shown (JSON.parse() quotes it in its
+ *  error, and an entry can hold a token). A store that cannot be read
+ *  is warned once per key. Outside a browser: the default.
  ********************************************/
+const local_storage_warned = new Set();
+
+function warn_local_storage_once(key, what)
+{
+    if (local_storage_warned.has(key)) {
+        return;
+    }
+    local_storage_warned.add(key);
+    log_warning(`kw_get_local_storage_value(): localStorage key "${key}" ${what}`);
+}
+
 function kw_get_local_storage_value(key, default_value, create = false)
 {
     if (typeof window === "undefined" || !window.localStorage) {
-        return undefined; // Avoid errors in Node.js
+        return default_value; // No store outside the browser
     }
 
+    let text;
     try {
-        let value = window.localStorage.getItem(key);
-
-        if (value === null) { // `null` means key doesn't exist
-            if (create) {
-                kw_set_local_storage_value(key, default_value);
-            }
-            return default_value;
-        }
-
-        return JSON.parse(value); // Try parsing JSON
+        text = window.localStorage.getItem(key);
     } catch (e) {
-        window.console.warn(`Error reading localStorage key "${key}":`, e);
+        warn_local_storage_once(key, "cannot be read (storage blocked?): the default is used");
         return default_value;
     }
+
+    let value = null;
+    if (text !== null) {
+        try {
+            value = JSON.parse(text);
+        } catch (e) {
+            warn_local_storage_once(key, "does not hold json: removed, the default is used");
+            kw_remove_local_storage_value(key);
+            value = null;
+        }
+    }
+
+    if (value === null) {
+        if (create) {
+            kw_set_local_storage_value(key, default_value);
+        }
+        return default_value;
+    }
+    return value;
 }
 
 /********************************************
