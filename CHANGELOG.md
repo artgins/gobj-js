@@ -7,6 +7,15 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## 7.27.0
+
+The number follows SDK 7.27.0 (its first two indexes are the SDK's). No change
+of the runtime's code over 7.26.29:
+
+- **doc: `node_uuid()`'s comment** says which store failures warn (blocked or
+  full) and which are silent (no `localStorage`, no browser).
+- **dev:** `vite ^8.3.4`.
+
 ## 7.26.29
 
 - **fix, BREAKING: `gobj_play()` of a gobj that is not running gives -1 when its
