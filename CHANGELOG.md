@@ -9,8 +9,10 @@ about which SDK it was built against.
 
 ## 7.26.29
 
-- **fix: `gobj_play()` of a gobj that is not running gives -1 when its start
-  fails.** It starts the gobj itself (with a WARNING) and ignored the result,
+- **fix, BREAKING: `gobj_play()` of a gobj that is not running gives -1 when its
+  start is refused, destroys the gobj, or leaves it not running** (it gave 0
+  and called `mt_play`; a `mt_start` that returns -1 and leaves the gobj
+  running still plays, as in C). It starts the gobj itself (with a WARNING) and ignored the result,
   so a start refused by an empty `SDF_REQUIRED` attribute (7.26.28) still
   called `mt_play` on a gobj that was not running, left it `playing`, and gave
   0; a gobj that destroyed itself in its `mt_start` got its `mt_play` after it
@@ -18,13 +20,15 @@ about which SDK it was built against.
   `mt_play` when the start destroys the gobj or leaves it not running. In
   every published version (the refused start only in 7.26.28). Test
   `start_required`.
-- **fix: `gobj_change_parent()` refuses the gobj itself or one of its
+- **fix, BREAKING: `gobj_change_parent()` refuses the gobj itself or one of its
   descendants as the new parent**, with an ERROR and -1: it made a cycle that
   no longer hangs from the tree, where a `WALK_BOTTOM2TOP` walk and
   `gobj_full_name()` ended in a `RangeError`. A destroyed new parent is refused
   too, and every error gives -1 (a destroyed gobj gave `null`). In every
-  published version. No consumer calls `gobj_change_parent()`. Test
-  `walk_destroyed`.
+  published version. Its callers -- estadodelaire (`c_ui_device_sonda.js`,
+  `window_to_sheet`) and hidraulia (`c_ui_device_sonda.js`,
+  `c_ui_device_termod.js`) -- move a live gobj under a live parent outside any
+  walk, so neither refusal reaches them. Test `walk_destroyed`.
 - **fix: `node_uuid()` replaces a stored `host_uuid` that is not a uuid** (a
   foreign or corrupt write: `"garbage"`, `"42"`, `"[object Object]"`) with a
   new one, written to the store, and one WARNING. It was sent as it was in the
@@ -62,7 +66,8 @@ about which SDK it was built against.
   reached; a gobj moved ahead after it was handed was handed twice in every
   published version. At most once, not exactly once: a gobj not reached yet
   that a callback moves under a parent the walk has passed is not handed at
-  all, nor are its children. No consumer calls `gobj_change_parent()`. Test
+  all, nor are its children. Its callers (estadodelaire, hidraulia) move a
+  gobj outside any walk, so this does not reach them. Test
   `walk_destroyed`.
 - **fix: with `create`, a store that can be read but not written (full) is
   warned once per key.** Every read tried to write the default again, and the
