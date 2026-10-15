@@ -5893,9 +5893,9 @@ function new_uuid()
  *  The uuid of this node: ONE for the life of the page.
  *
  *  The one the store keeps ("host_uuid"), made and written there when
- *  there is none. When the store cannot keep it (blocked, full, no
- *  localStorage, outside a browser) the one this page made, warned
- *  once. It goes in the node_uuid attribute of the yuno, the id of the
+ *  there is none. When the store cannot keep it the one this page
+ *  made: warned once when the store is blocked or full, silent when
+ *  there is no localStorage or no browser at all. It goes in the node_uuid attribute of the yuno, the id of the
  *  identity card and the `host` of every message the client sends, so
  *  the first answer is kept and answered again: 7.26.27 made a new
  *  uuid on every call when the store could not keep it, and answered
