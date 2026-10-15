@@ -5899,9 +5899,11 @@ function new_uuid()
  *  identity card and the `host` of every message the client sends, so
  *  the first answer is kept and answered again: 7.26.27 made a new
  *  uuid on every call when the store could not keep it, and answered
- *  null without crypto.randomUUID().
+ *  null without crypto.randomUUID(). A stored value that is not a
+ *  uuid (a foreign or corrupt write) is replaced, with a WARNING.
  ************************************************************/
 let uuid_of_this_page = null;
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function node_uuid()
 {
@@ -5925,6 +5927,10 @@ function node_uuid()
         return uuid_of_this_page;
     }
 
+    if (uuid && !UUID_SHAPE.test(uuid)) {
+        log_warning("node_uuid(): the stored host_uuid is not a uuid: a new one replaces it");
+        uuid = null;
+    }
     if (!uuid) {
         uuid = new_uuid();
         try {

@@ -235,7 +235,9 @@ describe("a gobj moved by a callback during the walk", () => {
         gobj_destroy(root);
     });
 
-    test("moved to a branch already walked: not visited again", () => {
+    /*  At most once, not exactly once: moved behind the walk before it was
+     *  reached, it and its children are never given.  */
+    test("moved, before it was reached, to a branch already walked: never given", () => {
         const tag = "mv_back";
         const {root, c1, c3} = family(tag);
         const seen = [];
@@ -335,6 +337,42 @@ describe("a gobj moved by a callback during the walk", () => {
             return 0;
         });
         expect(short(seen, tag)).toEqual(["c1", "c3"]);
+        gobj_destroy(root);
+    });
+});
+
+describe("gobj_change_parent()", () => {
+    test("to itself or to a descendant: refused with an ERROR and -1, nothing moved", () => {
+        const root = node("cp_root", yuno);
+        const a = node("cp_a", root);
+        const a1 = node("cp_a1", a);
+        const a11 = node("cp_a11", a1);
+        errors = [];
+        for(const target of [a, a1, a11]) {
+            expect(gobj_change_parent(a, target)).toBe(-1);
+            expect(gobj_parent(a)).toBe(root);
+        }
+        expect(errors.length).toBe(3);
+        expect(errors[0]).toMatch(/cannot be its own ancestor/);
+        expect(gobj_parent(a1)).toBe(a);
+        gobj_destroy(root);
+    });
+
+    test("every error is -1; a legal move is 0", () => {
+        const root = node("cp2_root", yuno);
+        const a = node("cp2_a", root);
+        const b = node("cp2_b", root);
+        const gone = node("cp2_gone", root);
+        gobj_destroy(gone);
+        errors = [];
+        expect(gobj_change_parent(gone, a)).toBe(-1);
+        expect(gobj_change_parent(a, {})).toBe(-1);
+        expect(gobj_change_parent(a, gone)).toBe(-1);
+        expect(errors.length).toBe(3);
+        errors = [];
+        expect(gobj_change_parent(b, a)).toBe(0);
+        expect(gobj_parent(b)).toBe(a);
+        expect(errors).toEqual([]);
         gobj_destroy(root);
     });
 });

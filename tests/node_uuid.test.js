@@ -133,6 +133,20 @@ describe("node_uuid() with a store that keeps it", () => {
         expect(map.get("host_uuid")).toBe(a);
     });
 
+    for(const bad of ["garbage", "42", "[object Object]", "11111111-2222-4333-8444-55555555555"]) {
+        test(`an entry that is no uuid (${bad}): a new one is made and written, one WARNING`, async () => {
+            const map = new Map([["host_uuid", bad]]);
+            const {node_uuid} = await load_page({localStorage: map_storage(map), console: globalThis.console,
+                crypto: globalThis.crypto});
+            const all = calls(node_uuid);
+            expect(all[0]).toMatch(UUID_ANY);
+            expect(new Set(all).size).toBe(1);
+            expect(map.get("host_uuid")).toBe(all[0]);
+            expect(logged.length).toBe(1);
+            expect(logged[0]).toMatch(/^warning: node_uuid\(\): the stored host_uuid is not a uuid/);
+        });
+    }
+
     test("the page keeps its first answer when the store changes under it", async () => {
         const map = new Map();
         const {node_uuid} = await load_page({localStorage: map_storage(map), console: globalThis.console,

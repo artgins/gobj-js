@@ -3178,7 +3178,12 @@ function gobj_play(gobj)
         if(!(gobj.gclass.gclass_flag & gclass_flag_t.gcflag_required_start_to_play)) {
             // Default: It's auto-starting but display error (magic but warn!).
             log_warning(`${gobj_short_name(gobj)}: GObj playing without previous start`);
-            gobj_start(gobj);
+            if(start_destroys_it(gobj)) {
+                return -1;  // its start ended it: nothing left to play
+            }
+            if(!gobj.running) {
+                return -1;  // Error already logged: start refused, or stopped by its own mt_start
+            }
         } else {
             log_error(`${gobj_short_name(gobj)}: Cannot play, start not done`);
             return -1;
@@ -4519,11 +4524,22 @@ function gobj_change_parent(gobj, parent)
 {
     if(gobj_is_destroying(gobj)) {
         log_error("gobj NULL or DESTROYED");
-        return null;
+        return -1;
     }
     if(!(parent instanceof GObj)) {
         log_error(`${gobj_short_name(gobj)}: gobj_change_parent() BAD TYPE of parent`);
         return -1;
+    }
+    if(gobj_is_destroying(parent)) {
+        log_error(`${gobj_short_name(gobj)}: gobj_change_parent() parent NULL or DESTROYED`);
+        return -1;
+    }
+    for(let p = parent; p; p = p.parent) {
+        if(p === gobj) {
+            log_error(`${gobj_short_name(gobj)}: gobj_change_parent() a gobj cannot be its own ancestor: ` +
+                `${gobj_short_name(parent)}`);
+            return -1;
+        }
     }
 
     /*--------------------------------------*

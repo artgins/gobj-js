@@ -26,6 +26,9 @@ import {
     gobj_start,
     gobj_start_tree,
     gobj_stop_tree,
+    gobj_play,
+    gobj_is_playing,
+    gobj_is_destroying,
     gobj_destroy,
     gobj_is_running,
     gobj_write_attr,
@@ -41,6 +44,7 @@ set_log_callback((level, msg) => {
 });
 
 const started = [];
+const played = [];
 const R = sdata_flag_t.SDF_RD | sdata_flag_t.SDF_WR | sdata_flag_t.SDF_REQUIRED;
 
 const attrs_table = [
@@ -74,13 +78,28 @@ beforeAll(() => {
             started.push(gobj_name(gobj));
             return 0;
         },
+        mt_play: (gobj) => {
+            played.push(gobj_name(gobj));
+            return 0;
+        },
     }, null, attrs_table, {}, null, null, null, 0);
+    gclass_create("C_REQ_SUICIDE", [], [["ST_IDLE", []]], {
+        mt_start: (gobj) => {
+            gobj_destroy(gobj);
+            return 0;
+        },
+        mt_play: (gobj) => {
+            played.push(gobj_name(gobj));
+            return 0;
+        },
+    }, null, [SDATA_END()], {}, null, null, null, 0);
     yuno = gobj_create_yuno("req_yuno", "C_REQ_YUNO", {});
 });
 
 beforeEach(() => {
     errors = [];
     started.length = 0;
+    played.length = 0;
 });
 
 function make(name, kw, parent = yuno)
@@ -150,5 +169,34 @@ describe("gobj_start() with SDF_REQUIRED attributes", () => {
         expect(errors.length).toBe(1);
         gobj_stop_tree(c);
         gobj_destroy(p);
+    });
+});
+
+describe("gobj_play() of a gobj not started: its own start decides, as in C", () => {
+    test("start refused (required attribute empty): -1, mt_play not called, not playing", () => {
+        const g = gobj_create("req_play_refused", "C_REQ", {}, yuno);
+        expect(gobj_play(g)).toBe(-1);
+        expect(played).toEqual([]);
+        expect(gobj_is_playing(g)).toBe(false);
+        expect(gobj_is_running(g)).toBe(false);
+        expect(errors.length).toBe(1);
+        expect(errors[0]).toMatch(/Cannot start without all required attributes/);
+        gobj_destroy(g);
+    });
+
+    test("start destroys it: -1, mt_play not called", () => {
+        const g = gobj_create("req_play_suicide", "C_REQ_SUICIDE", {}, yuno);
+        expect(gobj_play(g)).toBe(-1);
+        expect(played).toEqual([]);
+        expect(gobj_is_destroying(g)).toBe(true);
+    });
+
+    test("start accepted: played", () => {
+        const g = make("req_play_ok", FULL);
+        expect(gobj_play(g)).toBe(0);
+        expect(played).toEqual(["req_play_ok"]);
+        expect(gobj_is_playing(g)).toBe(true);
+        expect(errors).toEqual([]);
+        gobj_destroy(g);
     });
 });
