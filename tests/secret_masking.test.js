@@ -129,6 +129,8 @@ const V24_SHAPES = [
     ["clone https://bob:wn3-hunter2@git.example/x.git", "clone https://bob:********@git.example/x.git"],
     ["redis://:wn4-hunter2@[::1]:6379/0", "redis://:********@[::1]:6379/0"],
     ["ssh://git@github.com:22/x http://[::1]:8080/y", null],     // a user, a port: no password
+    ["x https://[dead:beef]:z@h", "x https://[dead:********@h"],   // a userinfo that begins with '['
+    ["x https://[ab::cd]:80@h", "x https://[ab:********@h"],
 
     /*
      *  gobj-js 7.26.25: a URL or a query %-encoded inside the value of a
