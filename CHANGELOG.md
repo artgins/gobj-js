@@ -11,7 +11,10 @@ about which SDK it was built against.
 
 - **Development tooling on vitest 5** (`vitest` and `@vitest/coverage-v8`
   5.0.5, from 4.1.10). No published code changes, so there is no release.
-  572 tests pass, as on 4. jsdom stays on 26 (30 is a major, not decided).
+  572 tests pass, as on 4.
+- **jsdom 30.1.3** (from 26.1.0), the environment of
+  `tests/create_element2.test.js`. Its 4 tests and the 572 pass;
+  `npm audit` clean, and every range at its latest version (`ncu`).
 - **`npm run test:coverage` passes again.** The 1 MB case of
   `tests/secret_masking.test.js` ran at its 120 s limit under coverage
   (119.7 s on vitest 4, 116.3 s on 5, alone; 12 s without). In the full
