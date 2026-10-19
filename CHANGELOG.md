@@ -11,11 +11,16 @@ about which SDK it was built against.
 
 - **Development tooling on vitest 5** (`vitest` and `@vitest/coverage-v8`
   5.0.5, from 4.1.10). No published code changes, so there is no release.
-  572 tests pass, as on 4. Known, and not from the upgrade: under
-  `npm run test:coverage` the 1 MB case of `tests/secret_masking.test.js`
-  runs at its 120 s timeout (119.7 s on vitest 4, 116.3 s on 5, alone; 12 s
-  without coverage), so in the full parallel run it can exceed it. jsdom
-  stays on 26 (30 is a major, not decided).
+  572 tests pass, as on 4. jsdom stays on 26 (30 is a major, not decided).
+- **`npm run test:coverage` passes again.** The 1 MB case of
+  `tests/secret_masking.test.js` ran at its 120 s limit under coverage
+  (119.7 s on vitest 4, 116.3 s on 5, alone; 12 s without). In the full
+  parallel run it went over, on 4 as on 5. What it asserts is a slope, which
+  the instrumentation does not change, so only the limit of the case
+  widens. `vite.config.js` provides `coverage` (from `--coverage` on the
+  command line), the test reads it with `inject("coverage")`, and the case
+  gets 10 minutes under coverage and keeps 120 s otherwise. Full coverage
+  run: 572 tests, 127 s.
 
 ## 7.27.0
 

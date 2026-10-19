@@ -1,6 +1,12 @@
 import { defineConfig } from "vite";
 import terser from "@rollup/plugin-terser";
 
+/*  Whether this run measures coverage (`vitest --coverage`, the
+ *  `test:coverage` script). The instrumentation makes every line some ten
+ *  times slower, so a test that TIMES something reads it -- inject("coverage")
+ *  -- and widens its limit.  */
+const coverage = process.argv.some((arg) => arg === "--coverage" || arg.startsWith("--coverage."));
+
 export default defineConfig({
     /*  At the top level: nested in `build` (where it was) vitest never
      *  read it.  */
@@ -9,6 +15,9 @@ export default defineConfig({
         environment: "node",  // Use Node.js or browser as test environment
         coverage: {
             reporter: ["text", "json", "html"],  // Test coverage output
+        },
+        provide: {
+            coverage: coverage,
         },
     },
     build: {

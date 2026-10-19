@@ -27,7 +27,7 @@
  *
  *      And subs_flag carries the C kernel's bits.
  ***********************************************************************/
-import { describe, test, expect, beforeAll, beforeEach } from "vitest";
+import { describe, test, expect, beforeAll, beforeEach, inject } from "vitest";
 import {
     SDATA,
     SDATA_END,
@@ -455,6 +455,13 @@ describe("masking is linear and bounded", () => {
      */
     const SIZES = [64*1024, 256*1024, 1024*1024];
 
+    /*  The limit of the whole case, a guard and not what is measured: the
+     *  slope does not depend on how fast a line runs. Under coverage
+     *  (vite.config.js provides it) every line runs some ten times slower:
+     *  120 s alone, 116-120 s measured on vitest 4 and 5, so in a full
+     *  parallel run it went over. Ten minutes there; 120 s otherwise.  */
+    const CASE_LIMIT_MS = inject("coverage") ? 600000 : 120000;
+
     function ms_per_call(mask, text)
     {
         let calls = 0;
@@ -529,7 +536,7 @@ describe("masking is linear and bounded", () => {
         const value = "password=" + "x".repeat(1024*1024);
         expect(mask_secrets_inline(value)).toBe("password=********");
         check_linear("a secret value", "x", (text) => mask_secrets_inline("password=" + text));
-    }, 120000);
+    }, CASE_LIMIT_MS);
 
     test("a text over 4 MB is not shown, and nothing is shown past the cap", () => {
         const huge = "a=b " + "x".repeat(5*1024*1024);
