@@ -7,6 +7,16 @@ life between SDK releases. Rule set on 2026-08-28; before it the line had
 drifted to 7.13.x while the SDK was at 7.16.2, which told a consumer nothing
 about which SDK it was built against.
 
+## Unreleased
+
+- **Development tooling on vitest 5** (`vitest` and `@vitest/coverage-v8`
+  5.0.5, from 4.1.10). No published code changes, so there is no release.
+  572 tests pass, as on 4. Known, and not from the upgrade: under
+  `npm run test:coverage` the 1 MB case of `tests/secret_masking.test.js`
+  runs at its 120 s timeout (119.7 s on vitest 4, 116.3 s on 5, alone; 12 s
+  without coverage), so in the full parallel run it can exceed it. jsdom
+  stays on 26 (30 is a major, not decided).
+
 ## 7.27.0
 
 The number follows SDK 7.27.0 (its first two indexes are the SDK's). No change
