@@ -9,6 +9,8 @@ about which SDK it was built against.
 
 ## Unreleased
 
+- **vite 8.3.5** (development, from 8.3.4). No published code changes.
+  572 tests pass.
 - **Development tooling on vitest 5** (`vitest` and `@vitest/coverage-v8`
   5.0.5, from 4.1.10). No published code changes, so there is no release.
   572 tests pass, as on 4.
