@@ -9,6 +9,11 @@ about which SDK it was built against.
 
 ## Unreleased
 
+## 7.28.0
+
+The number follows SDK 7.28 (its first two indexes are the SDK's).
+
+- **dev:** `@rollup/plugin-terser ^1.0.2`.
 - **BREAKING: `jwtDecode()` and `jwt2json()` are removed.** `jwtDecode()`
   was an answer copied from StackOverflow, under CC BY-SA, a license the MIT
   of gobj-js cannot carry, and `jwt2json()` only called it. Nobody calls
@@ -20,8 +25,10 @@ about which SDK it was built against.
   MIT License (Niyamaka 2014-2024, ArtGins 2024-2026). `src/sprintf.js`
   keeps its BSD-3-Clause License in full in its header and in
   `THIRD-PARTY-NOTICES`, which the package now ships. The header is a legal
-  comment (`/*!`), so the bundles of `dist/` keep it, and so does the bundle
-  of an app that takes gobj-js in. `CONTRIBUTING.md`
+  comment (`/*!`), so the bundles of `dist/` keep it. An app built with
+  Vite 8 drops every comment: there the notice goes in the app's
+  `licenses.txt`, written by gobj-ui's `yunetaLicensesPlugin` from this
+  package's `THIRD-PARTY-NOTICES`. `CONTRIBUTING.md`
   says how to contribute and asks for the CLA of the Yuneta projects.
 - **vite 8.3.5** (development, from 8.3.4). No published code changes.
   572 tests pass.

@@ -1,6 +1,6 @@
 {
   "name": "@yuneta/gobj-js",
-  "version": "7.27.0",
+  "version": "7.28.0",
   "description": "GObject + FSM runtime for JavaScript — event-driven components with typed attributes, pub/sub, and WebSocket inter-event client",
   "author": "ArtGins",
   "license": "MIT",
@@ -12,7 +12,8 @@
     "require": "./dist/gobj-js.cjs.js"
   },
   "files": [
-    "dist/", "THIRD-PARTY-NOTICES"
+    "dist/",
+    "THIRD-PARTY-NOTICES"
   ],
   "scripts": {
     "build": "vite build",
@@ -23,7 +24,7 @@
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
-    "@rollup/plugin-terser": "^1.0.0",
+    "@rollup/plugin-terser": "^1.0.2",
     "@vitest/coverage-v8": "^5.0.5",
     "jsdom": "^30.1.3",
     "vite": "^8.3.5",
