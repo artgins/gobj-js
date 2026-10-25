@@ -1,4 +1,4 @@
-/*
+/*!
     Adapted from https://github.com/alexei/sprintf.js/blob/master/src/sprintf.js
     under its BSD-3-Clause License:
 

@@ -19,7 +19,9 @@ about which SDK it was built against.
   said MIT in `package.json` but carried no license text: `LICENSE` is the
   MIT License (Niyamaka 2014-2024, ArtGins 2024-2026). `src/sprintf.js`
   keeps its BSD-3-Clause License in full in its header and in
-  `THIRD-PARTY-NOTICES`, which the package now ships. `CONTRIBUTING.md`
+  `THIRD-PARTY-NOTICES`, which the package now ships. The header is a legal
+  comment (`/*!`), so the bundles of `dist/` keep it, and so does the bundle
+  of an app that takes gobj-js in. `CONTRIBUTING.md`
   says how to contribute and asks for the CLA of the Yuneta projects.
 - **vite 8.3.5** (development, from 8.3.4). No published code changes.
   572 tests pass.
