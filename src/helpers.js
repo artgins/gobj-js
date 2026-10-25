@@ -5136,75 +5136,6 @@ function create_json_record(json_desc, value) // here in js `json_desc` it's a d
     return record;
 }
 
-/************************************************************
- * https://stackoverflow.com/questions/38552003/how-to-decode-jwt-token-in-javascript-without-using-a-library
- ************************************************************/
-function jwtDecode(jwt)
-{
-    function b64DecodeUnicode(str) {
-        return decodeURIComponent(atob(str).replace(/(.)/g, function (m, p) {
-            let code = p.charCodeAt(0).toString(16).toUpperCase();
-            if (code.length < 2) {
-                code = '0' + code;
-            }
-            return '%' + code;
-        }));
-    }
-
-    function decode(str) {
-        let output = str.replace(/-/g, "+").replace(/_/g, "/");
-        switch (output.length % 4) {
-            case 0:
-                break;
-            case 2:
-                output += "==";
-                break;
-            case 3:
-                output += "=";
-                break;
-            default:
-                throw "Illegal base64url string!";
-        }
-
-        try {
-            return b64DecodeUnicode(output);
-        } catch (err) {
-            return atob(output);
-        }
-    }
-
-    let jwtArray = jwt.split('.');
-
-    return {
-        header: decode(jwtArray[0]),
-        payload: decode(jwtArray[1]),
-        signature: decode(jwtArray[2])
-    };
-}
-
-/************************************************************
- *  Decoded jwt and return in json
- *  'what' can be "header", "payload" or "signature"
- *  default is "payload"
- ************************************************************/
-function jwt2json(jwt, what)
-{
-    try {
-        let jwt_decoded = jwtDecode(jwt);
-        switch(what) {
-            case "header":
-                return JSON.parse(jwt_decoded.header);
-            case "signature":
-                return JSON.parse(jwt_decoded.signature);
-            case "payload":
-            default:
-                return JSON.parse(jwt_decoded.payload);
-        }
-    } catch (e) {
-        return null;
-    }
-}
-
 /***************************************************************************
  *  Escape a value for safe insertion into an HTML context.
  *  Use this whenever user- or server-supplied strings are interpolated
@@ -6548,9 +6479,6 @@ export {
     log_debug,
     trace_msg,
     trace_json,
-
-    jwtDecode,
-    jwt2json,
 
     escapeHtml,
     safeSrc,

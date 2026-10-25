@@ -761,8 +761,6 @@ empty_string(s)              // true if null/undefined/""
 str_in_list(list, str, ci)   // case-insensitive optional
 index_in_list(list, value)
 delete_from_list(list, value)
-jwtDecode(token)             // → header/payload/signature
-jwt2json(token, what)        // → payload JSON (what: optional part)
 debounce(fn, wait, immediate)
 timeTracker()
 
