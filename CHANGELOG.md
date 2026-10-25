@@ -9,6 +9,12 @@ about which SDK it was built against.
 
 ## Unreleased
 
+- **BREAKING: `jwtDecode()` and `jwt2json()` are removed.** `jwtDecode()`
+  was an answer copied from StackOverflow, under CC BY-SA, a license the MIT
+  of gobj-js cannot carry, and `jwt2json()` only called it. Nobody calls
+  either (checked in gobj-ui, yunos-js, yunovatios, wattyzer, estadodelaire,
+  hidraulia, yunomusica and yunovideo), and an SPA never sees a token: the
+  BFF keeps it in an httpOnly cookie.
 - **`LICENSE`, `THIRD-PARTY-NOTICES` and `CONTRIBUTING.md`.** The package
   said MIT in `package.json` but carried no license text: `LICENSE` is the
   MIT License (Niyamaka 2014-2024, ArtGins 2024-2026). `src/sprintf.js`
