@@ -9,6 +9,12 @@ about which SDK it was built against.
 
 ## Unreleased
 
+## 7.28.1
+
+- **`tab()` indents 4 spaces per nesting level, like `gobj.c`** (SDK
+  7.28.8). It was 2: an event sent from inside another one's action now
+  stands clearly under it in the machine trace.
+
 ## 7.28.0
 
 The number follows SDK 7.28 (its first two indexes are the SDK's).

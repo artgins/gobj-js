@@ -220,12 +220,12 @@ describe("event-specific levels", () => {
 
 describe("indentation", () => {
     /*
-     *  The C kernel's tab() writes TWO spaces per level of __inside__,
-     *  starting at one: a line at depth 1 is indented 2, a line fired
-     *  from inside that action is indented 4. Reading a JS trace beside
+     *  The C kernel's tab() writes FOUR spaces per level of __inside__,
+     *  starting at one: a line at depth 1 is indented 4, a line fired
+     *  from inside that action is indented 8. Reading a JS trace beside
      *  a node's only works if they agree.
      */
-    test("is two spaces per nesting level, like gobj.c", () => {
+    test("is four spaces per nesting level, like gobj.c", () => {
         gobj_set_global_trace("machine", true);
         gobj_send_event(nester, "EV_OUTER", {}, src);
 
@@ -235,8 +235,8 @@ describe("indentation", () => {
         expect(inner).toBeTruthy();
 
         const lead = (l) => l.length - l.replace(/^ +/, "").length;
-        expect(lead(outer)).toBe(2);
-        expect(lead(inner)).toBe(4);
+        expect(lead(outer)).toBe(4);
+        expect(lead(inner)).toBe(8);
     });
 });
 

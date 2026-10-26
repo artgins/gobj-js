@@ -920,7 +920,7 @@ gobj_set_trace_machine_format(1)           // 1 = simpler (DEFAULT), 0 = legacy
 
 One line per transition against three. Both name the event, so anything that
 reads the trace back by event name works across the switch. Every line is
-prefixed by its nesting depth (two spaces per level of `__inside__`), so an
+prefixed by its nesting depth (four spaces per level of `__inside__`), so an
 event sent from inside another one's action is indented under it — **keep that
 indentation when you render the line somewhere else**; it is the only thing
 that says a transition happened *during* another.
