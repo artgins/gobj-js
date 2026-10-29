@@ -5966,18 +5966,25 @@ function debounce(func, wait = 0, immediate = false)
  *  Build a URL/path from segments, ensuring exactly one '/'
  *  between each part.
  *
- *  - The first segment keeps its leading '/' (absolute) or
- *    not (relative).
- *  - Trailing '/' is stripped from every segment.
- *  - Leading '/' is stripped from every segment except the first.
+ *  - The first segment is the ROOT: it keeps its leading '/'
+ *    (absolute) or not (relative), and its trailing '/' are
+ *    stripped -- but a root made only of '/' stays "/".
+ *  - Leading and trailing '/' are stripped from every later
+ *    segment, and duplicate '/' inside it are collapsed.
+ *  - '.' and '..' of the later segments are resolved, and '..'
+ *    never rises above the root: ("/store", "../../etc") is
+ *    "/store/etc".
  *  - Empty/null/undefined segments are skipped.
  *
- *  Mirrors the C helper build_path() from gobj-c/src/helpers.c.
+ *  Mirrors the C helper build_path() from gobj-c/src/helpers.c
+ *  (tests/build_path.test.js pins the same cases). Up to 7.28.1
+ *  a root "/" was lost (("/", "tmp") gave "tmp") and '.'/'..'
+ *  were kept as they came.
  ************************************************************/
 function build_path(...segments)
 {
-    let result = "";
-    let i = 0;
+    let root = null;
+    let tail = [];
 
     for(let segment of segments) {
         if(segment == null || segment === "") {
@@ -5985,26 +5992,31 @@ function build_path(...segments)
         }
         segment = String(segment);
 
-        if(i === 0) {
-            // First segment: keep leading '/', strip trailing '/'
-            segment = segment.replace(/\/+$/, "");
-        } else {
-            // Subsequent segments: strip both leading and trailing '/'
-            segment = segment.replace(/^\/+/, "").replace(/\/+$/, "");
-        }
-
-        if(segment === "") {
+        if(root === null) {
+            // First segment: keep leading '/', strip trailing '/', "/" stays
+            root = segment.replace(/(.)\/+$/, "$1");
             continue;
         }
 
-        if(i > 0) {
-            result += "/";
+        for(let component of segment.split("/")) {
+            if(component === "" || component === ".") {
+                continue;
+            }
+            if(component === "..") {
+                tail.pop();     // at the root: clamped
+                continue;
+            }
+            tail.push(component);
         }
-        result += segment;
-        i++;
     }
 
-    return result;
+    if(root === null) {
+        return "";
+    }
+    if(tail.length === 0) {
+        return root;
+    }
+    return root + (root.endsWith("/")? "" : "/") + tail.join("/");
 }
 
 

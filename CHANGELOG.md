@@ -9,6 +9,20 @@ about which SDK it was built against.
 
 ## Unreleased
 
+## 7.29.0
+
+The number follows SDK 7.29 (its first two indexes are the SDK's).
+
+- **`build_path()` keeps a root `/`, and a `..` never goes above the first
+  segment, as in the C `build_path()`**. A first segment made
+  only of `/` was lost: `("/", "tmp")` gave the relative `"tmp"`. And `.` /
+  `..` of the later segments stayed as they came: `("/", "..", "etc")` gave
+  `"../etc"`, `("/store", "../../etc")` gave `"/store/../../etc"`. Now
+  `"/tmp"`, `"/etc"` and `"/store/etc"`; a double `/` inside a later
+  segment is one. The URLs the SPAs build (`build_path(bff_url, "auth",
+  "login")`) do not change. `tests/build_path.test.js` pins the cases of
+  the C test: 15 of its 29 were red on 7.28.1. 601 tests pass.
+
 ## 7.28.1
 
 - **`tab()` indents 4 spaces per nesting level, like `gobj.c`** (SDK
