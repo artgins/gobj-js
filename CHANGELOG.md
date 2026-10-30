@@ -9,6 +9,8 @@ about which SDK it was built against.
 
 ## Unreleased
 
+## 7.29.3
+
 ## 7.29.2
 
 - **No review citation in words.** The CHANGELOG and the tests say what each
