@@ -53,7 +53,7 @@ import {
  *  The C kernel's table of tests/c/secret_attrs/test_secret_attrs.c:
  *  the same texts, the same answers
  */
-const V24_SHAPES = [
+const SCHEME_WORD_SHAPES = [
     ["the bearer of this letter", null],
     ["Pay the Bearer Bond.", null],
     ["the bearer self-service and/or e.g. holder", null],
@@ -91,7 +91,7 @@ const V24_SHAPES = [
 
     /*
      *  Each rule judges the text as it came, and 7.26.9's reading of the
-     *  parameters is kept whole -- a review showed what 7.26.9 masked
+     *  parameters is kept whole -- texts whose secrets 7.26.9 masked
      */
     ["eyJzdWIiOiJ4In0.bearer12345678=sr1-hunter2", "********=********"],
     ["Bearer Bearer pwd=x \"sr2-hunter2\"", "Bearer Bearer ********"],
@@ -299,7 +299,7 @@ describe("a secret by its value, and pass/pin/otp as whole segments (the C kerne
     });
 
     test("the word after Bearer or Basic, by its shape, and the name: value rule", () => {
-        const shapes = V24_SHAPES;
+        const shapes = SCHEME_WORD_SHAPES;
         for(const [text, shown] of shapes) {
             expect(mask_secrets_inline(text), text).toBe(shown);
         }
@@ -521,7 +521,7 @@ describe("masking is linear and bounded", () => {
             check_linear("json_mask_secrets()", unit, (text) => json_mask_secrets({anything: text}));
         }
 
-        // and the shapes a review found, as in C: a scheme word repeated, ':' after
+        // and the shapes that once ran long, as in C: a scheme word repeated, ':' after
         // secrets' names, a container that does not close, a JWT's dots
         for(const unit of ["Bearer ", "basic ", "token:", "\"pin\": {[", "eyJ.", "x-auth-token: \\\""]) {
             check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));

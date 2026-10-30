@@ -9,6 +9,10 @@ about which SDK it was built against.
 
 ## Unreleased
 
+- **No review citation in words.** The CHANGELOG and the tests say what each
+  version changed, not which check of which review it was (the masking tests'
+  table is `SCHEME_WORD_SHAPES`). No code change.
+
 ## 7.29.1
 
 - **No review citation and no private name in the package.** The comments of
@@ -454,7 +458,7 @@ of the runtime's code over 7.26.29:
   ... Code: 1000 ... Clean: true"*), the clean one of a logout included, ahead
   of the branch that tells what happened: so a console check of an app passed
   or failed depending on when the close of its logout landed (one consumer
-  app's, after the 7.26.22 round). An ended session is published as `EV_ON_CLOSE` and
+  app's, after 7.26.22). An ended session is published as `EV_ON_CLOSE` and
   logged by nobody; a socket that closes before it ever opened is still the
   `EV_ON_OPEN_ERROR` warning. With the gclass's `ievents` trace on, every close
   is traced. Test `ievent_close_logs` (red on 7.26.22). *Too much was silenced:
@@ -467,7 +471,7 @@ of the runtime's code over 7.26.29:
 
 ## 7.26.22
 
-Parity with the C kernel of 7.26.10 (the twenty-fifth review): the masking,
+Parity with the C kernel of 7.26.10: the masking,
 the reading of an attribute's value, and the check of a gobj destroyed under
 code that still runs on it.
 
@@ -572,13 +576,13 @@ code that still runs on it.
   `EV_ON_OPEN_ERROR` in its FSM, or each is *"Event NOT DEFINED in state"*. No
   consumer hosts it as a pure child (all of them create it with
   `gobj_create()` / `gobj_create_service()`). Test `ievent_pure_child`.
-- Deploy note: this version reaches the apps in the same round as gobj-ui
+- Deploy note: this version reaches the apps together with gobj-ui
   7.26.43 and gui_agent 0.29.54 / gui_treedb 0.17.120, which defer the five
   destroys it would otherwise report in the console.
 
 ## 7.26.21
 
-Parity with the C kernel of the twenty-fourth review.
+Parity with the C kernel (the masking it released in 7.27.0).
 
 - **After `Bearer` or `Basic`, only a word that can be a credential is
   masked**, by the rule of the C kernel's `scheme_credential()`: a quoted one,
@@ -596,12 +600,11 @@ Parity with the C kernel of the twenty-fourth review.
 - The twin tests carry the C kernel's table, and the same 30 000 texts give the
   same answers on both sides.
 - **Nothing that the masking of 7.26.9 hid is shown** but the word after a
-  bare `Bearer` that cannot be a credential (the security review of the C
-  kernel's twenty-fourth review): each rule judges the text as it came (the
-  characters to mask are marked, a run of them is one `********`), and
-  7.26.9's reading of the parameters is kept whole. The twenty-fourth review
-  had shown the value of a `name=value` whose name a JWT of two parts took
-  (`eyJ..bearer1=x`), whose `=` the word after `Bearer Bearer` took, or that a
+  bare `Bearer` that cannot be a credential (as in the C kernel): each rule
+  judges the text as it came (the characters to mask are marked, a run of
+  them is one `********`), and 7.26.9's reading of the parameters is kept
+  whole. 7.26.20 showed the value of a `name=value` whose name a JWT of two
+  parts took (`eyJ..bearer1=x`), whose `=` the word after `Bearer Bearer` took, or that a
   label's value hid (`x-auth-token: password=a,b` showed `,b`); the rest of a
   token after a byte of no token68 (`Bearer abc%2Bdef`: the word of 7.26.9's
   Bearer is masked whole, its dots at the end too). A `\"name\":\"x\"` of a
@@ -612,7 +615,7 @@ Parity with the C kernel of the twenty-fourth review.
 
 ## 7.26.20
 
-Parity with the C kernel of the twenty-third review.
+Parity with the C kernel (the masking it released in 7.27.0).
 
 - **A secret by its VALUE, as the C kernel masks it.** `mask_secrets_inline()`
   and `json_mask_secrets()` (every string, under any key) mask a JWT (`eyJ...`,
@@ -635,8 +638,6 @@ Parity with the C kernel of the twenty-third review.
 
 ## 7.26.19
 
-Sixteenth check of the review.
-
 - **fix: the reentrancy guard of 7.26.18 swallowed console lines.** It was
   ONE guard for every log function, and `log_info()`, `log_debug()`,
   `trace_msg()` and `trace_json()` write their console through it: a remote
@@ -649,8 +650,6 @@ Sixteenth check of the review.
 
 ## 7.26.18
 
-Fifteenth check of the review.
-
 - **a log function that logs is not called again from inside itself**: a
   remote one (`set_remote_log_functions()`) whose socket logs as it fails
   recursed until the stack overflowed -- some 2000 lines in 27 ms, enough to
@@ -661,8 +660,6 @@ Fifteenth check of the review.
   value.
 
 ## 7.26.17
-
-Fourteenth check of the review.
 
 - **fix: a log path could still throw.** `trace_json()` kept its payload in
   the backlog with a bare `String()` fallback, which throws on an object with
@@ -678,8 +675,6 @@ Fourteenth check of the review.
   a BigInt in `%d`/`%i`/`%f` keeps its digits (`parseInt()` rounded it).
 
 ## 7.26.16
-
-Thirteenth check of the review.
 
 - **fix: `format_log()` could still throw.** `%s` went through `String()` and
   `%d`/`%f` through `parseInt()`/`parseFloat()`, which throw on an object with
@@ -697,8 +692,6 @@ Thirteenth check of the review.
 
 ## 7.26.15
 
-Twelfth check of the review.
-
 - **fix: a log line could still throw.** `log_stringify()` fell back to
   `String()`, which throws on an object with no prototype or a `toString()`
   that throws; and the jdb had its own copy, which read `e.message` of a
@@ -707,8 +700,6 @@ Twelfth check of the review.
   `null` and over another type, and where C differs.
 
 ## 7.26.14
-
-Eleventh check of the review.
 
 - **`kw_get_dict()` / `kw_get_list()` with `KW_CREATE` over a value of another
   type log it** (they gave an unwritten default back in silence), and a
@@ -728,8 +719,6 @@ Eleventh check of the review.
 
 ## 7.26.12
 
-Tenth check of the review.
-
 - **fix: `jdb_update()` / `jdb_delete()` with a record that is not an object
   threw a TypeError** (`kw["id"]` on `null`). They answer `null` with an error,
   and the error shows the record as json (it printed `[object Object]`).
@@ -740,8 +729,6 @@ Tenth check of the review.
   pages say so.
 
 ## 7.26.11
-
-Ninth check of the review.
 
 - **fix: `jdb_update()` threw a TypeError when the hook of the record its path
   ends on was not a list** (`5`, a string, an object). It answers `null` with
@@ -755,8 +742,6 @@ Ninth check of the review.
   SEGMENT of a kw path is a key `""` in JS, which C does not agree on.
 
 ## 7.26.10
-
-Eighth check of the review.
 
 - **fix: `jdb_update()` and `jdb_delete()` said nothing when they did
   nothing.** A record of `path` that is not there, or a record to delete that
@@ -772,8 +757,6 @@ Eighth check of the review.
 
 ## 7.26.9
 
-Seventh check of the review.
-
 - **fix: `jdb_init()` created nothing.** It passed `1` where it meant to
   create, and `1` is `KW_REQUIRED`: a jdb built from a schema had no topic and
   no hook, and `jdb_update()` pushed a child into a hook list that belonged to
@@ -785,8 +768,6 @@ Seventh check of the review.
   now, as 7.26.8 said.
 
 ## 7.26.8
-
-Sixth check of the review.
 
 - **fix: `kw_set_subdict_value()` answered `0` for a path it could not
   write**, and wrote the value into a dict that belonged to nobody: it went
@@ -806,8 +787,6 @@ Sixth check of the review.
   did. The test checks the errors are logged.
 
 ## 7.26.6
-
-Fifth check of the review.
 
 - **fix: `kw_delete()` as C.** A key or a parent that is not there answered
   `0` in silence, and a top-level list still threw a TypeError on `length`.
@@ -833,12 +812,10 @@ Fifth check of the review.
 - **security: `create_template_record()` (lib_treedb) assigned the template's
   keys.** The template is the backend's schema, so a parsed key `__proto__`
   became the PROTOTYPE of the new record (`.admin === true`, lost by
-  `JSON.stringify()`). It writes own keys now. The last copy by assignment of
-  the review of 2026-10-10.
+  `JSON.stringify()`). It writes own keys now. The last copy by assignment
+  found.
 
 ## 7.26.4
-
-Fourth check of the review.
 
 - **fix: the path WRITERS read a list as the reader does.** 7.26.2 made
   `kw_find_path()` take a list segment only as an index, and left the writers
@@ -879,8 +856,6 @@ Fourth check of the review.
 
 ## 7.26.2
 
-Third check of the review of 2026-10-10.
-
 - **fix: a url the browser refuses opened nothing and said nothing.** When
   `new WebSocket()` THROWS (a malformed url, typically one edited by hand),
   `C_IEVENT_CLI` only logged: no `EV_ON_OPEN_ERROR`, no retry, the link left
@@ -913,8 +888,6 @@ Third check of the review of 2026-10-10.
 
 ## 7.26.1
 
-Second check of the review of 2026-10-10.
-
 - **fix: a start whose url fails let the old socket's close in twice.** The
   socket's sequence number was counted after `new WebSocket()`, so a url that
   throws left the old socket current: its late close was delivered after the
@@ -941,8 +914,8 @@ Second check of the review of 2026-10-10.
 
 ## 7.26.0
 
-The minor follows the SDK (7.26.x); no API was removed. Findings of the review
-of 2026-10-10, each pinned by a test (`tests/runtime_contracts.test.js`,
+The minor follows the SDK (7.26.x); no API was removed. Each fix is pinned by
+a test (`tests/runtime_contracts.test.js`,
 `tests/ievent_restart.test.js`).
 
 - **fix: `log_error()` / `log_warning()` / `log_info()` / `log_debug()` /
@@ -1390,7 +1363,7 @@ localStorage key, and the runtime read them BESIDE the levels: a
   `get-` forms, same parameters. A command saves its scope WHOLE, from the
   levels in force, an empty one as `[]`; at start up a saved scope REPLACES
   what `main.js` set before creating the yuno, and a scope never saved keeps
-  it. The rule went into the C `C_YUNO` in the same round.
+  it. The rule went into the C `C_YUNO` at the same time.
 - **feat: the getters of C.** `gobj_get_global_trace_level()`,
   `gobj_get_global_trace_no_level()`, `gobj_get_gclass_trace_level()` (with the
   global levels, as C), `gobj_get_gclass_trace_level2()` (the gclass's own),
