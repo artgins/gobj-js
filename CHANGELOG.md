@@ -9,6 +9,27 @@ about which SDK it was built against.
 
 ## Unreleased
 
+- **Tests: the linearity of the secret masking is checked by COUNTING its
+  work, not by timing it.** A slope of times could not tell a load from a
+  rescan: with eight suites at once on four cores the masking went over
+  the limit of 1.20 of 7.29.4's test (1.23 to 1.28) with no rescan, while
+  a masking that rescans at twice the time gave 1.22, and one that rescans
+  at 1.3 times the time passed on 6 of 17 shapes. Now `tests/count_work_plugin.js`, a vite plugin of the vitest
+  project `counted`, adds a tick to every function and every loop of
+  `src/`, and the test adds the characters each native string method scans
+  (`indexOf()`, `substring()`, a regular expression, ...). Each shape is
+  masked at 256 KB, 512 KB and 1 MB, and the work each character adds is
+  compared between the two steps: the masking adds the same at both
+  (1.00000, 1.00001 for one shape), and the limit is 1.02.
+  - **A rescan fails on every shape, whatever the load:** rescans to the
+    end from one character in k that cost 0.3 times the masking at 1 MB
+    give 1.18 on all 23 shapes, and at twice the work 1.42; the same with
+    the rescans made by `indexOf()`.
+  - **The suite takes 4.3 s instead of 25 s** on an idle machine, and
+    passed 24 runs of 24 with eight suites at once on four cores. The test
+    no longer runs alone after the other files.
+  - No published file changes.
+
 ## 7.29.4
 
 - **Tests: the linearity of the secret masking runs alone, and keeps the

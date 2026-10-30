@@ -1,18 +1,21 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import terser from "@rollup/plugin-terser";
 import { configDefaults } from "vitest/config";
+import { count_work_plugin } from "./tests/count_work_plugin.js";
 
 /*  Whether this run measures coverage (`vitest --coverage`, the
  *  `test:coverage` script). The instrumentation makes every line some ten
- *  times slower, so a test that TIMES something reads it -- inject("coverage")
- *  -- and widens its limit.  */
+ *  times slower, so a test with a long case reads it -- inject("coverage")
+ *  -- and widens its time limit.  */
 const coverage = process.argv.some((arg) => arg === "--coverage" || arg.startsWith("--coverage."));
 
-/*  The test files that TIME what they check. They run in a group of their
- *  own (`sequence.groupOrder`), after every other file has ended, so the
- *  other files of a parallel run do not compete for the CPU while they
- *  measure.  */
-const TIMED_TESTS = ["tests/secret_masking_linear.test.js"];
+/*  The test files that COUNT the work of what they check. They run in a
+ *  project of their own, whose count_work_plugin.js adds a tick to every
+ *  function and every loop of src/: the other tests and the build see the
+ *  source as it is.  */
+const COUNTED_TESTS = ["tests/secret_masking_linear.test.js"];
+const SRC_DIR = fileURLToPath(new URL("./src/", import.meta.url));
 
 export default defineConfig({
     /*  At the top level: nested in `build` (where it was) vitest never
@@ -31,16 +34,15 @@ export default defineConfig({
                 extends: true,
                 test: {
                     name: "unit",
-                    exclude: [...configDefaults.exclude, ...TIMED_TESTS],
-                    sequence: {groupOrder: 0},
+                    exclude: [...configDefaults.exclude, ...COUNTED_TESTS],
                 },
             },
             {
                 extends: true,
+                plugins: [count_work_plugin((id) => id.startsWith(SRC_DIR) && id.endsWith(".js"))],
                 test: {
-                    name: "timed",
-                    include: TIMED_TESTS,
-                    sequence: {groupOrder: 1},
+                    name: "counted",
+                    include: COUNTED_TESTS,
                 },
             },
         ],

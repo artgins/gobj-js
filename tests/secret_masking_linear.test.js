@@ -1,13 +1,15 @@
 /***********************************************************************
  *          secret_masking_linear.test.js
  *
- *      The masking of secrets takes a time linear in the size of what
- *      it masks: no shape of text makes it rescan.
+ *      The masking of secrets does a work linear in the size of what it
+ *      masks: no shape of text makes it rescan.
  *
- *      This file TIMES what it checks, so vite.config.js runs it in a
- *      group of its own, after every other test file has ended: the
- *      other files of a parallel run are not there to compete for the
- *      CPU while it measures.
+ *      The work is COUNTED, not timed, so the machine and its load do
+ *      not change the answer. vite.config.js runs this file in a vitest
+ *      project of its own, whose count_work_plugin.js adds a tick to
+ *      every function and every loop of src/; this file adds the
+ *      characters that the native string methods scan
+ *      (with_native_scans_counted()).
  *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
@@ -18,120 +20,142 @@ import {
     json_mask_secrets,
 } from "../src/index.js";
 
+/*
+ *  The counter of count_work_plugin.js, created when src/ loads
+ */
+const work = globalThis.__gobj_js_work;
+
+/*
+ *  The characters each native method of a string scans, added to the
+ *  counter: a search, to where it found (or to the end); a copy or a
+ *  conversion, the characters it reads; a regular expression, the text
+ *  after its lastIndex. String.fromCharCode() counts its arguments and
+ *  Array.prototype.join() what it makes. The O(1) readers (charCodeAt,
+ *  a character by index) are not counted: they run inside a loop, and
+ *  the loop counts.
+ */
+function search_cost(str, search, from, found)
+{
+    const start = Math.max(0, Math.min(str.length, Math.trunc(Number(from) || 0)));
+    if(found < 0) {
+        return str.length - start + 1;
+    }
+    return found - start + String(search).length + 1;
+}
+
+const native_index_of = String.prototype.indexOf;
+
+function with_native_scans_counted(fn)
+{
+    const S = String.prototype;
+    const R = RegExp.prototype;
+    const A = Array.prototype;
+    const saved = [];
+    const patch = (owner, name, cost) => {
+        const orig = owner[name];
+        saved.push([owner, name, orig]);
+        owner[name] = function(...args) {
+            const result = orig.apply(this, args);
+            work.n += cost(this, args, result, orig);
+            return result;
+        };
+    };
+    const whole = (s) => String(s).length + 1;
+
+    patch(S, "indexOf", (s, a, r) => search_cost(s, a[0], a[1], r));
+    patch(S, "includes", (s, a, r) => search_cost(s, a[0], a[1],
+        r? native_index_of.call(s, a[0], a[1]) : -1));
+    patch(S, "lastIndexOf", (s, a, r) => ((r < 0)? s.length : s.length - r) + 1);
+    patch(S, "startsWith", (s, a) => String(a[0]).length + 1);
+    patch(S, "endsWith", (s, a) => String(a[0]).length + 1);
+    for(const name of ["substring", "slice", "substr", "repeat", "padStart", "padEnd"]) {
+        patch(S, name, (s, a, r) => r.length + 1);
+    }
+    for(const name of ["split", "toLowerCase", "toUpperCase", "trim", "trimStart", "trimEnd",
+                       "normalize", "concat", "replace", "replaceAll", "match", "matchAll",
+                       "search", "localeCompare"]) {
+        patch(S, name, (s) => whole(s));
+    }
+    patch(R, "exec", (re, a) => whole(a[0]) - (re.lastIndex || 0));
+    patch(R, "test", (re, a) => whole(a[0]) - (re.lastIndex || 0));
+    patch(String, "fromCharCode", (s, a) => a.length + 1);
+    patch(String, "fromCodePoint", (s, a) => a.length + 1);
+    patch(A, "join", (arr, a, r) => r.length + 1);
+
+    // only a synchronous call runs in between: nothing of vitest sees the patches
+    try {
+        return fn();
+    } finally {
+        for(let i = saved.length - 1; i >= 0; i--) {
+            const [owner, name, orig] = saved[i];
+            owner[name] = orig;
+        }
+    }
+}
+
+/*
+ *  The work of one call of `mask` on `text`
+ */
+function work_of(mask, text)
+{
+    const before = work.n;
+    with_native_scans_counted(() => mask(text));
+    return work.n - before;
+}
+
 describe("masking is linear and bounded", () => {
     /*
-     *  Each shape is masked at 256 KB, 1 MB and 2 MB, and the slope of
-     *  log(time) on log(size) is fitted over the three: 1 for a linear
-     *  masking, 2 for a quadratic one. A time is the best of every pass
-     *  made so far, the three sizes taken in turn in each pass, so that a
-     *  load slows a pass and not one size.
+     *  Each shape is masked at 256 KB, 512 KB and 1 MB, as `unit` repeated
+     *  r, 2r and 4r times, so the three texts are exactly in proportion.
+     *  The work of each size is counted (it is the same on every run and
+     *  every machine), and so is the work each character ADDS from one
+     *  size to the next: from 256 KB to 512 KB, and from 512 KB to 1 MB.
+     *  A linear masking (a work of a*n + b) adds the same per character
+     *  at both steps, whatever its a and b. A masking that also rescans
+     *  adds more at the second step, and in proportion to how much it
+     *  rescans.
      *
-     *  Every size is timed over the SAME amount of work: 8 calls of
-     *  256 KB, 2 of 1 MB and 1 of 2 MB (all of them repeated m times, so
-     *  that a window lasts 10 ms at least and the grain of the timer makes
-     *  no slope). A linear masking then takes windows of the same length
-     *  at every size, and a load that takes the CPU away now and then has
-     *  the same chance of hitting each of them. With a window of 10 ms for
-     *  every size, the best of a small size finds a window the load has
-     *  not touched and the best of the largest, a window of 50 ms and
-     *  more, does not: the slope grows with the load alone.
-     *
-     *  A load only ever makes a time LONGER, so the best time of a size is
-     *  the one to fit, and it is kept across the measures of a shape: a
-     *  shape is measured in rounds of three passes, up to six rounds, and
-     *  fails only if the slope of the best times is still steep after the
-     *  last. One clean pass of each size is enough, wherever it falls. A
-     *  quadratic masking is steep in every pass, so its best times are
-     *  steep too.
-     *
-     *  The sizes start at 256 KB because a rescan is told by its largest
-     *  sizes: a copy of the masking that also rescans to the end from
-     *  every k-th character, k set so that the rescans cost what the
-     *  masking costs at 1 MB (twice the time there), gives 1.26 to 1.46
-     *  on EVERY shape here, where 64 KB, 256 KB and 1 MB give it 1.09 to
-     *  1.25 and let most shapes pass. The masking gives 0.98 to 1.07 on an
-     *  idle machine and up to 1.17 with three runnable tasks per core.
-     *  The slowest shapes here take some 120 ms for 2 MB on an idle
-     *  machine; quadratic in earnest, a shape would not end in the time of
-     *  the test.
+     *  The masking adds 1.00000 times as much at the second step as at
+     *  the first on every shape here (1.00001 for "[pin]=\""), the limit
+     *  is 1.02, and a masking that rescans goes far over it. Rescans to
+     *  the end from one character in k, with k set so that at 1 MB they
+     *  cost 0.3 times what the masking costs there, give 1.18 on every
+     *  shape; set to cost as much as the masking (twice the work at
+     *  1 MB), 1.42. The same with the rescans made by indexOf() instead
+     *  of a loop. The counts are the same on every run, so no load moves
+     *  the ratio.
      */
-    const SIZES = [256*1024, 1024*1024, 2048*1024];
-    const PASSES_PER_ROUND = 3;
-    const ROUNDS = 6;
-    const SLOPE_LIMIT = 1.20;
+    const SIZES = [256*1024, 512*1024, 1024*1024];
+    const STEP_LIMIT = 1.02;
 
-    /*  The limit of the whole case, a guard and not what is measured: the
-     *  slope does not depend on how fast a line runs. Under coverage
-     *  (vite.config.js provides it) every line runs some ten times slower:
-     *  120 s alone, 116-120 s measured on vitest 4 and 5, so in a full
-     *  parallel run it went over. Ten minutes there; 120 s otherwise.  */
+    /*  The limit of the whole case: a guard, a masking that took a time
+     *  of quadratic order would never end. Under coverage (vite.config.js
+     *  provides it) every line runs some ten times slower.  */
     const CASE_LIMIT_MS = inject("coverage") ? 600000 : 120000;
-
-    function ms_per_call(mask, text, calls)
-    {
-        const t0 = performance.now();
-        for(let i = 0; i < calls; i++) {
-            mask(text);
-        }
-        return (performance.now() - t0) / calls;
-    }
-
-    /*  The calls of each size that do the work of `m` calls of the
-     *  largest one, `m` making that work last 10 ms at least.  */
-    function calls_per_window(mask, texts)
-    {
-        const largest = SIZES[SIZES.length - 1];
-        const one = ms_per_call(mask, texts[texts.length - 1], 1);
-        const m = Math.max(1, Math.ceil(10 / Math.max(one, 0.001)));
-        return SIZES.map((size) => m * largest / size);
-    }
-
-    function measure_round(mask, texts, calls, best)
-    {
-        for(let pass = 0; pass < PASSES_PER_ROUND; pass++) {
-            for(let i = 0; i < SIZES.length; i++) {
-                best[i] = Math.min(best[i], ms_per_call(mask, texts[i], calls[i]));
-            }
-        }
-    }
-
-    function slope_of(best)
-    {
-        const xs = SIZES.map((size) => Math.log(size));
-        const ys = best.map((ms) => Math.log(ms));
-        const mean_x = (xs[0] + xs[1] + xs[2]) / 3;
-        const mean_y = (ys[0] + ys[1] + ys[2]) / 3;
-        let num = 0;
-        let den = 0;
-        for(let i = 0; i < SIZES.length; i++) {
-            num += (xs[i] - mean_x) * (ys[i] - mean_y);
-            den += (xs[i] - mean_x) * (xs[i] - mean_x);
-        }
-        return num / den;
-    }
 
     function check_linear(what, unit, mask)
     {
-        const texts = SIZES.map((size) => unit.repeat(Math.floor(size / unit.length)));
-        for(const text of texts) {
-            mask(text);     // the first runs compile
-        }
-        const calls = calls_per_window(mask, texts);
-        const best = SIZES.map(() => Infinity);
-        const seen = [];
-        let slope = Infinity;
-        for(let round = 0; round < ROUNDS; round++) {
-            measure_round(mask, texts, calls, best);
-            slope = slope_of(best);
-            seen.push(`${slope.toFixed(2)} (${best.map((ms) => ms.toFixed(2)).join(" / ")} ms)`);
-            if(slope < SLOPE_LIMIT) {
-                break;
-            }
-        }
-        expect(slope, `${what} of "${unit}": ${seen.join(", ")}`).toBeLessThan(SLOPE_LIMIT);
+        const r = Math.floor(SIZES[0] / unit.length);
+        const texts = [unit.repeat(r), unit.repeat(2*r), unit.repeat(4*r)];
+        const w = texts.map((text) => work_of(mask, text));
+        const step1 = (w[1] - w[0]) / r;
+        const step2 = (w[2] - w[1]) / (2*r);
+        const ratio = step2 / step1;
+        const seen = `work ${w.join(" / ")}, per unit added ${step1.toFixed(2)} then ${step2.toFixed(2)}`;
+        expect(step1, `${what} of "${unit}": ${seen}: nothing counted`).toBeGreaterThan(0);
+        expect(ratio, `${what} of "${unit}": ${seen}`).toBeLessThan(STEP_LIMIT);
+        return ratio;
     }
 
-    test("a 1 MB a=a=... word and a 1 MB secret value take a time linear in their size", () => {
+    test("the work is counted: count_work_plugin.js is on the source", () => {
+        expect(work, "vite.config.js runs this file without count_work_plugin.js").toBeTruthy();
+        const n = 64*1024;
+        const counted = work_of((text) => mask_secrets_inline(text), "a=".repeat(n/2));
+        expect(counted).toBeGreaterThan(n);
+        expect(work_of((text) => mask_secrets_inline(text), "a=".repeat(n/2))).toBe(counted);
+    });
+
+    test("a 1 MB a=a=... word and a 1 MB secret value do a work linear in their size", () => {
         expect(mask_secrets_inline("a=".repeat(512*1024))).toBe(null);
         expect(mask_secrets_inline("abcd=".repeat(210*1024))).toBe(null);
         for(const unit of ["a=", "abcd=", " attribute=", "pin=\"", "abc?token=x&"]) {
