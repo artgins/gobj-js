@@ -20,37 +20,45 @@ import {
 
 describe("masking is linear and bounded", () => {
     /*
-     *  Each shape is masked at 64 KB, 256 KB and 1 MB, and the slope of
+     *  Each shape is masked at 256 KB, 1 MB and 2 MB, and the slope of
      *  log(time) on log(size) is fitted over the three: 1 for a linear
      *  masking, 2 for a quadratic one. A time is the best of every pass
      *  made so far, the three sizes taken in turn in each pass, so that a
-     *  load slows a pass and not one size; a call is repeated for 10 ms and
-     *  its time is the mean, so that the grain of the timer makes no slope.
+     *  load slows a pass and not one size.
+     *
+     *  Every size is timed over the SAME amount of work: 8 calls of
+     *  256 KB, 2 of 1 MB and 1 of 2 MB (all of them repeated m times, so
+     *  that a window lasts 10 ms at least and the grain of the timer makes
+     *  no slope). A linear masking then takes windows of the same length
+     *  at every size, and a load that takes the CPU away now and then has
+     *  the same chance of hitting each of them. With a window of 10 ms for
+     *  every size, the best of a small size finds a window the load has
+     *  not touched and the best of the largest, a window of 50 ms and
+     *  more, does not: the slope grows with the load alone.
      *
      *  A load only ever makes a time LONGER, so the best time of a size is
      *  the one to fit, and it is kept across the measures of a shape: a
-     *  shape is measured in rounds of five passes, up to six rounds, and
+     *  shape is measured in rounds of three passes, up to six rounds, and
      *  fails only if the slope of the best times is still steep after the
-     *  last. One clean pass of each size is enough, wherever it falls:
-     *  under load the compiler can be late for one size in all five passes
-     *  of a round (1 MB of "a=" measured twice its time once in 20 runs of
-     *  two suites at a time). A quadratic masking is steep in every pass,
-     *  so its best times are steep too.
+     *  last. One clean pass of each size is enough, wherever it falls. A
+     *  quadratic masking is steep in every pass, so its best times are
+     *  steep too.
      *
-     *  Measured with the machine idle and with every core busy, on every
-     *  shape here: the masking gives 0.98 to 1.09; a copy of it that also
-     *  rescans to the end from every k-th character, k set so that the
-     *  rescans cost what the masking costs at 1 MB (twice the time there,
-     *  eight times at 4 MB), gives 1.16 to 1.45. A ratio of 1 MB to
-     *  256 KB in place of the slope fails under load and lets that copy
-     *  pass (6.4 against a limit of 8). The slowest shapes here take some
-     *  50 ms for 1 MB on an idle machine; quadratic in earnest, a shape
-     *  would not end in the time of the test.
+     *  The sizes start at 256 KB because a rescan is told by its largest
+     *  sizes: a copy of the masking that also rescans to the end from
+     *  every k-th character, k set so that the rescans cost what the
+     *  masking costs at 1 MB (twice the time there), gives 1.26 to 1.46
+     *  on EVERY shape here, where 64 KB, 256 KB and 1 MB give it 1.09 to
+     *  1.25 and let most shapes pass. The masking gives 0.98 to 1.07 on an
+     *  idle machine and up to 1.17 with three runnable tasks per core.
+     *  The slowest shapes here take some 120 ms for 2 MB on an idle
+     *  machine; quadratic in earnest, a shape would not end in the time of
+     *  the test.
      */
-    const SIZES = [64*1024, 256*1024, 1024*1024];
-    const PASSES_PER_ROUND = 5;
+    const SIZES = [256*1024, 1024*1024, 2048*1024];
+    const PASSES_PER_ROUND = 3;
     const ROUNDS = 6;
-    const SLOPE_LIMIT = 1.15;
+    const SLOPE_LIMIT = 1.20;
 
     /*  The limit of the whole case, a guard and not what is measured: the
      *  slope does not depend on how fast a line runs. Under coverage
@@ -59,24 +67,30 @@ describe("masking is linear and bounded", () => {
      *  parallel run it went over. Ten minutes there; 120 s otherwise.  */
     const CASE_LIMIT_MS = inject("coverage") ? 600000 : 120000;
 
-    function ms_per_call(mask, text)
+    function ms_per_call(mask, text, calls)
     {
-        let calls = 0;
-        let elapsed = 0;
         const t0 = performance.now();
-        do {
+        for(let i = 0; i < calls; i++) {
             mask(text);
-            calls++;
-            elapsed = performance.now() - t0;
-        } while(elapsed < 10);
-        return elapsed / calls;
+        }
+        return (performance.now() - t0) / calls;
     }
 
-    function measure_round(mask, texts, best)
+    /*  The calls of each size that do the work of `m` calls of the
+     *  largest one, `m` making that work last 10 ms at least.  */
+    function calls_per_window(mask, texts)
+    {
+        const largest = SIZES[SIZES.length - 1];
+        const one = ms_per_call(mask, texts[texts.length - 1], 1);
+        const m = Math.max(1, Math.ceil(10 / Math.max(one, 0.001)));
+        return SIZES.map((size) => m * largest / size);
+    }
+
+    function measure_round(mask, texts, calls, best)
     {
         for(let pass = 0; pass < PASSES_PER_ROUND; pass++) {
             for(let i = 0; i < SIZES.length; i++) {
-                best[i] = Math.min(best[i], ms_per_call(mask, texts[i]));
+                best[i] = Math.min(best[i], ms_per_call(mask, texts[i], calls[i]));
             }
         }
     }
@@ -102,11 +116,12 @@ describe("masking is linear and bounded", () => {
         for(const text of texts) {
             mask(text);     // the first runs compile
         }
+        const calls = calls_per_window(mask, texts);
         const best = SIZES.map(() => Infinity);
         const seen = [];
         let slope = Infinity;
         for(let round = 0; round < ROUNDS; round++) {
-            measure_round(mask, texts, best);
+            measure_round(mask, texts, calls, best);
             slope = slope_of(best);
             seen.push(`${slope.toFixed(2)} (${best.map((ms) => ms.toFixed(2)).join(" / ")} ms)`);
             if(slope < SLOPE_LIMIT) {

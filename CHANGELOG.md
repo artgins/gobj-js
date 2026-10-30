@@ -14,9 +14,24 @@ about which SDK it was built against.
   `tests/secret_masking_linear.test.js` in a vitest project of its own that
   runs after every other file has ended (`sequence.groupOrder`), and the
   slope is fitted on the best time of each size over up to six rounds of
-  five passes. A linear masking passes once each size had one clean pass; a
-  masking that rescans is steep in every pass and still fails. No published
-  file changes.
+  three passes. A linear masking passes once each size had one clean pass;
+  a masking that rescans is steep in every pass and still fails.
+  - **Every size is timed over the SAME amount of work** (8 calls of
+    256 KB, 2 of 1 MB, 1 of 2 MB), so a load that takes the CPU away now
+    and then hits every size alike. With a window of 10 ms for every size
+    the best of the small sizes found a window the load had not touched and
+    the best of the largest did not, and the slope of the linear masking
+    grew with the load alone (1.15 to 1.24 with three runnable tasks per
+    core, against a limit of 1.15; 1.04 to 1.09 with equal work).
+  - **The sizes are 256 KB, 1 MB and 2 MB, and the limit 1.20.** A masking
+    that also rescans, at twice the time at 1 MB, gives 1.26 to 1.46 on
+    every shape; at 64 KB, 256 KB and 1 MB it gave 1.09 to 1.25 and most
+    shapes passed.
+  - No published file changes.
+- **The `json2flat()` note and the json_flat tests tell the first C
+  implementation's failure generically:** a dict keyed by a yuno id N came
+  back as an array of N+1 elements. The note is in the bundles of `dist/`.
+  No code change.
 - **Tests: the C_TIMER cases of `destroy_under_dispatch.test.js` wait for
   the events, not for 20 ms.** A timer of 1 ms on a loaded machine fired
   after the fixed wait, and its late `EV_DIE` landed in the next test. No

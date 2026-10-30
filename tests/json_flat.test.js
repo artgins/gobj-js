@@ -11,9 +11,9 @@
  *      tests/c/kw/test_json_flat.c.
  *
  *      Most of the list is what the FIRST C implementation got wrong,
- *      measured before rewriting it: a dict keyed "7302" came back as an
- *      array of 7303 elements, every empty container vanished, and any
- *      key holding a backtick was split in two.
+ *      measured before rewriting it: a dict keyed by a yuno id N came
+ *      back as an array of N+1 elements, every empty container vanished,
+ *      and any key holding a backtick was split in two.
  ***********************************************************************/
 import { describe, test, expect } from "vitest";
 
