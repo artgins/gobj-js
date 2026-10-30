@@ -9,26 +9,37 @@ about which SDK it was built against.
 
 ## Unreleased
 
+- **Tests: the linearity of the secret masking runs alone, and keeps the
+  best time of each size across its measures.** `vite.config.js` puts
+  `tests/secret_masking_linear.test.js` in a vitest project of its own that
+  runs after every other file has ended (`sequence.groupOrder`), and the
+  slope is fitted on the best time of each size over up to six rounds of
+  five passes. A linear masking passes once each size had one clean pass; a
+  masking that rescans is steep in every pass and still fails. No published
+  file changes.
+- **Tests: the C_TIMER cases of `destroy_under_dispatch.test.js` wait for
+  the events, not for 20 ms.** A timer of 1 ms on a loaded machine fired
+  after the fixed wait, and its late `EV_DIE` landed in the next test. No
+  published file changes.
+
 ## 7.29.3
 
-- **Neutral example ids.** The `json2flat()` note and the json_flat tests use
+- **Example ids.** The `json2flat()` note and the json_flat tests use
   `7301`/`7302`/`7303` and the port `7401`, the same as the C test. No code
   change.
 
 ## 7.29.2
 
-- **No review citation in words.** The CHANGELOG and the tests say what each
-  version changed, not which check of which review it was (the masking tests'
-  table is `SCHEME_WORD_SHAPES`). No code change.
-- **No yuno id taken from an application.** The `json2flat()` note and its
-  tests key the numeric-key case by `7302` (and `7301`), and the diff tests
-  use port `7401`. No code change.
+- **The CHANGELOG and the tests say what each version changed** (the
+  masking tests' table is `SCHEME_WORD_SHAPES`). No code change.
+- **Generic example ids.** The `json2flat()` note and its tests key the
+  numeric-key case by generic yuno ids, and the diff tests use a generic
+  port. No code change.
 
 ## 7.29.1
 
-- **No review citation and no private name in the package.** The comments of
-  `src/` (which the source maps in `dist/` carry) name what was fixed, not the
-  review it came from, and the tests of the runtime contracts live in
+- **The comments of `src/` name what was fixed** (the source maps in
+  `dist/` carry them), and the tests of the runtime contracts live in
   `tests/runtime_contracts.test.js`. No code change.
 
 ## 7.29.0
