@@ -11,8 +11,8 @@
  *      tests/c/kw/test_json_flat.c.
  *
  *      Most of the list is what the FIRST C implementation got wrong,
- *      measured before rewriting it: a dict keyed "4630" came back as an
- *      array of 4631 elements, every empty container vanished, and any
+ *      measured before rewriting it: a dict keyed "7302" came back as an
+ *      array of 7303 elements, every empty container vanished, and any
  *      key holding a backtick was split in two.
  ***********************************************************************/
 import { describe, test, expect } from "vitest";
@@ -38,8 +38,8 @@ describe("json2flat / flat2json: it comes back the same", () => {
 
         /*  The one that broke the first implementation: a dict keyed by a
          *  yuno id. */
-        ["numeric key (a yuno id)", {"4630": {role: "db_history"}}, {"4630`role": "db_history"}],
-        ["numeric keys, several",   {"4620": 1, "4630": 2, "0": 3},    {"4620": 1, "4630": 2, "0": 3}],
+        ["numeric key (a yuno id)", {"7302": {role: "db_history"}}, {"7302`role": "db_history"}],
+        ["numeric keys, several",   {"7301": 1, "7302": 2, "0": 3},    {"7301": 1, "7302": 2, "0": 3}],
 
         /*  An empty container has no leaves, so it IS a leaf. */
         ["empty object",        {a: {}, b: 1},              {"a": {}, "b": 1}],
@@ -143,8 +143,8 @@ describe("flat_key_join / flat_key_split", () => {
 
 
 describe("flat_diff / flat_apply", () => {
-    const a = json2flat({cfg: {port: 4020, host: "old"}, list: [1, 2]});
-    const b = json2flat({cfg: {port: 4020, host: "new"}, list: [1, 2, 3]});
+    const a = json2flat({cfg: {port: 7401, host: "old"}, list: [1, 2]});
+    const b = json2flat({cfg: {port: 7401, host: "new"}, list: [1, 2, 3]});
 
     test("the diff names what changed and what was added", () => {
         const diff = flat_diff(a, b);
@@ -155,10 +155,10 @@ describe("flat_diff / flat_apply", () => {
     });
 
     test("applying it lands exactly on the target", () => {
-        const work = json2flat({cfg: {port: 4020, host: "old"}, list: [1, 2]});
+        const work = json2flat({cfg: {port: 7401, host: "old"}, list: [1, 2]});
         flat_apply(work, flat_diff(a, b));
         expect(work).toEqual(b);
-        expect(flat2json(work)).toEqual({cfg: {port: 4020, host: "new"}, list: [1, 2, 3]});
+        expect(flat2json(work)).toEqual({cfg: {port: 7401, host: "new"}, list: [1, 2, 3]});
     });
 
     test("a removal removes", () => {

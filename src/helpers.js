@@ -6044,8 +6044,8 @@ function build_path(...segments)
  *
  *      - segments joined by '`', the SDK's own path delimiter;
  *      - a literal '`' in a key is DOUBLED, so no key is
- *        forbidden -- a dict keyed by "4630" is a dict, not an
- *        array of 4631 elements, which is what the first C
+ *        forbidden -- a dict keyed by "7302" is a dict, not an
+ *        array of 7303 elements, which is what the first C
  *        implementation answered;
  *      - an array index is '[N]', canonical, no leading zeros;
  *      - a dict key starting with '[' doubles it ('[[0]'), so it

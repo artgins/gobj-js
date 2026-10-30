@@ -15,8 +15,8 @@ about which SDK it was built against.
   version changed, not which check of which review it was (the masking tests'
   table is `SCHEME_WORD_SHAPES`). No code change.
 - **No yuno id taken from an application.** The `json2flat()` note and its
-  tests key the numeric-key case by `4630` (and `4620`), and the diff tests
-  use port `4020`. No code change.
+  tests key the numeric-key case by `7302` (and `7301`), and the diff tests
+  use port `7401`. No code change.
 
 ## 7.29.1
 
