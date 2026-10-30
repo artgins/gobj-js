@@ -9,6 +9,8 @@ about which SDK it was built against.
 
 ## Unreleased
 
+## 7.29.4
+
 - **Tests: the linearity of the secret masking runs alone, and keeps the
   best time of each size across its measures.** `vite.config.js` puts
   `tests/secret_masking_linear.test.js` in a vitest project of its own that
