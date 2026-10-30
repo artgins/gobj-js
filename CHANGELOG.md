@@ -37,8 +37,8 @@ The number follows SDK 7.28 (its first two indexes are the SDK's).
 - **BREAKING: `jwtDecode()` and `jwt2json()` are removed.** `jwtDecode()`
   was an answer copied from StackOverflow, under CC BY-SA, a license the MIT
   of gobj-js cannot carry, and `jwt2json()` only called it. Nobody calls
-  either (checked in gobj-ui, yunos-js, yunovatios, wattyzer, estadodelaire,
-  hidraulia, yunomusica and yunovideo), and an SPA never sees a token: the
+  either (checked in gobj-ui, yunos-js and every consumer app), and an SPA
+  never sees a token: the
   BFF keeps it in an httpOnly cookie.
 - **`LICENSE`, `THIRD-PARTY-NOTICES` and `CONTRIBUTING.md`.** The package
   said MIT in `package.json` but carried no license text: `LICENSE` is the
@@ -95,9 +95,8 @@ of the runtime's code over 7.26.29:
   no longer hangs from the tree, where a `WALK_BOTTOM2TOP` walk and
   `gobj_full_name()` ended in a `RangeError`. A destroyed new parent is refused
   too, and every error gives -1 (a destroyed gobj gave `null`). In every
-  published version. Its callers -- estadodelaire (`c_ui_device_sonda.js`,
-  `window_to_sheet`) and hidraulia (`c_ui_device_sonda.js`,
-  `c_ui_device_termod.js`) -- move a live gobj under a live parent outside any
+  published version. Its callers -- two consumer apps, in their device
+  views and a sheet window -- move a live gobj under a live parent outside any
   walk, so neither refusal reaches them. Test `walk_destroyed`.
 - **fix: `node_uuid()` replaces a stored `host_uuid` that is not a uuid** (a
   foreign or corrupt write: `"garbage"`, `"42"`, `"[object Object]"`) with a
@@ -136,7 +135,7 @@ of the runtime's code over 7.26.29:
   reached; a gobj moved ahead after it was handed was handed twice in every
   published version. At most once, not exactly once: a gobj not reached yet
   that a callback moves under a parent the walk has passed is not handed at
-  all, nor are its children. Its callers (estadodelaire, hidraulia) move a
+  all, nor are its children. Its callers (two consumer apps) move a
   gobj outside any walk, so this does not reach them. Test
   `walk_destroyed`.
 - **fix: with `create`, a store that can be read but not written (full) is
@@ -156,8 +155,8 @@ of the runtime's code over 7.26.29:
   boolean, integer or real is never empty. The check was a TODO with the C code
   commented out, so a gobj started without what it needs. `gobj_start_tree()`
   starts the children of a refused gobj, as in C. No consumer declares
-  `SDF_REQUIRED` (gobj-ui, the in-repo yunos, wattyzer, estadodelaire,
-  hidraulia, yunovatios, yunomusica). In every published version. Test
+  `SDF_REQUIRED` (gobj-ui, the in-repo yunos, every consumer app). In every
+  published version. Test
   `start_required`.
 
 ## 7.26.27
@@ -191,8 +190,7 @@ of the runtime's code over 7.26.29:
   a `BigInt` was refused as *"storage full or blocked?"*. Checked before the
   store, so outside a browser too. A key whose value is `undefined` is still an
   absent key. No consumer writes such a value (gobj-ui, the in-repo yunos,
-  wattyzer, estadodelaire, yunovatios: strings, numbers, booleans and plain
-  objects). In every published version. Tests `local_storage`, `attr_types`.
+  the consumer apps: strings, numbers, booleans and plain objects). In every published version. Tests `local_storage`, `attr_types`.
 - **fix, BREAKING(`C_IEVENT_CLI`): the base of the first reconnect delay is at
   least 1000 ms** (the ±20% jitter puts the first delay itself between 800 and
   1200 ms). A `timeout_retry` of 0 never left 0 (0 doubled is 0), so with a
@@ -293,7 +291,7 @@ of the runtime's code over 7.26.29:
   once per key. Outside a browser it answers the default (it answered
   `undefined`, so `Number(...)` of it was NaN). In every published version. No
   caller relied on the old answers: the keys written raw (`bulma-theme`,
-  `host_uuid`, yunomusica's) are never read through it. Test `local_storage`.
+  `host_uuid`, one app's own) are never read through it. Test `local_storage`.
 - **docs:** the README's `C_IEVENT_CLI` section had a code block closed by a
   line with text after the backticks, so the paragraphs after it (the WARNING,
   the 4002, `EV_ON_CLOSE` and its example) rendered as code. The README and
@@ -448,8 +446,8 @@ of the runtime's code over 7.26.29:
   transport.** Every close of the websocket was a WARNING (*"WebSocket closed
   ... Code: 1000 ... Clean: true"*), the clean one of a logout included, ahead
   of the branch that tells what happened: so a console check of an app passed
-  or failed depending on when the close of its logout landed (estadodelaire's,
-  after the 7.26.22 round). An ended session is published as `EV_ON_CLOSE` and
+  or failed depending on when the close of its logout landed (one consumer
+  app's, after the 7.26.22 round). An ended session is published as `EV_ON_CLOSE` and
   logged by nobody; a socket that closes before it ever opened is still the
   `EV_ON_OPEN_ERROR` warning. With the gclass's `ievents` trace on, every close
   is traced. Test `ievent_close_logs` (red on 7.26.22). *Too much was silenced:
@@ -527,7 +525,7 @@ code that still runs on it.
   absent computes it before the write (`kw.x === true`). A table of 71 cases
   (`tests/fixtures/attr_types_parity.json`) is read by the tests of both
   kernels, with the same outcome for each. Measured on the test suites of
-  gobj-ui, gui_agent, gui_treedb, wattyzer and estadodelaire: no value
+  gobj-ui, gui_agent, gui_treedb and two consumer apps: no value
   refused. Test `attr_types.test.js`.
 - **`gobj_destroy()` says when it destroys a gobj under code that still runs
   on it**, with the C kernel's check (7.26.10): *"Destroying a gobj while its
@@ -551,9 +549,8 @@ code that still runs on it.
   timer's publication: destroying the timer or the host there is the ERROR
   above (defer it with `gobj_post_event()`), and a timer given a `subscriber`
   is heard by it alone. 26 consumers create a `C_TIMER` as a pure child (13
-  in gui_agent, 2 in gui_treedb, 2 in estadodelaire, 5 in the yunovatios
-  GUIs, 1 in wattyzer, 3 in hidraulia; plus 2 in gobj-js itself, and none in
-  gobj-ui): none destroys the timer or its host in `EV_TIMEOUT`, and none gives
+  in gui_agent, 2 in gui_treedb, 11 in the consumer apps; plus 2 in gobj-js
+  itself, and none in gobj-ui): none destroys the timer or its host in `EV_TIMEOUT`, and none gives
   the timer a `subscriber` -- checked one by one for this note.
 - **fix(`C_IEVENT_CLI`), BREAKING for a host of a pure child: it PUBLISHES its
   events, to its parent, which it subscribes in `mt_create` -- the C
@@ -574,8 +571,8 @@ code that still runs on it.
 
 ## 7.26.21
 
-Parity with the C kernel of the twenty-fourth review (yunovatios
-`REV-CLOUD.md` §V24.4.2, §V24.4.3).
+Parity with the C kernel of the twenty-fourth review
+(`REV-CLOUD.md` §V24.4.2, §V24.4.3).
 
 - **After `Bearer` or `Basic`, only a word that can be a credential is
   masked**, by the rule of the C kernel's `scheme_credential()`: a quoted one,
@@ -609,7 +606,7 @@ Parity with the C kernel of the twenty-fourth review (yunovatios
 
 ## 7.26.20
 
-Parity with the C kernel of the twenty-third review (yunovatios `REV-CLOUD.md`
+Parity with the C kernel of the twenty-third review (`REV-CLOUD.md`
 §V23.4.3, §V23.4.6).
 
 - **A secret by its VALUE, as the C kernel masks it.** `mask_secrets_inline()`
@@ -633,7 +630,7 @@ Parity with the C kernel of the twenty-third review (yunovatios `REV-CLOUD.md`
 
 ## 7.26.19
 
-Sixteenth check of the review (yunovatios `REV-CLOUD.md` §V16.5).
+Sixteenth check of the review (`REV-CLOUD.md` §V16.5).
 
 - **fix: the reentrancy guard of 7.26.18 swallowed console lines.** It was
   ONE guard for every log function, and `log_info()`, `log_debug()`,
@@ -647,7 +644,7 @@ Sixteenth check of the review (yunovatios `REV-CLOUD.md` §V16.5).
 
 ## 7.26.18
 
-Fifteenth check of the review (yunovatios `REV-CLOUD.md` §V15.4).
+Fifteenth check of the review (`REV-CLOUD.md` §V15.4).
 
 - **a log function that logs is not called again from inside itself**: a
   remote one (`set_remote_log_functions()`) whose socket logs as it fails
@@ -660,7 +657,7 @@ Fifteenth check of the review (yunovatios `REV-CLOUD.md` §V15.4).
 
 ## 7.26.17
 
-Fourteenth check of the review (yunovatios `REV-CLOUD.md` §V14.3).
+Fourteenth check of the review (`REV-CLOUD.md` §V14.3).
 
 - **fix: a log path could still throw.** `trace_json()` kept its payload in
   the backlog with a bare `String()` fallback, which throws on an object with
@@ -677,7 +674,7 @@ Fourteenth check of the review (yunovatios `REV-CLOUD.md` §V14.3).
 
 ## 7.26.16
 
-Thirteenth check of the review (yunovatios `REV-CLOUD.md` §V13.4).
+Thirteenth check of the review (`REV-CLOUD.md` §V13.4).
 
 - **fix: `format_log()` could still throw.** `%s` went through `String()` and
   `%d`/`%f` through `parseInt()`/`parseFloat()`, which throw on an object with
@@ -695,7 +692,7 @@ Thirteenth check of the review (yunovatios `REV-CLOUD.md` §V13.4).
 
 ## 7.26.15
 
-Twelfth check of the review (yunovatios `REV-CLOUD.md` §V12.4).
+Twelfth check of the review (`REV-CLOUD.md` §V12.4).
 
 - **fix: a log line could still throw.** `log_stringify()` fell back to
   `String()`, which throws on an object with no prototype or a `toString()`
@@ -706,7 +703,7 @@ Twelfth check of the review (yunovatios `REV-CLOUD.md` §V12.4).
 
 ## 7.26.14
 
-Eleventh check of the review (yunovatios `REV-CLOUD.md` §V11.4).
+Eleventh check of the review (`REV-CLOUD.md` §V11.4).
 
 - **`kw_get_dict()` / `kw_get_list()` with `KW_CREATE` over a value of another
   type log it** (they gave an unwritten default back in silence), and a
@@ -723,11 +720,11 @@ Eleventh check of the review (yunovatios `REV-CLOUD.md` §V11.4).
   while the C writer dropped the segment and wrote over `a`. Both writers
   refuse it now (SDK 7.26.9 for C), logged, `-1`, nothing written; so do
   `kw_set_subdict_value()` and a reader with `KW_CREATE` over such a path.
-  yunovatios `REV-CLOUD.md` §V10.1.
+  `REV-CLOUD.md` §V10.1.
 
 ## 7.26.12
 
-Tenth check of the review (yunovatios `REV-CLOUD.md` §V10.5).
+Tenth check of the review (`REV-CLOUD.md` §V10.5).
 
 - **fix: `jdb_update()` / `jdb_delete()` with a record that is not an object
   threw a TypeError** (`kw["id"]` on `null`). They answer `null` with an error,
@@ -740,7 +737,7 @@ Tenth check of the review (yunovatios `REV-CLOUD.md` §V10.5).
 
 ## 7.26.11
 
-Ninth check of the review (yunovatios `REV-CLOUD.md` §V9.4).
+Ninth check of the review (`REV-CLOUD.md` §V9.4).
 
 - **fix: `jdb_update()` threw a TypeError when the hook of the record its path
   ends on was not a list** (`5`, a string, an object). It answers `null` with
@@ -755,7 +752,7 @@ Ninth check of the review (yunovatios `REV-CLOUD.md` §V9.4).
 
 ## 7.26.10
 
-Eighth check of the review (yunovatios `REV-CLOUD.md` §V8.4).
+Eighth check of the review (`REV-CLOUD.md` §V8.4).
 
 - **fix: `jdb_update()` and `jdb_delete()` said nothing when they did
   nothing.** A record of `path` that is not there, or a record to delete that
@@ -771,7 +768,7 @@ Eighth check of the review (yunovatios `REV-CLOUD.md` §V8.4).
 
 ## 7.26.9
 
-Seventh check of the review (yunovatios `REV-CLOUD.md` §V7.4).
+Seventh check of the review (`REV-CLOUD.md` §V7.4).
 
 - **fix: `jdb_init()` created nothing.** It passed `1` where it meant to
   create, and `1` is `KW_REQUIRED`: a jdb built from a schema had no topic and
@@ -785,7 +782,7 @@ Seventh check of the review (yunovatios `REV-CLOUD.md` §V7.4).
 
 ## 7.26.8
 
-Sixth check of the review (yunovatios `REV-CLOUD.md` §V6.5).
+Sixth check of the review (`REV-CLOUD.md` §V6.5).
 
 - **fix: `kw_set_subdict_value()` answered `0` for a path it could not
   write**, and wrote the value into a dict that belonged to nobody: it went
@@ -802,11 +799,11 @@ Sixth check of the review (yunovatios `REV-CLOUD.md` §V6.5).
 - **fix: a path that is not a string threw a TypeError** in `kw_delete()` and
   `kw_set_dict_value()` (`path.split()` / `lastIndexOf()` on `null` or a
   number). Both answer `-1` with an error now, as `kw_find_path()` already
-  did. The test checks the errors are logged (yunovatios `REV-CLOUD.md` §V5.3).
+  did. The test checks the errors are logged (`REV-CLOUD.md` §V5.3).
 
 ## 7.26.6
 
-Fifth check of the review (yunovatios `REV-CLOUD.md` §V4).
+Fifth check of the review (`REV-CLOUD.md` §V4).
 
 - **fix: `kw_delete()` as C.** A key or a parent that is not there answered
   `0` in silence, and a top-level list still threw a TypeError on `length`.
@@ -833,11 +830,11 @@ Fifth check of the review (yunovatios `REV-CLOUD.md` §V4).
   keys.** The template is the backend's schema, so a parsed key `__proto__`
   became the PROTOTYPE of the new record (`.admin === true`, lost by
   `JSON.stringify()`). It writes own keys now. The last copy by assignment of
-  the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V3.6).
+  the review of 2026-10-10 (`REV-CLOUD.md` §V3.6).
 
 ## 7.26.4
 
-Fourth check of the review (yunovatios `REV-CLOUD.md` §V3).
+Fourth check of the review (`REV-CLOUD.md` §V3).
 
 - **fix: the path WRITERS read a list as the reader does.** 7.26.2 made
   `kw_find_path()` take a list segment only as an index, and left the writers
@@ -878,7 +875,7 @@ Fourth check of the review (yunovatios `REV-CLOUD.md` §V3).
 
 ## 7.26.2
 
-Third check of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V2).
+Third check of the review of 2026-10-10 (`REV-CLOUD.md` §V2).
 
 - **fix: a url the browser refuses opened nothing and said nothing.** When
   `new WebSocket()` THROWS (a malformed url, typically one edited by hand),
@@ -912,7 +909,7 @@ Third check of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V2).
 
 ## 7.26.1
 
-Second check of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V).
+Second check of the review of 2026-10-10 (`REV-CLOUD.md` §V).
 
 - **fix: a start whose url fails let the old socket's close in twice.** The
   socket's sequence number was counted after `new WebSocket()`, so a url that
@@ -940,7 +937,7 @@ Second check of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §V).
 
 ## 7.26.0
 
-The minor follows the SDK (7.26.x); no API was removed. Findings of the review of 2026-10-10 (yunovatios `REV-CLOUD.md` §1), each
+The minor follows the SDK (7.26.x); no API was removed. Findings of the review of 2026-10-10 (`REV-CLOUD.md` §1), each
 pinned by a test (`tests/review_2026_10.test.js`, `tests/ievent_restart.test.js`).
 
 - **fix: `log_error()` / `log_warning()` / `log_info()` / `log_debug()` /
@@ -1118,8 +1115,8 @@ pinned by a test (`tests/review_2026_10.test.js`, `tests/ievent_restart.test.js`
   kept it. It now works on a shallow copy, with `__md_iev__` copied deep.
 
   No JS consumer relies on the shared-kw mutation: gobj-ui, the yunetas
-  `yunos/js/*` yunos, wattyzer, the yunovatios GUIs, estadodelaire and
-  hidraulia set no `__global__` or `__local__` in a subscription.
+  `yunos/js/*` yunos and the consumer apps set no `__global__` or
+  `__local__` in a subscription.
 
 ## 7.25.7
 
@@ -1139,8 +1136,8 @@ pinned by a test (`tests/review_2026_10.test.js`, `tests/ievent_restart.test.js`
   kw_set_dict_value(null, {a: null}, "a`b", 1);               // -1, logged
   ```
 
-  Latent: the only `KW_CREATE` reader calls in gobj-ui, the yunetas yunos,
-  wattyzer and the yunovatios GUIs read single-segment paths.
+  Latent: the only `KW_CREATE` reader calls in gobj-ui, the yunetas yunos
+  and the consumer apps read single-segment paths.
 
 ## 7.25.6
 
@@ -1168,8 +1165,8 @@ pinned by a test (`tests/review_2026_10.test.js`, `tests/ievent_restart.test.js`
   kw_get_str(null, {a: 5}, "a`b", "d", 0);    // "d", logged: kw must be list or dict
   ```
 
-  Latent: no caller in gobj-js, gobj-ui, the yunetas yunos, wattyzer or the
-  yunovatios GUIs passes a bad kw or reads through a null segment today.
+  Latent: no caller in gobj-js, gobj-ui, the yunetas yunos or the consumer
+  apps passes a bad kw or reads through a null segment today.
 
 ## 7.25.5
 
@@ -1187,8 +1184,8 @@ pinned by a test (`tests/review_2026_10.test.js`, `tests/ievent_restart.test.js`
   kw_get_str(gobj, {}, "name", "none", kw_flag_t.KW_REQUIRED);            // "none", logged: path not found
   ```
 
-  Every caller in gobj-js, gobj-ui (v2 and v1), the yunetas yunos, wattyzer,
-  the yunovatios GUIs, estadodelaire and hidraulia was checked: none reads a
+  Every caller in gobj-js, gobj-ui (v2 and v1), the yunetas yunos and the
+  consumer apps was checked: none reads a
   value that is not a string or null in normal operation. Two latent ones
   are named in the audit: `kwid_collect()` / `kwid_get_ids()` on a list of
   records with INTEGER ids now log once per record (C does the same), and
@@ -1760,8 +1757,7 @@ than a patch of its own ahead of it.
 
   Both now return `null` on every path. Nothing that used truthiness changes;
   no consumer compared either result to `undefined` (checked across gobj-ui,
-  the two in-repo JS yunos, wattyzer, estadodelaire, hidraulia, yunomusica and
-  the three yunovatios GUIs).
+  the two in-repo JS yunos and every consumer app).
 
   `tests/lookup_contract.test.js` pins it, including the
   verbose-must-not-change-the-value case.
@@ -1952,7 +1948,7 @@ this was a shared defect, not a port slip.
   `gobj_stop_tree()` before `gobj_destroy()`. What changed is that the
   framework no longer pretends to repair it. This exact trap had been
   diagnosed and fixed at the caller at least three times (gui_treedb's Keys
-  picker and Raw JSON viewer, yunovatios' shell teardown).
+  picker and Raw JSON viewer, one consumer app's shell teardown).
 
   New unit tests (`tests/destroy_stops.test.js`) pin the order: `mt_stop`
   before `mt_destroy`, pause before stop for a playing gobj, no second error,

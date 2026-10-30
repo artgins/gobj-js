@@ -38,7 +38,7 @@ describe("json2flat / flat2json: it comes back the same", () => {
 
         /*  The one that broke the first implementation: a dict keyed by a
          *  yuno id. */
-        ["numeric key (a yuno id)", {"1630": {role: "db_history_co"}}, {"1630`role": "db_history_co"}],
+        ["numeric key (a yuno id)", {"1630": {role: "db_history_edge"}}, {"1630`role": "db_history_edge"}],
         ["numeric keys, several",   {"1620": 1, "1630": 2, "0": 3},    {"1620": 1, "1630": 2, "0": 3}],
 
         /*  An empty container has no leaves, so it IS a leaf. */

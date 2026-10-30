@@ -21,8 +21,8 @@ adds the gobj-js-specific layer on top.
 - Single line on `main`. To ship: bump `package.json`, commit on `main`,
   `npm publish`, then **bump the `kernel/js/gobj-js` submodule pointer in
   yunetas**.
-- **Every consumer takes the npm package** — wattyzer, `yunos/js/*`,
-  estadodelaire, hidraulia, yunovatios, yunomusica. There are no `file:` consumers left
+- **Every consumer takes the npm package** — `yunos/js/*` and every
+  application built on it. There are no `file:` consumers left
   (the last two moved on 2026-08-03), so an edit here reaches no app until
   `npm publish`. Note this package ships **only `dist/`**, unlike gobj-ui:
   editing `src/` without `npm run build` publishes a stale bundle.
