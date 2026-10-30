@@ -13,7 +13,7 @@
  *      And `set` is read as the C kernel reads it (trace_set_value()):
  *      a boolean, an integer, or text -- set/reset, a JSON integer,
  *      true/false, yes/no, on/off --; " 1", "0x1", "1e3", "+5", "007",
- *      "2.5" and a real refused (REV-CLOUD V23.4.6).
+ *      "2.5" and a real refused.
  ***********************************************************************/
 import { describe, test, expect, beforeAll } from "vitest";
 import {

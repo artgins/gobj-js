@@ -319,7 +319,7 @@ function call_log_function(fn, ...args)
  *  stack overflowed. Only the remote call is dropped -- the inner line still
  *  reaches the console and the sink. The console functions are not guarded:
  *  a guard shared with them swallowed the console line of any level the
- *  remote one logged (REV-CLOUD V16.5). Synchronous recursion only: a remote
+ *  remote one logged. Synchronous recursion only: a remote
  *  function that logs from a timer still loops, so unwire it first on a
  *  teardown (set_remote_log_functions(null)).
  */

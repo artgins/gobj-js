@@ -12,8 +12,8 @@
  *      And a secret by its VALUE, under any key or none: a JWT and the
  *      token after "Bearer "; pass, pin and otp are secrets' names as
  *      WHOLE segments; a NUL in a string is read as a blank -- the same
- *      table as the C kernel's test_secret_attrs (REV-CLOUD V23.4.3).
- *      And V24.4: after "Bearer" or "Basic" only a word that can be a
+ *      table as the C kernel's test_secret_attrs.
+ *      And after "Bearer" or "Basic" only a word that can be a
  *      credential (never prose), a quoted or doubled one whatever its
  *      shape, a JWE, a JWT cut by a cap, a "name: value" of a secret's
  *      name, a scheme under a secret's name masked whole.
@@ -50,8 +50,8 @@ import {
 } from "../src/index.js";
 
 /*
- *  The C kernel's table of tests/c/secret_attrs/test_secret_attrs.c
- *  (REV-CLOUD V24.4.2, V24.4.3): the same texts, the same answers
+ *  The C kernel's table of tests/c/secret_attrs/test_secret_attrs.c:
+ *  the same texts, the same answers
  */
 const V24_SHAPES = [
     ["the bearer of this letter", null],
@@ -90,9 +90,8 @@ const V24_SHAPES = [
     ["Wrong token: try again", "Wrong token: ******** again"],
 
     /*
-     *  REV-CLOUD V24, the security review of the C kernel's 2e8d0589f: each
-     *  rule judges the text as it came, and 7.26.9's reading of the
-     *  parameters is kept whole -- V24 showed what 7.26.9 masked
+     *  Each rule judges the text as it came, and 7.26.9's reading of the
+     *  parameters is kept whole -- a review showed what 7.26.9 masked
      */
     ["eyJzdWIiOiJ4In0.bearer12345678=sr1-hunter2", "********=********"],
     ["Bearer Bearer pwd=x \"sr2-hunter2\"", "Bearer Bearer ********"],
@@ -290,7 +289,7 @@ describe("a secret by its value, and pass/pin/otp as whole segments (the C kerne
             ["BEARER   tok-hunter2", "BEARER   ********"],
             ["the jwt eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.c2ln.", "the jwt ********."],
             ["pin=1234 sim_pin=5678 ping=1", "pin=******** sim_pin=******** ping=1"],
-            ["eyJabc.def x=eyJabc", "******** x=eyJabc"],  // two parts: a JWT a cap cut (V24.4.3)
+            ["eyJabc.def x=eyJabc", "******** x=eyJabc"],  // two parts: a JWT a cap cut
             ["xeyJa.b.c", null],                // inside a word
             ["bearer=x", "bearer=********"],    // its name, as before
         ];
@@ -299,7 +298,7 @@ describe("a secret by its value, and pass/pin/otp as whole segments (the C kerne
         }
     });
 
-    test("V24.4: the word after Bearer or Basic, by its shape, and the name: value rule", () => {
+    test("the word after Bearer or Basic, by its shape, and the name: value rule", () => {
         const shapes = V24_SHAPES;
         for(const [text, shown] of shapes) {
             expect(mask_secrets_inline(text), text).toBe(shown);
@@ -343,7 +342,7 @@ describe("a secret by its value, and pass/pin/otp as whole segments (the C kerne
         expect(is_secret_name("TOKEN")).toBe(true);
     });
 
-    test("json_mask_secrets(): a key with a NUL is judged by all of it, as C (V24.4)", () => {
+    test("json_mask_secrets(): a key with a NUL is judged by all of it, as C", () => {
         const shown = json_mask_secrets({"a\u0000password": "nulkey-hunter2", note: "visible"});
         expect(shown["a\u0000password"]).toBe("********");
         expect(shown.note).toBe("visible");
@@ -522,7 +521,7 @@ describe("masking is linear and bounded", () => {
             check_linear("json_mask_secrets()", unit, (text) => json_mask_secrets({anything: text}));
         }
 
-        // and the shapes of V24.4, as in C: a scheme word repeated, ':' after
+        // and the shapes a review found, as in C: a scheme word repeated, ':' after
         // secrets' names, a container that does not close, a JWT's dots
         for(const unit of ["Bearer ", "basic ", "token:", "\"pin\": {[", "eyJ.", "x-auth-token: \\\""]) {
             check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));
