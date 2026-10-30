@@ -9,6 +9,13 @@ about which SDK it was built against.
 
 ## Unreleased
 
+## 7.29.1
+
+- **No review citation and no private name in the package.** The comments of
+  `src/` (which the source maps in `dist/` carry) name what was fixed, not the
+  review it came from, and the tests of the runtime contracts live in
+  `tests/runtime_contracts.test.js`. No code change.
+
 ## 7.29.0
 
 The number follows SDK 7.29 (its first two indexes are the SDK's).
