@@ -1,11 +1,18 @@
 import { defineConfig } from "vite";
 import terser from "@rollup/plugin-terser";
+import { configDefaults } from "vitest/config";
 
 /*  Whether this run measures coverage (`vitest --coverage`, the
  *  `test:coverage` script). The instrumentation makes every line some ten
  *  times slower, so a test that TIMES something reads it -- inject("coverage")
  *  -- and widens its limit.  */
 const coverage = process.argv.some((arg) => arg === "--coverage" || arg.startsWith("--coverage."));
+
+/*  The test files that TIME what they check. They run in a group of their
+ *  own (`sequence.groupOrder`), after every other file has ended, so the
+ *  other files of a parallel run do not compete for the CPU while they
+ *  measure.  */
+const TIMED_TESTS = ["tests/secret_masking_linear.test.js"];
 
 export default defineConfig({
     /*  At the top level: nested in `build` (where it was) vitest never
@@ -19,6 +26,24 @@ export default defineConfig({
         provide: {
             coverage: coverage,
         },
+        projects: [
+            {
+                extends: true,
+                test: {
+                    name: "unit",
+                    exclude: [...configDefaults.exclude, ...TIMED_TESTS],
+                    sequence: {groupOrder: 0},
+                },
+            },
+            {
+                extends: true,
+                test: {
+                    name: "timed",
+                    include: TIMED_TESTS,
+                    sequence: {groupOrder: 1},
+                },
+            },
+        ],
     },
     build: {
         lib: {

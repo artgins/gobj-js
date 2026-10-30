@@ -71,6 +71,19 @@ const RULE_ACTION = "Destroying a gobj while one of its actions is still running
 /*  Waits for the drain of the posted events, a macrotask.  */
 const turn = () => new Promise(resolve => setTimeout(resolve, 0));
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/*  Waits until `received` holds `n` events, or 2 s have gone by. A timer
+ *  of 1 ms fires when the event loop gets to it, and on a loaded machine
+ *  that is not 20 ms later: a fixed wait made the result a race.  */
+async function until_received(n)
+{
+    const t0 = performance.now();
+    while(received.length < n && performance.now() - t0 < 2000) {
+        await sleep(5);
+    }
+}
+
 /*  Each test says what each event does by filling this table: the
  *  action of an event runs the function registered for it.  */
 let hooks = {};
@@ -369,7 +382,7 @@ describe("a C_TIMER ended by its parent in the timer's own EV_TIMEOUT", () => {
             return 0;
         };
         set_timeout(timer, 1);
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await until_received(1);
 
         expect(received).toEqual(["host:EV_TIMEOUT"]);
         expect(gobj_is_destroying(timer)).toBe(true);
@@ -394,7 +407,7 @@ describe("a C_TIMER ended by its parent in the timer's own EV_TIMEOUT", () => {
             return 0;
         };
         set_timeout(timer, 1);
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await until_received(2);
 
         expect(received).toEqual(["host:EV_TIMEOUT", "host:EV_DIE"]);
         expect(gobj_is_destroying(timer)).toBe(true);
@@ -408,9 +421,10 @@ describe("a C_TIMER ended by its parent in the timer's own EV_TIMEOUT", () => {
         const host = gobj_create("host", "C_TEST_DSP", {}, yuno);
         const timer = gobj_create_pure_child("timer", "C_TIMER", {}, host);
         set_timeout(timer, 1);
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await until_received(1);
         set_timeout(timer, 1);
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await until_received(2);
+        await sleep(20);     // and no third one
 
         expect(received).toEqual(["host:EV_TIMEOUT", "host:EV_TIMEOUT"]);
         expect(logged).toEqual([]);

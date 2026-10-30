@@ -27,7 +27,7 @@
  *
  *      And subs_flag carries the C kernel's bits.
  ***********************************************************************/
-import { describe, test, expect, beforeAll, beforeEach, inject } from "vitest";
+import { describe, test, expect, beforeAll, beforeEach } from "vitest";
 import {
     SDATA,
     SDATA_END,
@@ -428,123 +428,6 @@ describe("only json is walked, and masking never throws", () => {
         }
         expect(() => json_mask_secrets(deep)).not.toThrow();
     });
-});
-
-describe("masking is linear and bounded", () => {
-    /*
-     *  Each shape is masked at 64 KB, 256 KB and 1 MB, and the slope of
-     *  log(time) on log(size) is fitted over the three: 1 for a linear
-     *  masking, 2 for a quadratic one. A time is the best of five passes,
-     *  the three sizes taken in turn in each pass, so that a load slows a
-     *  pass and not one size; a call is repeated for 10 ms and its time is
-     *  the mean, so that the grain of the timer makes no slope. A shape is
-     *  measured up to three times and fails only if every measure is
-     *  steep: under load the compiler can be late for one size in all five
-     *  passes (1 MB of "a=" measured twice its time once in 20 runs of two
-     *  suites at a time), and a quadratic masking is steep every time.
-     *  Measured with the machine idle and with every core busy, on every
-     *  shape here: the masking gives 0.98 to 1.09; a copy of it that also
-     *  rescans to the end from every k-th character, k set so that the
-     *  rescans cost what the masking costs at 1 MB (twice the time there,
-     *  eight times at 4 MB), gives 1.16 to 1.45. The ratio of 1 MB to 256 KB that this test took
-     *  up to gobj-js 7.26.23 failed under load and let that copy pass (6.4
-     *  against a limit of 8). The slowest shapes here take some 50 ms for
-     *  1 MB on an idle machine; quadratic in earnest, a shape would not end
-     *  in the time of the test.
-     */
-    const SIZES = [64*1024, 256*1024, 1024*1024];
-
-    /*  The limit of the whole case, a guard and not what is measured: the
-     *  slope does not depend on how fast a line runs. Under coverage
-     *  (vite.config.js provides it) every line runs some ten times slower:
-     *  120 s alone, 116-120 s measured on vitest 4 and 5, so in a full
-     *  parallel run it went over. Ten minutes there; 120 s otherwise.  */
-    const CASE_LIMIT_MS = inject("coverage") ? 600000 : 120000;
-
-    function ms_per_call(mask, text)
-    {
-        let calls = 0;
-        let elapsed = 0;
-        const t0 = performance.now();
-        do {
-            mask(text);
-            calls++;
-            elapsed = performance.now() - t0;
-        } while(elapsed < 10);
-        return elapsed / calls;
-    }
-
-    function slope_of(mask, texts)
-    {
-        const best = SIZES.map(() => Infinity);
-        for(let pass = 0; pass < 5; pass++) {
-            for(let i = 0; i < SIZES.length; i++) {
-                best[i] = Math.min(best[i], ms_per_call(mask, texts[i]));
-            }
-        }
-        const xs = SIZES.map((size) => Math.log(size));
-        const ys = best.map((ms) => Math.log(ms));
-        const mean_x = (xs[0] + xs[1] + xs[2]) / 3;
-        const mean_y = (ys[0] + ys[1] + ys[2]) / 3;
-        let num = 0;
-        let den = 0;
-        for(let i = 0; i < SIZES.length; i++) {
-            num += (xs[i] - mean_x) * (ys[i] - mean_y);
-            den += (xs[i] - mean_x) * (xs[i] - mean_x);
-        }
-        return {slope: num / den, best: best};
-    }
-
-    function check_linear(what, unit, mask)
-    {
-        const texts = SIZES.map((size) => unit.repeat(Math.floor(size / unit.length)));
-        for(const text of texts) {
-            mask(text);     // the first runs compile
-        }
-        const seen = [];
-        let measure = null;
-        for(let attempt = 0; attempt < 3; attempt++) {
-            measure = slope_of(mask, texts);
-            seen.push(`${measure.slope.toFixed(2)} (${measure.best.map((ms) => ms.toFixed(2)).join(" / ")} ms)`);
-            if(measure.slope < 1.15) {
-                break;
-            }
-        }
-        expect(measure.slope, `${what} of "${unit}": ${seen.join(", ")}`).toBeLessThan(1.15);
-    }
-
-    test("a 1 MB a=a=... word and a 1 MB secret value take a time linear in their size", () => {
-        expect(mask_secrets_inline("a=".repeat(512*1024))).toBe(null);
-        expect(mask_secrets_inline("abcd=".repeat(210*1024))).toBe(null);
-        for(const unit of ["a=", "abcd=", " attribute=", "pin=\"", "abc?token=x&"]) {
-            check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));
-            check_linear("json_mask_secrets()", unit, (text) => json_mask_secrets({anything: text}));
-        }
-
-        // and the shapes that once ran long, as in C: a scheme word repeated, ':' after
-        // secrets' names, a container that does not close, a JWT's dots
-        for(const unit of ["Bearer ", "basic ", "token:", "\"pin\": {[", "eyJ.", "x-auth-token: \\\""]) {
-            check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));
-        }
-
-        // and of 7.26.24: names in brackets and %-encoded, the userinfo of a URL
-        for(const unit of ["[pin]=\"", "t%6Fken=x&", "a://b:c@", "p%3Dx%26", "%2541", "%25253D"]) {
-            check_linear("mask_secrets_inline()", unit, (text) => mask_secrets_inline(text));
-        }
-
-        const value = "password=" + "x".repeat(1024*1024);
-        expect(mask_secrets_inline(value)).toBe("password=********");
-        check_linear("a secret value", "x", (text) => mask_secrets_inline("password=" + text));
-    }, CASE_LIMIT_MS);
-
-    test("a text over 4 MB is not shown, and nothing is shown past the cap", () => {
-        const huge = "a=b " + "x".repeat(5*1024*1024);
-        expect(mask_secrets_inline(huge)).toBe("<not shown: too large to mask>");
-        const shown = json_mask_secrets({big: "y".repeat(5*1024*1024), after: "z"});
-        expect(shown.big).toBe("<not shown: too large to mask>");
-        expect(shown.after).toBe(undefined);    // the walk stopped:
-        expect(shown["<more>"]).toBe("<not shown: too large to mask>");  // one placeholder
-    }, 10000);
 });
 
 describe("what the traces and logs show", () => {
