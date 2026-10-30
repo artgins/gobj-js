@@ -11,6 +11,10 @@ about which SDK it was built against.
 
 ## 7.29.3
 
+- **Neutral example ids.** The `json2flat()` note and the json_flat tests use
+  `7301`/`7302`/`7303` and the port `7401`, the same as the C test. No code
+  change.
+
 ## 7.29.2
 
 - **No review citation in words.** The CHANGELOG and the tests say what each
