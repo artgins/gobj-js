@@ -10,24 +10,83 @@ about which SDK it was built against.
 ## Unreleased
 
 - **Tests: the linearity of the secret masking is checked by COUNTING its
-  work, not by timing it.** A slope of times could not tell a load from a
-  rescan: with eight suites at once on four cores the masking went over
-  the limit of 1.20 of 7.29.4's test (1.23 to 1.28) with no rescan, while
-  a masking that rescans at twice the time gave 1.22, and one that rescans
-  at 1.3 times the time passed on 6 of 17 shapes. Now `tests/count_work_plugin.js`, a vite plugin of the vitest
-  project `counted`, adds a tick to every function and every loop of
-  `src/`, and the test adds the characters each native string method scans
-  (`indexOf()`, `substring()`, a regular expression, ...). Each shape is
-  masked at 256 KB, 512 KB and 1 MB, and the work each character adds is
-  compared between the two steps: the masking adds the same at both
-  (1.00000, 1.00001 for one shape), and the limit is 1.02.
-  - **A rescan fails on every shape, whatever the load:** rescans to the
-    end from one character in k that cost 0.3 times the masking at 1 MB
-    give 1.18 on all 23 shapes, and at twice the work 1.42; the same with
-    the rescans made by `indexOf()`.
-  - **The suite takes 4.3 s instead of 25 s** on an idle machine, and
-    passed 24 runs of 24 with eight suites at once on four cores. The test
-    no longer runs alone after the other files.
+  work, and by TIMING it for what no count sees.** A slope of wall times
+  could not tell a load from a rescan: with eight suites at once on four
+  cores the masking went over the limit of 1.20 of 7.29.4's test (1.23 to
+  1.28) with no rescan, while a masking that rescans at twice the time gave
+  1.22, and one that rescans at 1.3 times the time passed on 6 of 17
+  shapes. Both checks mask the same 23 shapes
+  (`tests/secret_masking_shapes.js`).
+  - **The count** (`tests/secret_masking_linear.test.js`, in the vitest
+    project `counted`): `tests/count_work_plugin.js` adds a tick to every
+    function, every loop and every arrow function of `src/` -- an arrow
+    whose body is an expression too, `(v) => (tick, v < 0)`, because a
+    native method that calls it (`arr.some((v) => v < 0)`) has no tick of
+    its own. The test adds the work of the native methods it has a model
+    of: the searches and copies of String, `RegExp.prototype.exec()`, the
+    searches and copies of Array and of the typed arrays (`indexOf()`,
+    `includes()`, `lastIndexOf()`, `slice()`, `fill()`, `set()`,
+    `unshift()`, `splice()`, ...), `encodeURIComponent()` and its kin, and
+    `JSON.stringify()` / `JSON.parse()`. Each shape is masked at 256 KB,
+    512 KB and 1 MB, and the work each character adds is compared between
+    the two steps: the masking adds the same at both (1.00000, 1.00001
+    for one shape) on every run, whatever the load; the limit is 1.02.
+  - **A regular expression is charged what it reads:** from where it
+    starts to the end of its match, to the end when there is none, one
+    position when it is sticky. `test()`, and `replace()`, `match()`,
+    `matchAll()`, `search()` and `split()` with a regular expression, run
+    the patched `exec()`, so it counts them. A single linear pass
+    (`while(re.exec(s))`, `s.replace(/=/g, fn)`, `s.matchAll(/=/g)`,
+    `s.split(/=/)`) counts 1.00000. String's `lastIndexOf()` is charged
+    from the position it starts at, and `concat()` what it adds.
+  - **The time** (`tests/secret_masking_time.test.js`, in the project
+    `unit`): the work inside a native method with no model is not counted
+    -- a regular expression that backtracks within one call, a string built
+    with `+=` that `charCodeAt()` flattens, an allocation. Each shape is
+    masked 15 times at 256 KB and once at 3.75 MB, the same work, timed one
+    after the other in CPU time of the thread; the ratio must be under 1.5
+    in one of up to four pairs. The masking gives 0.88 to 1.22 on an idle
+    machine and 0.55 to 1.43 with eight suites at once. It runs in a process
+    where no built-in was ever patched: once `RegExp.prototype.exec` has
+    been replaced, V8 keeps every regular expression of the process on its
+    slow path, and a `split(/=/)` of 3.75 MB then took 1.7 to 2.0 times as
+    long per character as of 256 KB.
+  - **What each check catches**, with rescans to the end from one position
+    in k, k set for each shape so that at 1 MB they take 0.3 or 1 times the
+    time of the masking there (red shapes of 23, at 0.3 / 1 times):
+
+    | Rescan made of | Count | Time | Either |
+    |---|---|---|---|
+    | `Uint8Array.indexOf()` | 23 / 23 | 23 / 23 | 23 / 23 |
+    | `Uint8Array.lastIndexOf()`, `slice()` | 23 / 23 | 23 / 23 | 23 / 23 |
+    | `Array.includes()` | 23 / 23 | 21 / 23 | 23 / 23 |
+    | `Array.unshift()` | 23 / 23 | 23 / 23 | 23 / 23 |
+    | `encodeURIComponent()` | 23 / 23 | 22 / 23 | 23 / 23 |
+    | `JSON.stringify()` | 23 / 23 | 23 / 23 | 23 / 23 |
+    | `String.indexOf()` | 23 / 23 | 23 / 23 | 23 / 23 |
+    | a JS loop | 22 / 23 | 22 / 23 | 22 / 23 |
+    | an arrow function that `some()` calls | 21 / 23 | 19 / 23 | 21 / 23 |
+    | `+=` then `charCodeAt()` | 0 / 0 | 23 / 23 | 23 / 23 |
+    | one regular expression call that backtracks | 0 / 0 | 22 / 23 | 22 / 23 |
+
+    Every one of them makes the test fail. The shapes that pass at 0.3
+    times are those where ONE pass of the rescan already takes about 0.3
+    times the masking, so k came out at 0.85 MB or more and up to 1 MB
+    the rescan is one or two passes (a JS loop on one shape, an arrow on
+    two), and the backtracking expression on one shape (1.49 against the
+    limit of 1.5). The four single passes of a regular expression above
+    pass both checks on every shape (time 1.26 at most). With seven other
+    suites running at once, the rescans made of `+=`, of one backtracking
+    call, of an arrow, of `includes()` and of `encodeURIComponent()` still
+    fail at 0.3 times (time red on 23, 22, 18, 21 and 21 shapes), and the
+    four single passes still pass (1.22 at most).
+  - **An O(n log n) step fails the count, on purpose:** n log n alone adds
+    (log2 n + 3)/(log2 n + 2) = 1.05 times as much at the second step, and
+    a sort of n numbers after the masking gave 1.009 to 1.027 (6 shapes of
+    23 over 1.02). The masking is linear, as in C.
+  - **The suite takes 15 s** on an idle machine (25 s with 7.29.4's test),
+    and passed 24 runs of 24 with eight suites at once on four cores
+    (55 to 58 s each).
   - No published file changes.
 
 ## 7.29.4
