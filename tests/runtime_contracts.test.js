@@ -1,7 +1,7 @@
 /***********************************************************************
- *          review_2026_10.test.js
+ *          runtime_contracts.test.js
  *
- *      What the review of 2026-10-10 found in the runtime, pinned:
+ *      Contracts of the runtime that were found broken (2026-10), pinned:
  *
  *        - log_*() drop their arguments (printf promised, not done)
  *        - a filter on a false value (0, false, "") never matches
@@ -12,6 +12,9 @@
  *        - an action that throws lost the rest of the posted events
  *        - priv mirrored the raw value, not the one the attr holds
  *        - mt_writing / mt_child_* were looked up on the gobj, not the gclass
+ *
+ *      and, further down, the kw path writers and readers as in C, the jdb
+ *      that says what it did not do, and log functions that never throw.
  *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
@@ -319,10 +322,7 @@ describe("an action that throws", () => {
     });
 });
 
-/*
- *  Second check of the review (V2).
- */
-describe("V2: own keys when copying, list paths, children lists", () => {
+describe("own keys when copying, list paths, children lists", () => {
     test("flat_diff + flat_apply carry a __proto__ key there and back", async () => {
         const { json2flat, flat_diff, flat_apply } = await import("../src/helpers.js");
         const b = JSON.parse('{"__proto__": 5, "a": 1}');
@@ -360,10 +360,7 @@ describe("V2: own keys when copying, list paths, children lists", () => {
 
 });
 
-/*
- *  Third check of the review (V3).
- */
-describe("V3: path writers walk a list by index, as the reader", () => {
+describe("path writers walk a list by index, as the reader", () => {
     test("kw_set_dict_value refuses a segment that is not an index of its list", async () => {
         const { kw_set_dict_value } = await import("../src/helpers.js");
         const kw = {a: [1, 2]};
@@ -396,7 +393,7 @@ describe("V3: path writers walk a list by index, as the reader", () => {
 });
 
 
-describe("V3: create_template_record writes own keys", () => {
+describe("create_template_record writes own keys", () => {
     test("a parsed template with an own __proto__ does not set the record's prototype", async () => {
         const { create_template_record } = await import("../src/lib_treedb.js");
         const template = JSON.parse('{"id": "string", "__proto__": {"default": {"admin": true}}}');
@@ -408,7 +405,7 @@ describe("V3: create_template_record writes own keys", () => {
     });
 });
 
-describe("V4: kw_delete as C", () => {
+describe("kw_delete as C", () => {
     test("a missing key or parent, and a top-level list, are -1 and do not throw", async () => {
         const { kw_delete } = await import("../src/helpers.js");
         expect(kw_delete(null, {a: 1}, "b")).toBe(-1);
@@ -421,7 +418,7 @@ describe("V4: kw_delete as C", () => {
     });
 });
 
-describe("V5: path writers with a path that is not a string", () => {
+describe("path writers with a path that is not a string", () => {
     test("kw_delete and kw_set_dict_value log and answer -1, no TypeError", async () => {
         const { kw_delete, kw_set_dict_value, set_log_callback } = await import("../src/helpers.js");
         const logged = [];
@@ -442,10 +439,7 @@ describe("V5: path writers with a path that is not a string", () => {
 });
 
 
-/*
- *  Sixth check of the review (V6).
- */
-describe("V6: what is left of the path writers", () => {
+describe("what is left of the path writers", () => {
     /*  set_log_callback() replays the backlog to a new sink: count only
      *  what a call logs, from where the log stood before it.  */
     test("kw_set_subdict_value with a path it cannot write is -1, logged once, nothing written", async () => {
@@ -487,10 +481,7 @@ describe("V6: what is left of the path writers", () => {
     });
 });
 
-/*
- *  Seventh check of the review (V7).
- */
-describe("V7: kw_set_subdict_value logs a scalar on its path once", () => {
+describe("kw_set_subdict_value logs a scalar on its path once", () => {
     test("a scalar in the middle of the path: -1, one log, nothing written", async () => {
         const { kw_set_subdict_value, set_log_callback } = await import("../src/helpers.js");
         const logged = [];
@@ -507,7 +498,7 @@ describe("V7: kw_set_subdict_value logs a scalar on its path once", () => {
     });
 });
 
-describe("V7: jdb_init creates what it says it creates", () => {
+describe("jdb_init creates what it says it creates", () => {
     test("a topic per schema key, the hook, and records under the hook", async () => {
         const { jdb_init, jdb_update, jdb_delete, jdb_get } = await import("../src/helpers.js");
         const jdb = jdb_init({schema: {menu: []}});
@@ -523,10 +514,7 @@ describe("V7: jdb_init creates what it says it creates", () => {
     });
 });
 
-/*
- *  Eighth check of the review (V8).
- */
-describe("V8: the jdb says what it did not do, kw paths as C", () => {
+describe("the jdb says what it did not do, kw paths as C", () => {
     test("jdb_update and jdb_delete with a path or a record that is not there: null, logged", async () => {
         const { jdb_init, jdb_update, jdb_delete, set_log_callback } = await import("../src/helpers.js");
         const logged = [];
@@ -541,7 +529,7 @@ describe("V8: the jdb says what it did not do, kw paths as C", () => {
             expect(jdb_delete(jdb, "menu", "home", {id: "nope"})).toBe(null);
             expect(jdb_delete(jdb, "menu", "", {id: "nope"})).toBe(null);
             expect(logged.length - base).toBe(5);
-            expect(jdb.topics.menu).toEqual([{id: "home"}]);       // the failures left nothing (V9)
+            expect(jdb.topics.menu).toEqual([{id: "home"}]);       // the failures left nothing
             expect(jdb_delete(jdb, "menu", "", {id: "home"})).toBe(jdb.topics.menu);
             expect(jdb.topics.menu).toEqual([]);
         } finally {
@@ -580,10 +568,7 @@ describe("V8: the jdb says what it did not do, kw paths as C", () => {
     });
 });
 
-/*
- *  Ninth check of the review (V9).
- */
-describe("V9: jdb_update leaves no trace of a failure, and updates at the root", () => {
+describe("jdb_update leaves no trace of a failure, and updates at the root", () => {
     test("a hook that is not a list: null, logged, no TypeError", async () => {
         const { jdb_init, jdb_update, set_log_callback } = await import("../src/helpers.js");
         const logged = [];
@@ -621,10 +606,7 @@ describe("V9: jdb_update leaves no trace of a failure, and updates at the root",
     });
 });
 
-/*
- *  Tenth check of the review (V10).
- */
-describe("V10: the jdb refuses what it cannot address", () => {
+describe("the jdb refuses what it cannot address", () => {
     test("a null record, an empty segment: null, logged, no TypeError", async () => {
         const { jdb_init, jdb_update, jdb_delete, set_log_callback } = await import("../src/helpers.js");
         const logged = [];
@@ -647,7 +629,7 @@ describe("V10: the jdb refuses what it cannot address", () => {
     });
 });
 
-describe("V10.1: an empty segment is refused by the writer, as C", () => {
+describe("an empty segment is refused by the writer, as C", () => {
     test("'a`', '`a' and 'a``b' answer -1, logged, nothing written", async () => {
         const { kw_set_dict_value, set_log_callback } = await import("../src/helpers.js");
         const logged = [];
@@ -666,10 +648,7 @@ describe("V10.1: an empty segment is refused by the writer, as C", () => {
     });
 });
 
-/*
- *  Eleventh check of the review (V11).
- */
-describe("V11: KW_CREATE over a null or another type, a jdb log that cannot throw", () => {
+describe("KW_CREATE over a null or another type, a jdb log that cannot throw", () => {
     test("a null at the path is replaced by a create; another type is logged", async () => {
         const { kw_get_dict, kw_get_list, kw_flag_t, set_log_callback } = await import("../src/helpers.js");
         const logged = [];
@@ -705,10 +684,7 @@ describe("V11: KW_CREATE over a null or another type, a jdb log that cannot thro
     });
 });
 
-/*
- *  Twelfth check of the review (V12).
- */
-describe("V12: an error line cannot throw, whatever the record", () => {
+describe("an error line cannot throw, whatever the record", () => {
     test("a toJSON that throws null, an object with no prototype", async () => {
         const { jdb_init, jdb_update, jdb_delete, set_log_callback } = await import("../src/helpers.js");
         set_log_callback(() => {});
@@ -725,10 +701,7 @@ describe("V12: an error line cannot throw, whatever the record", () => {
     });
 });
 
-/*
- *  Thirteenth check of the review (V13).
- */
-describe("V13: a format that cannot throw, a required null said as missing", () => {
+describe("a format that cannot throw, a required null said as missing", () => {
     test("%s, %d and %f print what they are given", async () => {
         const { log_error, set_log_callback } = await import("../src/helpers.js");
         const logged = [];
@@ -777,10 +750,7 @@ describe("V13: a format that cannot throw, a required null said as missing", () 
     });
 });
 
-/*
- *  Fourteenth check of the review (V14).
- */
-describe("V14: no log path throws, format_log speaks %% %j and BigInt", () => {
+describe("no log path throws, format_log speaks %% %j and BigInt", () => {
     test("trace_json and trace_json_masked keep a hostile value without throwing", async () => {
         const { trace_json, trace_json_masked, set_log_callback } = await import("../src/helpers.js");
         const seen = [];
@@ -832,10 +802,7 @@ describe("V14: no log path throws, format_log speaks %% %j and BigInt", () => {
     });
 });
 
-/*
- *  Fifteenth check of the review (V15).
- */
-describe("V15: a remote log function that logs, a BigInt in the backlog", () => {
+describe("a remote log function that logs, a BigInt in the backlog", () => {
     test("a remote function that logs is called once, not until the stack overflows", async () => {
         const { log_error, set_remote_log_functions } = await import("../src/helpers.js");
         let calls = 0;
@@ -871,10 +838,7 @@ describe("V15: a remote log function that logs, a BigInt in the backlog", () => 
     });
 });
 
-/*
- *  Sixteenth check of the review (V16).
- */
-describe("V16: the guard is the remote function's only", () => {
+describe("the guard is the remote function's only", () => {
     test("a remote function that logs info: its console line is not swallowed", async () => {
         /*  A FRESH module, loaded after the spy: the log functions bind the
          *  console when the module loads.  */

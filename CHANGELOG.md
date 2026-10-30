@@ -571,8 +571,7 @@ code that still runs on it.
 
 ## 7.26.21
 
-Parity with the C kernel of the twenty-fourth review
-(`REV-CLOUD.md` §V24.4.2, §V24.4.3).
+Parity with the C kernel of the twenty-fourth review.
 
 - **After `Bearer` or `Basic`, only a word that can be a credential is
   masked**, by the rule of the C kernel's `scheme_credential()`: a quoted one,
@@ -589,25 +588,24 @@ Parity with the C kernel of the twenty-fourth review
   `Authorization: ********`; it was `Authorization: Bearer ********`).
 - The twin tests carry the C kernel's table, and the same 30 000 texts give the
   same answers on both sides.
-- **Nothing that the masking of 7.26.9 hid is shown** but the word after a bare
-  `Bearer` that cannot be a credential (the security review of the C kernel's
-  V24): each rule judges the text as it came (the characters to mask are
-  marked, a run of them is one `********`), and 7.26.9's reading of the
-  parameters is kept whole. V24 had shown the value of a `name=value` whose
-  name a JWT of two parts took (`eyJ..bearer1=x`), whose `=` the word after
-  `Bearer Bearer` took, or that a label's value hid (`x-auth-token:
-  password=a,b` showed `,b`); the rest of a token after a byte of no token68
-  (`Bearer abc%2Bdef`: the word of 7.26.9's Bearer is masked whole, its dots
-  at the end too). A `\"name\":\"x\"` of a json inside a json is a
-  `name: value` (its value to the quote escaped the same way), a character
-  that is no ASCII is no letter of prose, and the base64 of `Basic` is read as
-  far as it goes (`(Basic dXNlcjpwYXNz)`). The C and JS twins give the same
-  answers on 230 078 texts.
+- **Nothing that the masking of 7.26.9 hid is shown** but the word after a
+  bare `Bearer` that cannot be a credential (the security review of the C
+  kernel's twenty-fourth review): each rule judges the text as it came (the
+  characters to mask are marked, a run of them is one `********`), and
+  7.26.9's reading of the parameters is kept whole. The twenty-fourth review
+  had shown the value of a `name=value` whose name a JWT of two parts took
+  (`eyJ..bearer1=x`), whose `=` the word after `Bearer Bearer` took, or that a
+  label's value hid (`x-auth-token: password=a,b` showed `,b`); the rest of a
+  token after a byte of no token68 (`Bearer abc%2Bdef`: the word of 7.26.9's
+  Bearer is masked whole, its dots at the end too). A `\"name\":\"x\"` of a
+  json inside a json is a `name: value` (its value to the quote escaped the
+  same way), a character that is no ASCII is no letter of prose, and the
+  base64 of `Basic` is read as far as it goes (`(Basic dXNlcjpwYXNz)`). The C
+  and JS twins give the same answers on 230 078 texts.
 
 ## 7.26.20
 
-Parity with the C kernel of the twenty-third review (`REV-CLOUD.md`
-§V23.4.3, §V23.4.6).
+Parity with the C kernel of the twenty-third review.
 
 - **A secret by its VALUE, as the C kernel masks it.** `mask_secrets_inline()`
   and `json_mask_secrets()` (every string, under any key) mask a JWT (`eyJ...`,
@@ -630,7 +628,7 @@ Parity with the C kernel of the twenty-third review (`REV-CLOUD.md`
 
 ## 7.26.19
 
-Sixteenth check of the review (`REV-CLOUD.md` §V16.5).
+Sixteenth check of the review.
 
 - **fix: the reentrancy guard of 7.26.18 swallowed console lines.** It was
   ONE guard for every log function, and `log_info()`, `log_debug()`,
@@ -644,7 +642,7 @@ Sixteenth check of the review (`REV-CLOUD.md` §V16.5).
 
 ## 7.26.18
 
-Fifteenth check of the review (`REV-CLOUD.md` §V15.4).
+Fifteenth check of the review.
 
 - **a log function that logs is not called again from inside itself**: a
   remote one (`set_remote_log_functions()`) whose socket logs as it fails
@@ -657,7 +655,7 @@ Fifteenth check of the review (`REV-CLOUD.md` §V15.4).
 
 ## 7.26.17
 
-Fourteenth check of the review (`REV-CLOUD.md` §V14.3).
+Fourteenth check of the review.
 
 - **fix: a log path could still throw.** `trace_json()` kept its payload in
   the backlog with a bare `String()` fallback, which throws on an object with
@@ -674,7 +672,7 @@ Fourteenth check of the review (`REV-CLOUD.md` §V14.3).
 
 ## 7.26.16
 
-Thirteenth check of the review (`REV-CLOUD.md` §V13.4).
+Thirteenth check of the review.
 
 - **fix: `format_log()` could still throw.** `%s` went through `String()` and
   `%d`/`%f` through `parseInt()`/`parseFloat()`, which throw on an object with
@@ -692,7 +690,7 @@ Thirteenth check of the review (`REV-CLOUD.md` §V13.4).
 
 ## 7.26.15
 
-Twelfth check of the review (`REV-CLOUD.md` §V12.4).
+Twelfth check of the review.
 
 - **fix: a log line could still throw.** `log_stringify()` fell back to
   `String()`, which throws on an object with no prototype or a `toString()`
@@ -703,7 +701,7 @@ Twelfth check of the review (`REV-CLOUD.md` §V12.4).
 
 ## 7.26.14
 
-Eleventh check of the review (`REV-CLOUD.md` §V11.4).
+Eleventh check of the review.
 
 - **`kw_get_dict()` / `kw_get_list()` with `KW_CREATE` over a value of another
   type log it** (they gave an unwritten default back in silence), and a
@@ -720,11 +718,10 @@ Eleventh check of the review (`REV-CLOUD.md` §V11.4).
   while the C writer dropped the segment and wrote over `a`. Both writers
   refuse it now (SDK 7.26.9 for C), logged, `-1`, nothing written; so do
   `kw_set_subdict_value()` and a reader with `KW_CREATE` over such a path.
-  `REV-CLOUD.md` §V10.1.
 
 ## 7.26.12
 
-Tenth check of the review (`REV-CLOUD.md` §V10.5).
+Tenth check of the review.
 
 - **fix: `jdb_update()` / `jdb_delete()` with a record that is not an object
   threw a TypeError** (`kw["id"]` on `null`). They answer `null` with an error,
@@ -737,7 +734,7 @@ Tenth check of the review (`REV-CLOUD.md` §V10.5).
 
 ## 7.26.11
 
-Ninth check of the review (`REV-CLOUD.md` §V9.4).
+Ninth check of the review.
 
 - **fix: `jdb_update()` threw a TypeError when the hook of the record its path
   ends on was not a list** (`5`, a string, an object). It answers `null` with
@@ -752,7 +749,7 @@ Ninth check of the review (`REV-CLOUD.md` §V9.4).
 
 ## 7.26.10
 
-Eighth check of the review (`REV-CLOUD.md` §V8.4).
+Eighth check of the review.
 
 - **fix: `jdb_update()` and `jdb_delete()` said nothing when they did
   nothing.** A record of `path` that is not there, or a record to delete that
@@ -768,7 +765,7 @@ Eighth check of the review (`REV-CLOUD.md` §V8.4).
 
 ## 7.26.9
 
-Seventh check of the review (`REV-CLOUD.md` §V7.4).
+Seventh check of the review.
 
 - **fix: `jdb_init()` created nothing.** It passed `1` where it meant to
   create, and `1` is `KW_REQUIRED`: a jdb built from a schema had no topic and
@@ -782,7 +779,7 @@ Seventh check of the review (`REV-CLOUD.md` §V7.4).
 
 ## 7.26.8
 
-Sixth check of the review (`REV-CLOUD.md` §V6.5).
+Sixth check of the review.
 
 - **fix: `kw_set_subdict_value()` answered `0` for a path it could not
   write**, and wrote the value into a dict that belonged to nobody: it went
@@ -799,11 +796,11 @@ Sixth check of the review (`REV-CLOUD.md` §V6.5).
 - **fix: a path that is not a string threw a TypeError** in `kw_delete()` and
   `kw_set_dict_value()` (`path.split()` / `lastIndexOf()` on `null` or a
   number). Both answer `-1` with an error now, as `kw_find_path()` already
-  did. The test checks the errors are logged (`REV-CLOUD.md` §V5.3).
+  did. The test checks the errors are logged.
 
 ## 7.26.6
 
-Fifth check of the review (`REV-CLOUD.md` §V4).
+Fifth check of the review.
 
 - **fix: `kw_delete()` as C.** A key or a parent that is not there answered
   `0` in silence, and a top-level list still threw a TypeError on `length`.
@@ -830,11 +827,11 @@ Fifth check of the review (`REV-CLOUD.md` §V4).
   keys.** The template is the backend's schema, so a parsed key `__proto__`
   became the PROTOTYPE of the new record (`.admin === true`, lost by
   `JSON.stringify()`). It writes own keys now. The last copy by assignment of
-  the review of 2026-10-10 (`REV-CLOUD.md` §V3.6).
+  the review of 2026-10-10.
 
 ## 7.26.4
 
-Fourth check of the review (`REV-CLOUD.md` §V3).
+Fourth check of the review.
 
 - **fix: the path WRITERS read a list as the reader does.** 7.26.2 made
   `kw_find_path()` take a list segment only as an index, and left the writers
@@ -875,7 +872,7 @@ Fourth check of the review (`REV-CLOUD.md` §V3).
 
 ## 7.26.2
 
-Third check of the review of 2026-10-10 (`REV-CLOUD.md` §V2).
+Third check of the review of 2026-10-10.
 
 - **fix: a url the browser refuses opened nothing and said nothing.** When
   `new WebSocket()` THROWS (a malformed url, typically one edited by hand),
@@ -909,7 +906,7 @@ Third check of the review of 2026-10-10 (`REV-CLOUD.md` §V2).
 
 ## 7.26.1
 
-Second check of the review of 2026-10-10 (`REV-CLOUD.md` §V).
+Second check of the review of 2026-10-10.
 
 - **fix: a start whose url fails let the old socket's close in twice.** The
   socket's sequence number was counted after `new WebSocket()`, so a url that
@@ -937,8 +934,9 @@ Second check of the review of 2026-10-10 (`REV-CLOUD.md` §V).
 
 ## 7.26.0
 
-The minor follows the SDK (7.26.x); no API was removed. Findings of the review of 2026-10-10 (`REV-CLOUD.md` §1), each
-pinned by a test (`tests/review_2026_10.test.js`, `tests/ievent_restart.test.js`).
+The minor follows the SDK (7.26.x); no API was removed. Findings of the review
+of 2026-10-10, each pinned by a test (`tests/runtime_contracts.test.js`,
+`tests/ievent_restart.test.js`).
 
 - **fix: `log_error()` / `log_warning()` / `log_info()` / `log_debug()` /
   `trace_msg()` dropped their arguments.** They took `format` alone, so
