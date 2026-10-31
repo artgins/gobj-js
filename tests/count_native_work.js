@@ -52,9 +52,9 @@
  *      - the globals in NOT_WALKED: the machinery of the test, promises and
  *        streams (a masking returns its answer in the same call, so
  *        nothing of a promise or a stream can be part of its work), and
- *        Atomics, WebAssembly, Proxy, the Weak* and the message ports,
- *        which the masking does not use: a rescan made of one of them,
- *        such as port.postMessage(text), counts as linear;
+ *        Atomics, WebAssembly, Proxy, the Weak* (a WeakMap goes by identity
+ *        and reads no text) and the message ports: a rescan made of one of
+ *        them, such as port.postMessage(text), counts as linear;
  *      - what CONSTANT holds and does read more than a position, so a
  *        rescan made of it counts as linear: Object.hasOwn(),
  *        hasOwnProperty(), Reflect.has(), Reflect.get(),
