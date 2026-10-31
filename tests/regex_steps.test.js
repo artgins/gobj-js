@@ -29,6 +29,31 @@ function model_answer(re, text, from)
 }
 
 /*
+ *  The syntax Node 22 does not read, and README.md supports Node 22: a
+ *  literal of it would stop this whole file from loading. The case is
+ *  skipped, and its name says why. Node 24 reads all of it, so there a
+ *  refused source is a mistake here, not a skip.
+ */
+const NEWER_SYNTAX = [
+    ["a name repeated in two alternatives", "(?<y>a)|(?<y>b)", "", "b"],
+    ["a flag turned on in a group", "(?i:ab)c", "", "ABc"],
+    ["a flag turned off in a group", "(?-i:a)b", "i", "aB"],
+];
+const NODE_READS_ALL_OF_IT = 24;
+
+function regexp_or_reason(source, flags)
+{
+    try {
+        return {re: new RegExp(source, flags), reason: ""};
+    } catch(e) {
+        if(parseInt(process.versions.node) >= NODE_READS_ALL_OF_IT) {
+            throw e;
+        }
+        return {re: null, reason: ` (SKIPPED: Node ${process.versions.node} does not read it: ${e.message})`};
+    }
+}
+
+/*
  *  A reproducible sequence, so a failure can be run again
  */
 function random_of(seed)
@@ -88,9 +113,6 @@ function random_source(rnd, depth, groups)
 describe("regex_steps", () => {
     test.each([
         [/(a*)*b/, "aaaa"],
-        [/(?<y>a)|(?<y>b)/, "b"],
-        [/(?i:ab)c/, "ABc"],
-        [/(?-i:a)b/i, "aB"],
         [/(?<x>a)\k<x>/i, "aA"],
         [/\u{1F600}./u, "\u{1F600}x"],
         [/(?<=(\d+)(\d+))$/, "1053"],
@@ -108,6 +130,13 @@ describe("regex_steps", () => {
     ])("reads %s as the native does", (re, text) => {
         expect(model_answer(re, text, 0)).toEqual(native_answer(re, text, 0));
     });
+
+    for(const [what, source, flags, text] of NEWER_SYNTAX) {
+        const {re, reason} = regexp_or_reason(source, flags);
+        test.skipIf(!re)(`reads ${what} as the native does${reason}`, () => {
+            expect(model_answer(re, text, 0)).toEqual(native_answer(re, text, 0));
+        });
+    }
 
     test("gives the answers of the native exec() on random expressions and texts", () => {
         const rnd = random_of(20261031);

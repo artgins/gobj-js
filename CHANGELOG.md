@@ -18,7 +18,7 @@ about which SDK it was built against.
   shapes. Both checks mask the same 23 shapes
   (`tests/secret_masking_shapes.js`).
   - **The count** (`tests/secret_masking_linear.test.js`, in the vitest
-    project `counted`) fails closed. Each shape is masked at 256 KB, 512 KB
+    project `counted`). Each shape is masked at 256 KB, 512 KB
     and 1 MB, and the work each character adds is compared between the two
     steps: the masking adds the same at both (1.00000, 1.00001 for one
     shape) on every run, whatever the load; the limit is 1.02. For a work
@@ -30,10 +30,10 @@ about which SDK it was built against.
       whose body is an expression too;
     - **every native of the runtime** (`tests/count_native_work.js`,
       installed by `tests/count_native_setup.js` before `src/` loads, so a
-      native kept in a const at load counts too). The wrappers go on all
-      that is reachable from the global object, the prototypes,
-      `%TypedArray%` and the iterators included. A native with no model is
-      charged ALL it is given: 1, its receiver, each argument and its
+      native kept in a const at load counts too). The wrappers go on what
+      is reachable from the global object, the prototypes, `%TypedArray%`
+      and the iterators included, but for the two lists below. A wrapped
+      native with no model is charged ALL it is given: 1, its receiver, each argument and its
       result. So `Math.max.apply(null, u8.subarray(q, q + 65536))`,
       `Reflect.apply()`, `structuredClone()`, `Intl.Collator().compare()`,
       `Buffer.from()`, `new URLSearchParams()`, or a native a later runtime
@@ -43,22 +43,32 @@ about which SDK it was built against.
       with no comparator n log2 n, a step of an iterator 1, a view on a
       buffer 1; in `CONSTANT`, what reads no more than a position
       (`charCodeAt()`, `subarray()`, `pop()`). A native wrongly left out of
-      them is charged too much, and the test goes red: the safe way to be
-      wrong;
+      them is charged too much, and the test goes red; a native wrongly in
+      `CONSTANT`, or in the globals not walked, is charged nothing, and a
+      rescan made of it counts as linear (the list below);
     - **what the language reads with no call**, from hooks the plugin
       writes in `src/`: the first read of a string built with `+`, `+=` or
       a template flattens it, so a rope is charged its length there
       (`s[i]`, `charCodeAt()`, a spread, any native); a long key of an
       object is hashed; two long strings compared are read; an object
-      spread and a `for-in` list the keys.
+      spread and a `for-in` list the keys. Ropes are kept per length, by
+      number, and they belong to one count: nothing a count leaves unread
+      reaches the next.
 
     Not seen, and listed in `count_native_work.js`: the globals of the test
     machinery, promises and streams (a masking answers in the same call);
-    a native of another realm or of a `node:` module, and code of a package
-    (`src/` imports none); a native with more than linear work and no
-    model; `arr.length = n`, an object rest, the comparisons of a `switch`
-    and of a search inside an array; and what a call costs that has nothing
-    to do with its size, which is the time.
+    what `CONSTANT` holds and does read more than a position, so a rescan
+    made of it counts as linear (`Object.hasOwn()`, `hasOwnProperty()`,
+    `Reflect.has()`, `Reflect.get()` and `getOwnPropertyDescriptor()` with
+    a long key, `Object.is()` of two long strings, `re.toString()`,
+    `RegExp.prototype.compile()`, `Object.create(null, props)`);
+    `Symbol.for()` with a long text; a computed key in an object literal
+    or a pattern, and the coercion of a text to a number; a native of
+    another realm or of a `node:` module, and code of a package (`src/`
+    imports none); a native with more than linear work and no model;
+    `arr.length = n`, an object rest, the comparisons of a `switch` and of
+    a search inside an array; and what a call costs that has nothing to do
+    with its size, which is the time.
   - **A regular expression is counted step by step.** `tests/regex_steps.js`
     is a small backtracking machine, and `exec()` (which `test()` and
     String's `replace()`, `match()`, `matchAll()`, `search()` and `split()`
@@ -74,13 +84,18 @@ about which SDK it was built against.
     (`tests/regex_steps.test.js`: 3000 random expressions against the
     native `exec()`).
   - **The rescans are kept as tests** (`tests/fixtures/masking_rescans.js`,
-    counted like `src/`). 49 rescans, each made another way, are added one
-    at a time to a masking and must FAIL the count, and 12 linear works
+    counted like `src/`). 50 rescans, each made another way, are added one
+    at a time to a masking and must FAIL the count, and 13 linear works
     must pass it, on every run and every machine: a model that loses one
     goes red. 26 ways of breaking the model were tried by hand; each makes
     one of these tests fail, except dropping the comparison with the native
     answer, which only shows with a machine that is wrong (and a machine
     made wrong does fail).
+  - **`tests/regex_steps.test.js` runs on Node 22**, which `README.md`
+    supports: the three expressions it does not read (a group name repeated
+    in two alternatives, a flag turned on or off in a group) are built with
+    `new RegExp()`, and each case is skipped there with the reason in its
+    name, so the file loads. On Node 24 a refused source is an error.
   - **The time** (`tests/secret_masking_time.test.js`, in the vitest
     project `timed`, whose processes run with `--expose-gc`,
     `--min-semi-space-size=256` and `--max-semi-space-size=256`): each

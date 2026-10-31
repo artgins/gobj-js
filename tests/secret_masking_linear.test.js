@@ -12,9 +12,9 @@
  *      native function of the runtime, and count_native_work.js charges
  *      each one what it reads, ALL it is given when it has no model, and a
  *      regular expression the steps regex_steps.js counts. So a rescan
- *      shows however it is made (fixtures/masking_rescans.js is the proof:
- *      each entry there must fail this count), and what still escapes
- *      is listed in count_native_work.js. secret_masking_time.test.js
+ *      shows, made in any of the ways of fixtures/masking_rescans.js (each
+ *      entry there must fail this count), and the ways known to escape
+ *      are listed in count_native_work.js. secret_masking_time.test.js
  *      times the same shapes (secret_masking_shapes.js) for what no count
  *      can see.
  *
@@ -32,7 +32,7 @@ import {
     with_native_work_counted,
     check_same_answer,
 } from "./count_native_work.js";
-import { RESCANS, SORTS, LINEAR_WORKS } from "./fixtures/masking_rescans.js";
+import { RESCANS, SORTS, LINEAR_WORKS, leave_a_rope } from "./fixtures/masking_rescans.js";
 
 /*
  *  The counter of count_work_plugin.js, created when src/ loads
@@ -132,6 +132,18 @@ describe("masking is linear and bounded", () => {
         expect(install_native_work_counting()).toBeGreaterThan(500);
         expect(String.prototype.indexOf.toString()).not.toContain("[native code]");
         expect(Math.max.toString()).not.toContain("[native code]");
+    });
+
+    test("what one count leaves changes no other: the same text counts the same", () => {
+        const mask = (text) => mask_secrets_inline(text);
+        work_of(leave_a_rope, "a=".repeat(2*EXTRA_SMALLEST));
+        const {ratio, seen} = counted_steps("a masking after a rope left", "a=", mask, EXTRA_SMALLEST);
+        expect(ratio, seen).toBeLessThan(STEP_LIMIT);
+
+        const text = "a=".repeat(EXTRA_SMALLEST/2);
+        const alone = work_of(mask, text);
+        work_of(leave_a_rope, text);
+        expect(work_of(mask, text)).toBe(alone);
     });
 
     test("a machine that disagrees with the native exec() stops the count", () => {

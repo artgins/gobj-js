@@ -11,7 +11,7 @@
  *      the same length, as the marks of the masking), from one position
  *      in `k` to the end, by the means its name says. SORTS sort as many
  *      numbers as the text has characters. LINEAR_WORKS read the text a
- *      fixed number of times.
+ *      fixed number of times, or not at all.
  *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
@@ -187,6 +187,15 @@ export const RESCANS = {
         }
         return sum;
     },
+    "ropes of one length made first, read after": (text, u8, k) => {
+        const ropes = [];
+        from_each_start(text, k, (p) => {
+            ropes[p/k] = "p" + text;
+        });
+        for(let i = 0; i < ropes.length; i++) {
+            ropes[i].charCodeAt(0);
+        }
+    },
     "+ then charCodeAt()": (text, u8, k) => from_each_start(text, k, (p) => (p + text).charCodeAt(0)),
     "+= then a spread": (text, u8, k) => from_each_start(text, k, (p) => [...(p + text)].length),
     "a template then indexOf()": (text, u8, k) => from_each_start(text, k, (p) => `${p}${text}`.indexOf("x")),
@@ -243,6 +252,11 @@ export const SORTS = {
     "Float64Array's sort()": (text) => numbers_of(text.length).sort(),
 };
 
+/*
+ *  A rope as long as the text, that nothing reads
+ */
+export const leave_a_rope = (text) => text.slice(1) + "=";
+
 export const LINEAR_WORKS = {
     "while(re.exec(text))": (text) => {
         const re = /=/g;
@@ -275,6 +289,7 @@ export const LINEAR_WORKS = {
         }
         return s.charCodeAt(0);
     },
+    "ropes made and never read": (text, u8, k) => from_each_start(text, k, (p) => `${p}${text}`),
     "a Map of short keys": (text) => {
         const m = new Map();
         for(let i = 0; i < text.length; i++) {

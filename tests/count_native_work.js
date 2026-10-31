@@ -6,10 +6,10 @@
  *      what the language itself reads. For the tests that COUNT work
  *      (secret_masking_linear.test.js).
  *
- *      FAIL CLOSED. install_native_work_counting() wraps every native
- *      function it can reach from the global object, the prototypes and
- *      the hidden ones (iterators, %TypedArray%) included, and whatever a
- *      later runtime adds. A native with no
+ *      install_native_work_counting() wraps the native functions it
+ *      reaches from the global object, the prototypes and the hidden ones
+ *      (iterators, %TypedArray%) included, and what a later runtime adds
+ *      to them, but for CONSTANT and NOT_WALKED. A wrapped native with no
  *      model here is charged ALL it is given: 1, plus the size of its
  *      receiver, of each argument and of its result. So a function nobody
  *      thought of counts as a read of what it was handed, which is an
@@ -21,10 +21,11 @@
  *      The entries here are the exceptions, and each one lowers a charge:
  *      NATIVE_COST says what a native really reads (a search stops at
  *      what it found, a copy reads what it copies), and CONSTANT lists
- *      the natives that read no more than a position, which are not
+ *      the natives taken to read no more than a position, which are not
  *      wrapped at all. A native wrongly left out of them is charged too
- *      much: the test goes red and names no rescan, which is the safe way
- *      to be wrong.
+ *      much: the test goes red and names no rescan. A native wrongly IN
+ *      CONSTANT or NOT_WALKED is charged nothing, and a rescan made of it
+ *      does not show: the list "Not seen" below names those known.
  *
  *      A regular expression is counted step by step: exec() (which
  *      test() and replace(), match(), matchAll(), search() and split()
@@ -50,6 +51,14 @@
  *      - the globals in NOT_WALKED: the machinery of the test, promises and
  *        streams. A masking returns its answer in the same call, so
  *        nothing of a promise or a stream can be part of its work;
+ *      - what CONSTANT holds and does read more than a position, so a
+ *        rescan made of it counts as linear: Object.hasOwn(),
+ *        hasOwnProperty(), Reflect.has(), Reflect.get(),
+ *        getOwnPropertyDescriptor() and any other of them given a long key
+ *        (they flatten a rope and hash the key), Object.is() of two long
+ *        strings, re.toString(), RegExp.prototype.compile() and
+ *        Object.create(null, props);
+ *      - Symbol.for() with a long text: Symbol is in NOT_WALKED;
  *      - a native of another realm (a vm context) or of a `node:` module,
  *        and code of a package: src/ imports none today. A hook sees
  *        src/ only, and the wrappers the globals only;
@@ -59,6 +68,9 @@
  *      - `arr.length = n`, an object rest ({a, ...rest} = o), and the
  *        comparisons of a switch or of a search inside an array: they
  *        read with no call and no hook;
+ *      - a computed key in an object literal or a pattern ({[k]: v}), and
+ *        the coercion of a text to a number (+s, s == 5, s * 1): they read
+ *        with no call and no hook either, and a rope stays unread;
  *      - what a call costs that has nothing to do with its size: the
  *        allocator, the collector, the cache. Those are the time, and
  *        secret_masking_time.test.js looks at them.
@@ -110,30 +122,40 @@ let counting = false;
 let busy = false;
 
 /*
- *  The length of each string that + or += made and nothing has read yet.
+ *  How many strings of each length + or += made and nothing has read yet.
  *  A string is no object, so a rope cannot be told by its identity: a
- *  read of any string of that length flattens it, once. Under ROPE_MIN
- *  the flatten is bounded, and it is a constant of the operation.
+ *  read of any string of that length flattens one of them, so a text that
+ *  only has the length of a rope is charged for it, which is too much and
+ *  not too little. Under ROPE_MIN the flatten is bounded, and it is a
+ *  constant of the operation. The ropes belong to one count: what a count
+ *  leaves unread must not be charged to the next, so the same text counts
+ *  the same whatever ran before it.
  */
 const ROPE_MIN = 256;
-const ropes = Object.create(null);
+let ropes = Object.create(null);
 let n_ropes = 0;
 
 function add_rope(s)
 {
-    if(s.length >= ROPE_MIN && !ropes[s.length]) {
-        ropes[s.length] = true;
+    if(s.length >= ROPE_MIN) {
+        ropes[s.length] = (ropes[s.length] || 0) + 1;
         n_ropes++;
     }
 }
 
 function read_rope(s)
 {
-    if(ropes[s.length]) {
-        delete ropes[s.length];
+    if(ropes[s.length] > 0) {
+        ropes[s.length]--;
         n_ropes--;
         work.n += s.length;
     }
+}
+
+function forget_ropes()
+{
+    ropes = Object.create(null);
+    n_ropes = 0;
 }
 
 function read_ropes(self, args)
@@ -825,10 +847,12 @@ export function install_native_work_counting()
  ************************************************************/
 export function with_native_work_counted(fn)
 {
+    forget_ropes();
     counting = true;
     try {
         return fn();
     } finally {
         counting = false;
+        forget_ropes();
     }
 }
