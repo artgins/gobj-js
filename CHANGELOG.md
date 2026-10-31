@@ -9,6 +9,10 @@ about which SDK it was built against.
 
 ## Unreleased
 
+## 7.30.0 (2026-10-31)
+
+The number of SDK 7.30: `src/` does not change over 7.29.4. Only tests, below.
+
 - **Tests: the linearity of the secret masking is checked by COUNTING its
   work, and by TIMING it for what no count sees.** A slope of wall times
   could not tell a load from a rescan: with eight suites at once on four
