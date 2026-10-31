@@ -15,6 +15,13 @@ const coverage = process.argv.some((arg) => arg === "--coverage" || arg.startsWi
  *  function and every loop of src/: the other tests and the build see the
  *  source as it is.  */
 const COUNTED_TESTS = ["tests/secret_masking_linear.test.js"];
+
+/*  The test files that TIME what they check, on the source as it is. They
+ *  run in a project of their own, whose processes can collect their heap
+ *  (`--expose-gc`) and have a young generation of 64 MB, so a measure
+ *  starts from a collected heap and a call of a few MB is not collected
+ *  many times over where a small one is not collected at all.  */
+const TIMED_TESTS = ["tests/secret_masking_time.test.js"];
 const SRC_DIR = fileURLToPath(new URL("./src/", import.meta.url));
 
 export default defineConfig({
@@ -34,7 +41,15 @@ export default defineConfig({
                 extends: true,
                 test: {
                     name: "unit",
-                    exclude: [...configDefaults.exclude, ...COUNTED_TESTS],
+                    exclude: [...configDefaults.exclude, ...COUNTED_TESTS, ...TIMED_TESTS],
+                },
+            },
+            {
+                extends: true,
+                test: {
+                    name: "timed",
+                    include: TIMED_TESTS,
+                    execArgv: ["--expose-gc", "--max-semi-space-size=64"],
                 },
             },
             {

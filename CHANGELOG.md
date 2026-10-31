@@ -20,73 +20,114 @@ about which SDK it was built against.
   - **The count** (`tests/secret_masking_linear.test.js`, in the vitest
     project `counted`): `tests/count_work_plugin.js` adds a tick to every
     function, every loop and every arrow function of `src/` -- an arrow
-    whose body is an expression too, `(v) => (tick, v < 0)`, because a
-    native method that calls it (`arr.some((v) => v < 0)`) has no tick of
-    its own. The test adds the work of the native methods it has a model
-    of: the searches and copies of String, `RegExp.prototype.exec()`, the
-    searches and copies of Array and of the typed arrays (`indexOf()`,
-    `includes()`, `lastIndexOf()`, `slice()`, `fill()`, `set()`,
-    `unshift()`, `splice()`, ...), `encodeURIComponent()` and its kin, and
-    `JSON.stringify()` / `JSON.parse()`. Each shape is masked at 256 KB,
-    512 KB and 1 MB, and the work each character adds is compared between
-    the two steps: the masking adds the same at both (1.00000, 1.00001
-    for one shape) on every run, whatever the load; the limit is 1.02.
-  - **A regular expression is charged what it reads:** from where it
-    starts to the end of its match, to the end when there is none, one
-    position when it is sticky. `test()`, and `replace()`, `match()`,
-    `matchAll()`, `search()` and `split()` with a regular expression, run
-    the patched `exec()`, so it counts them. A single linear pass
-    (`while(re.exec(s))`, `s.replace(/=/g, fn)`, `s.matchAll(/=/g)`,
-    `s.split(/=/)`) counts 1.00000. String's `lastIndexOf()` is charged
-    from the position it starts at, and `concat()` what it adds.
-  - **The time** (`tests/secret_masking_time.test.js`, in the project
-    `unit`): the work inside a native method with no model is not counted
-    -- a regular expression that backtracks within one call, a string built
-    with `+=` that `charCodeAt()` flattens, an allocation. Each shape is
-    masked 15 times at 256 KB and once at 3.75 MB, the same work, timed one
-    after the other in CPU time of the thread; the ratio must be under 1.5
-    in one of up to four pairs. The masking gives 0.88 to 1.22 on an idle
-    machine and 0.55 to 1.43 with eight suites at once. It runs in a process
-    where no built-in was ever patched: once `RegExp.prototype.exec` has
-    been replaced, V8 keeps every regular expression of the process on its
-    slow path, and a `split(/=/)` of 3.75 MB then took 1.7 to 2.0 times as
-    long per character as of 256 KB.
-  - **What each check catches**, with rescans to the end from one position
-    in k, k set for each shape so that at 1 MB they take 0.3 or 1 times the
-    time of the masking there (red shapes of 23, at 0.3 / 1 times):
+    whose body is an expression too, `(v) => (tick, v < 0)`. The test adds
+    the work of the native functions it has a model of, listed in
+    `with_native_work_counted()`:
+    - String: a search, from where it starts to what it found or to the
+      end; a copy or a conversion, what it reads or makes;
+    - Array and the typed arrays: their searches and copies, `fill()`,
+      `set()`, `unshift()`, `splice()`, `push()`, `flat()`, ...; a method
+      that calls back (`some()`, `map()`, `reduce()`, ...), one for each
+      call, a native callback such as `Number.isNaN` included; a sort with
+      a comparator, its calls, and one with none (`Float64Array`'s
+      `sort()`), n log2 n;
+    - the iterators of strings, arrays, typed arrays, Maps and Sets, one
+      for each step, so a spread `[...x]`, a destructuring and
+      `Array.from()` of an iterable count what they read;
+    - the constructors that fill what they make: `Array`, every typed
+      array (`new Uint8Array(n)`, a copy of one, `Uint8Array.from()`) and
+      `ArrayBuffer`; a view on a buffer counts 1;
+    - `Object.keys()`, `values()`, `entries()`, `getOwnPropertyNames()`,
+      `fromEntries()`, `assign()`;
+    - `encodeURIComponent()` and its kin, `btoa()` / `atob()`, JSON,
+      `TextEncoder`'s `encode()` / `encodeInto()`, `TextDecoder`'s
+      `decode()`.
 
-    | Rescan made of | Count | Time | Either |
+    Each shape is masked at 256 KB, 512 KB and 1 MB, and the work each
+    character adds is compared between the two steps: the masking adds the
+    same at both (1.00000, 1.00001 for one shape) on every run, whatever
+    the load; the limit is 1.02. For a work of a*n + c*n*n that is
+    (a + 6cr)/(a + 3cr), so the count fails when c*n*n is 2.7% of a*n or
+    more at 1 MB -- 2.7% of the COUNTED work, not of the time.
+  - **A regular expression is charged what it can read**, in `exec()`,
+    which `test()` and String's `replace()`, `match()`, `matchAll()`,
+    `search()` and `split()` with one all run. A match: from where the
+    search starts to the end of the match, plus as far past it as a
+    lookahead in it can read (to the end of the text when that lookahead
+    has no bound), plus as far back as a lookbehind can. No match: every
+    position to the end when it scans; as far as the expression can read
+    when it is sticky (to the end when it has no bound), except the sticky
+    splitter that `split()` makes, which is a scan and counts one per
+    position. How far an expression can read comes from its source:
+    classes and escapes take one character, quantifiers multiply, `*`,
+    `+`, `{n,}` and a backreference have no bound. So a tokenizer that
+    tries an unbounded sticky expression where it fails counts as a
+    rescan; one expression with alternatives does not. Not counted: what
+    a failed attempt reads at each position of a scan, and the
+    backtracking within one attempt.
+  - **The time** (`tests/secret_masking_time.test.js`, in the vitest
+    project `timed`, whose processes run with `--expose-gc` and
+    `--max-semi-space-size=64`): each shape is masked 15 times at 256 KB
+    and once at 3.75 MB, the same work, in CPU time of the thread, each
+    measure after a collection of the heap; the ratio is that of the best
+    time of each size over up to six rounds, and the limit is 2.0. A
+    rescan of c times the masking at 1 MB gives (1 + 3.75c)/(1 + c/4) over
+    a masking whose time is exactly linear: 3.8 at c = 1, 1.98 at
+    c = 0.3. Without `process.threadCpuUsage()` the test is skipped, and
+    its name and a warning say why; it no longer falls back to the time of
+    the wall with nothing said.
+  - **Measured** on an Intel Core i7-11370H (4 cores, 8 threads, 1.25 MB
+    of L2 per core, 12 MB of L3), Node 24.18.0, idle, and with 11 other
+    copies of the suite running at once (load average 22 to 25). Each
+    figure is the ratio a shape passed at, the highest of the 23:
+
+    | Linear work (no rescan) | Idle | 12 suites |
+    |---|---|---|
+    | the masking alone | 1.19 | 1.21 |
+    | + `while(re.exec(s))`, `s.split(/=/)` | 1.11 | 1.16 |
+    | + `s.replace(/=/g, fn)`, `s.matchAll(/=/g)` | 1.20 | 1.21 |
+    | + a sticky tokenizer | 1.11 | 1.07 |
+    | + `s.replaceAll("=", "=")` | 1.44 | 1.58 |
+
+    Rescans to the end from one position in k, with k set on that machine
+    for each shape so that at 1 MB the rescan takes 0.3 or 1 times the
+    masking there (red shapes of 23, at 0.3 / 1 times; the count is the
+    same idle and loaded; -- is not run):
+
+    | Rescan made of | Count | Time, idle | Time, 12 suites |
     |---|---|---|---|
-    | `Uint8Array.indexOf()` | 23 / 23 | 23 / 23 | 23 / 23 |
-    | `Uint8Array.lastIndexOf()`, `slice()` | 23 / 23 | 23 / 23 | 23 / 23 |
-    | `Array.includes()` | 23 / 23 | 21 / 23 | 23 / 23 |
-    | `Array.unshift()` | 23 / 23 | 23 / 23 | 23 / 23 |
-    | `encodeURIComponent()` | 23 / 23 | 22 / 23 | 23 / 23 |
-    | `JSON.stringify()` | 23 / 23 | 23 / 23 | 23 / 23 |
-    | `String.indexOf()` | 23 / 23 | 23 / 23 | 23 / 23 |
-    | a JS loop | 22 / 23 | 22 / 23 | 22 / 23 |
-    | an arrow function that `some()` calls | 21 / 23 | 19 / 23 | 21 / 23 |
-    | `+=` then `charCodeAt()` | 0 / 0 | 23 / 23 | 23 / 23 |
-    | one regular expression call that backtracks | 0 / 0 | 22 / 23 | 22 / 23 |
+    | `String.indexOf()`, `Uint8Array`'s `indexOf()` / `lastIndexOf()` / `slice()`, `new Uint8Array(u8)`, `encodeURIComponent()`, `JSON.stringify()`, `TextEncoder.encode()`, a JS loop, a sticky expression that fails, a lookahead to the end | 23 / 23 | -- | -- |
+    | `Uint8Array.from()` | 23 / 11 of 11 run | -- | -- |
+    | `Array.includes()`, `unshift()` | 22 / 23 | -- | -- |
+    | an arrow function that `some()` calls | 21 / 23 | -- | 2 / -- |
+    | `some(Number.isNaN)` | 20 / 23 | -- | -- |
+    | `[...str]` | 17 / 23 | -- | -- |
+    | `+=` then `charCodeAt()` | 0 / 0 | 20 / 23 | 12 / 23 |
+    | one regular expression call that backtracks | 0 / 0 | 12 / 23 | 12 / 23 |
 
-    Every one of them makes the test fail. The shapes that pass at 0.3
-    times are those where ONE pass of the rescan already takes about 0.3
-    times the masking, so k came out at 0.85 MB or more and up to 1 MB
-    the rescan is one or two passes (a JS loop on one shape, an arrow on
-    two), and the backtracking expression on one shape (1.49 against the
-    limit of 1.5). The four single passes of a regular expression above
-    pass both checks on every shape (time 1.26 at most). With seven other
-    suites running at once, the rescans made of `+=`, of one backtracking
-    call, of an arrow, of `includes()` and of `encodeURIComponent()` still
-    fail at 0.3 times (time red on 23, 22, 18, 21 and 21 shapes), and the
-    four single passes still pass (1.22 at most).
-  - **An O(n log n) step fails the count, on purpose:** n log n alone adds
-    (log2 n + 3)/(log2 n + 2) = 1.05 times as much at the second step, and
-    a sort of n numbers after the masking gave 1.009 to 1.027 (6 shapes of
-    23 over 1.02). The masking is linear, as in C.
-  - **The suite takes 15 s** on an idle machine (25 s with 7.29.4's test),
-    and passed 24 runs of 24 with eight suites at once on four cores
-    (55 to 58 s each).
+    Every one of them makes the test fail. Most shapes that pass the count
+    are shapes where one pass of the rescan already takes about 0.3 times
+    the masking, so k came out near the length of the text and the rescan
+    is one or two passes: there is no square to see at that size (the
+    other one is the secret value of the two `Array` rescans, whose array
+    the harness built in a call the test does not count). That is every
+    shape of `Array.from()`, `Object.keys()` and a copy and `sort()` of a
+    `Float64Array` at 0.3 times, 21 of the spread of a typed array, and
+    part of them at 1 times: with eight starts per MB, a rescan made of any of
+    them fails the count on 23 shapes of 23, as one made of every other
+    native above does.
+  - **An O(n log n) step fails the count, on purpose**, with a comparator
+    or without one: n log2 n alone adds (log2 n + 3)/(log2 n + 2) = 1.05
+    times as much at the second step, and a sort of n numbers after the
+    masking is over 1.02 on 21 shapes of 23 with a JS comparator, on 8
+    with `Float64Array`'s `sort()`. The time does not see it (1.21 at
+    most): n log n is too close to n for a timer. The masking is linear,
+    as in C.
+  - **The suite takes 15 s** on that machine idle (14.6 to 15.0 s in
+    three runs, the timed test 13.3 s of it), and 77 to 87 s with 11 other
+    suites at once (two runs, 603 of 603 each). A rescan that the time
+    catches makes the `timed` project much longer, since each red shape
+    runs its six rounds.
   - No published file changes.
 
 ## 7.29.4
