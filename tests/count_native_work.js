@@ -2,8 +2,9 @@
  *          count_native_work.js
  *
  *      The work of what is not JavaScript of src/, added to the counter of
- *      count_work_plugin.js: every native function of the runtime, and
- *      what the language itself reads. For the tests that COUNT work
+ *      count_work_plugin.js: the native functions it wraps, and what the
+ *      language itself reads where it has a hook (not seen: the list
+ *      below). For the tests that COUNT work
  *      (secret_masking_linear.test.js).
  *
  *      install_native_work_counting() wraps the native functions it
@@ -49,8 +50,11 @@
  *
  *      Not seen, and why:
  *      - the globals in NOT_WALKED: the machinery of the test, promises and
- *        streams. A masking returns its answer in the same call, so
- *        nothing of a promise or a stream can be part of its work;
+ *        streams (a masking returns its answer in the same call, so
+ *        nothing of a promise or a stream can be part of its work), and
+ *        Atomics, WebAssembly, Proxy, the Weak* and the message ports,
+ *        which the masking does not use: a rescan made of one of them,
+ *        such as port.postMessage(text), counts as linear;
  *      - what CONSTANT holds and does read more than a position, so a
  *        rescan made of it counts as linear: Object.hasOwn(),
  *        hasOwnProperty(), Reflect.has(), Reflect.get(),
@@ -410,8 +414,9 @@ const CONSTRUCTOR_COST = {
 };
 
 /*
- *  What reads no more than a position, whatever it is given. Not wrapped
- *  at all. The readers of a string have a wrapper of their own, because
+ *  Taken to read no more than a position. Not wrapped at all. Some do read
+ *  more, given a long key or two long strings: the list of what is not seen
+ *  names them. The readers of a string have a wrapper of their own, because
  *  they flatten a rope (STRING_READERS).
  */
 const CONSTANT = new Set([

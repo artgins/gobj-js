@@ -7,9 +7,10 @@
  *      The work is COUNTED, so the machine and its load do not change
  *      the answer. vite.config.js runs this file in a vitest project of
  *      its own: count_work_plugin.js adds a tick to every function, every
- *      loop and every arrow function of src/, and a hook wherever the
- *      language reads with no call; count_native_setup.js wraps every
- *      native function of the runtime, and count_native_work.js charges
+ *      loop and every arrow function of src/, and a hook where the
+ *      language reads with no call that it knows; count_native_setup.js
+ *      wraps the natives it reaches (not all: see the list of what is
+ *      not seen in count_native_work.js), and count_native_work.js charges
  *      each one what it reads, ALL it is given when it has no model, and a
  *      regular expression the steps regex_steps.js counts. So a rescan
  *      shows, made in any of the ways of fixtures/masking_rescans.js (each

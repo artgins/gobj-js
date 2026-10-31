@@ -28,7 +28,7 @@ about which SDK it was built against.
     - **the JavaScript of `src/`** (`tests/count_work_plugin.js`): a tick
       in every function, every loop and every arrow function, an arrow
       whose body is an expression too;
-    - **every native of the runtime** (`tests/count_native_work.js`,
+    - **the natives it reaches** (`tests/count_native_work.js`,
       installed by `tests/count_native_setup.js` before `src/` loads, so a
       native kept in a const at load counts too). The wrappers go on what
       is reachable from the global object, the prototypes, `%TypedArray%`
