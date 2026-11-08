@@ -17,6 +17,10 @@
  *      A browser can close a WebSocket only with 1000 or 3000-4999: a
  *      1002 (protocol error) throws there, and the socket stays open.
  *
+ *      And what is NOT a fault: the negative ACK of a card the client sent
+ *      again on a slow link (timeout_idack), which arrives in the session
+ *      the first card opened: dropped with a warning, the session stays.
+ *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.
  ***********************************************************************/
@@ -289,4 +293,54 @@ describe("a session closed for a fault of the server", () => {
         expect(ws.closed_with.code).toBe(4002);
         gobj_stop(ievent);
     });
+});
+
+/*
+ *  A card sent again on a slow link: the client re-sends its identity card
+ *  when the ACK is later than timeout_idack, on the same socket. The server
+ *  answers the first card with the positive ACK, opens the session, and
+ *  refuses the second one (a session has one identity): a NEGATIVE ACK,
+ *  in the session. The client drops an ACK in a session, positive or
+ *  negative, with a warning: the session stays, nothing is closed, and the
+ *  app hears EV_ON_OPEN once and no failed login.
+ */
+describe("the negative ACK of a card sent again, in the session", () => {
+    test("leaves the session as it is", () => with_fake_timers(async () => {
+        const ievent = gobj_create_service("retry1", "C_IEVENT_CLI", {
+            remote_yuno_role:    "remote_role",
+            remote_yuno_service: "remote_service",
+            url:                 "ws://retry1",
+            timeout_idack:       100,
+        }, yuno);
+        const listener = gobj_create_pure_child("retry1_listener", "C_PROBE_FAULT_LISTENER", {}, ievent);
+        gobj_start(listener);
+        gobj_subscribe_event(ievent, null, {}, listener);
+        gobj_start(ievent);
+        const ws = sockets[sockets.length - 1];
+        published.length = 0;
+        logged = [];
+
+        ws.fire_open();
+        await vi.advanceTimersByTimeAsync(150);
+        const cards = ws.sent.filter(m => m.event === "EV_IDENTITY_CARD");
+        expect(cards.length).toBe(2);       // the card, and the same card again
+
+        ws.onmessage({data: JSON.stringify({
+            event: "EV_IDENTITY_CARD_ACK",
+            kw: {result: 0, data: {}, __md_iev__: {...stack(), __msg_type__: "__answer__"}},
+        })});
+        expect(gobj_current_state(ievent)).toBe("ST_SESSION");
+        ws.onmessage({data: JSON.stringify({
+            event: "EV_IDENTITY_CARD_ACK",
+            kw: {result: -1, comment: "Identity card refused: the session has its identity already",
+                __md_iev__: {...stack(), __msg_type__: "__answer__"}},
+        })});
+
+        expect(gobj_current_state(ievent)).toBe("ST_SESSION");
+        expect(ws.closed_with).toBe(null);
+        expect(published.map(p => p[0])).toEqual(["EV_ON_OPEN"]);
+        expect(logged.filter(l => /^error/.test(l))).toEqual([]);
+        expect(logged.filter(l => /out of its place/.test(l)).length).toBe(1);
+        gobj_stop(ievent);
+    }));
 });
