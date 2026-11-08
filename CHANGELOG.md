@@ -9,6 +9,17 @@ about which SDK it was built against.
 
 ## Unreleased
 
+- **Tests: a rope read many times is charged once.** A new linear work in
+  `tests/fixtures/masking_rescans.js` ("one rope read from each start")
+  builds one rope as long as the text and reads it at each 4 KB: the count
+  must stay linear. A count that charged a rope at every read of it, and
+  not only at the first, passed every other test and fails this one (a
+  ratio of 1.36 for a limit of 1.02). The comments of
+  `count_native_work.js`, `count_native_setup.js` and `vite.config.js` no
+  longer say that every native is wrapped or that the language has a hook
+  wherever it reads, and the globals not walked are named, with a reason
+  only where one holds. `src/` does not change.
+
 ## 7.30.0 (2026-10-31)
 
 The number of SDK 7.30: `src/` does not change over 7.29.4. Only tests, below.
@@ -59,10 +70,14 @@ The number of SDK 7.30: `src/` does not change over 7.29.4. Only tests, below.
       number, and they belong to one count: nothing a count leaves unread
       reaches the next.
 
-    Not seen, and listed in `count_native_work.js`: the globals of the test
-    machinery, promises and streams (a masking answers in the same call);
-    what `CONSTANT` holds and does read more than a position, so a rescan
-    made of it counts as linear (`Object.hasOwn()`, `hasOwnProperty()`,
+    Not seen, and listed in `count_native_work.js`: the globals it does not
+    walk -- the test machinery, promises and streams (a masking answers in
+    the same call), `Boolean` and the `Weak*` (they read no text), and,
+    with no claim about what they read, `Atomics`, `WebAssembly`, `Proxy`,
+    `DisposableStack`, the events and the message ports
+    (`port.postMessage(text)` from each start counts as linear); what
+    `CONSTANT` holds and does read more than a position, so a rescan made
+    of it counts as linear (`Object.hasOwn()`, `hasOwnProperty()`,
     `Reflect.has()`, `Reflect.get()` and `getOwnPropertyDescriptor()` with
     a long key, `Object.is()` of two long strings, `re.toString()`,
     `RegExp.prototype.compile()`, `Object.create(null, props)`);

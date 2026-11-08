@@ -13,9 +13,11 @@ const coverage = process.argv.some((arg) => arg === "--coverage" || arg.startsWi
 /*  The test files that COUNT the work of what they check. They run in a
  *  project of their own, whose count_work_plugin.js adds a tick to every
  *  function and every loop of src/ and of the rescans they must catch, and
- *  a hook wherever the language reads, and whose count_native_setup.js
- *  wraps every native before src/ loads: the other tests and the build see
- *  the source and the runtime as they are.  */
+ *  a hook where the language reads with no call that it knows, and whose
+ *  count_native_setup.js wraps the natives it reaches from the globals
+ *  before src/ loads (not all: tests/count_native_work.js lists what is
+ *  not seen): the other tests and the build see the source and the
+ *  runtime as they are.  */
 const COUNTED_TESTS = ["tests/secret_masking_linear.test.js"];
 
 /*  The test files that TIME what they check, on the source as it is. They

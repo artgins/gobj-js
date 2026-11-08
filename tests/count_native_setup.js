@@ -2,8 +2,9 @@
  *          count_native_setup.js
  *
  *      The setup of the vitest project of the counting tests
- *      (vite.config.js): every native is wrapped before src/ loads, so
- *      what src/ keeps in a const at load is wrapped too.
+ *      (vite.config.js): the natives count_native_work.js reaches are
+ *      wrapped before src/ loads, so what src/ keeps in a const at load
+ *      is wrapped too.
  *
  *          Copyright (c) 2026, ArtGins.
  *          All Rights Reserved.

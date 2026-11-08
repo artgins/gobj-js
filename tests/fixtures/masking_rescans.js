@@ -290,6 +290,10 @@ export const LINEAR_WORKS = {
         return s.charCodeAt(0);
     },
     "ropes made and never read": (text, u8, k) => from_each_start(text, k, (p) => `${p}${text}`),
+    "one rope read from each start": (text, u8, k) => {
+        const rope = "p" + text;
+        from_each_start(text, k, (p) => rope.charCodeAt(p));
+    },
     "a Map of short keys": (text) => {
         const m = new Map();
         for(let i = 0; i < text.length; i++) {

@@ -49,12 +49,16 @@
  *      read; an object spread or a for-in lists the keys.
  *
  *      Not seen, and why:
- *      - the globals in NOT_WALKED: the machinery of the test, promises and
- *        streams (a masking returns its answer in the same call, so
- *        nothing of a promise or a stream can be part of its work), and
- *        Atomics, WebAssembly, Proxy, the Weak* (a WeakMap goes by identity
- *        and reads no text) and the message ports: a rescan made of one of
- *        them, such as port.postMessage(text), counts as linear;
+ *      - the globals in NOT_WALKED. For some the reason holds: the
+ *        machinery of the test, promises and streams (a masking returns
+ *        its answer in the same call, so nothing of a promise or a stream
+ *        can be part of its work), Boolean (it reads no text) and the
+ *        Weak* (a WeakMap goes by identity and reads no text). The others
+ *        are left out with no claim about what they read: Atomics,
+ *        WebAssembly, Proxy, DisposableStack, the events and the message
+ *        ports (MessageChannel, MessagePort, BroadcastChannel). A rescan
+ *        made of any of them, such as port.postMessage(text) from each
+ *        start, counts as linear;
  *      - what CONSTANT holds and does read more than a position, so a
  *        rescan made of it counts as linear: Object.hasOwn(),
  *        hasOwnProperty(), Reflect.has(), Reflect.get(),
@@ -450,10 +454,12 @@ const CONSTANT = new Set([
 ]);
 
 /*
- *  What is not walked: the globals that are no data a text passes
- *  through, but the machinery the test runs on (a timer, the channel to
- *  the runner) or whose work is not done within a call (a stream, a
- *  promise). Inside a walked global, the classes with no state to read.
+ *  What is not walked, so nothing of it is wrapped or charged: the
+ *  machinery the test runs on (a timer, the channel to the runner), what
+ *  does not do its work within a call (a stream, a promise), and the
+ *  others the header names under "Not seen" (Atomics, WebAssembly,
+ *  Proxy, the message ports...), several with no claim about what they
+ *  read: a rescan made of one of them is not seen.
  */
 const NOT_WALKED = new Set([
     "globalThis", "global", "process", "console", "undefined", "NaN", "Infinity",
@@ -768,8 +774,9 @@ function wrap_globals()
 }
 
 /************************************************************
- *  Wrap every native: see the header. Once, for the life of
- *  the process. Return how many were wrapped.
+ *  Wrap the natives reached from the globals, but for CONSTANT
+ *  and NOT_WALKED: see the header. Once, for the life of the
+ *  process. Return how many were wrapped.
  ************************************************************/
 export function install_native_work_counting()
 {
