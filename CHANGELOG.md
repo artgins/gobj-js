@@ -9,6 +9,9 @@ about which SDK it was built against.
 
 ## Unreleased
 
+- **Development tooling**: vite ^8.3.8, vitest and @vitest/coverage-v8 ^5.1.0, jsdom ^31.0.1;
+  `serialize-javascript` (via the terser plugin) out of its low advisory. Nothing that is
+  published changes: `dist/` builds the same runtime, 698/698 tests.
 - **Tests: a rope read many times is charged once.** A new linear work in
   `tests/fixtures/masking_rescans.js` ("one rope read from each start")
   builds one rope as long as the text and reads it at each 4 KB: the count
